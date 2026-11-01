@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-BASE_DIR = Path(__file__).resolve().parents[4]
+BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 

@@ -28,7 +28,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 # 將專案根目錄與 browser-relay 加入 sys.path
 SCRIPT_DIR = Path(__file__).resolve().parent
-BASE_DIR = SCRIPT_DIR.parents[3]
+BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 BROWSER_RELAY_DIR = BASE_DIR / ".agents" / "skills" / "browser-relay" / "scripts"
 
 if str(BASE_DIR) not in sys.path:

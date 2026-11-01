@@ -21,7 +21,7 @@ from pathlib import Path
 
 # 確保可以載入專案模組
 CURRENT_DIR = Path(__file__).resolve().parent
-BASE_DIR = CURRENT_DIR.parent.parent.parent.parent
+BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 if str(CURRENT_DIR) not in sys.path:

@@ -162,11 +162,30 @@ nohup ./start.sh > data/assistant.log 2>&1 &
 
 ---
 
-## ⌚ Apple Watch 與穿戴裝置設定
-請參閱 [`SHORTCUT_SETUP.md`](SHORTCUT_SETUP.md) 依序完成：
-1. iPhone / Mac 捷徑設定（取得 URL 內容 ➜ 彈出卡片回覆）。
-2. 綁定 Apple Watch Ultra 側邊「動作按鈕 (Action Button)」。
-3. 享受抬手一鍵隨口交代助理的極速體驗！
+## ⌚ Apple Watch 與穿戴裝置捷徑設定
+
+透過 iPhone / Mac 的「捷徑 (Shortcuts)」App 建立語音捷徑，並綁定到 **Apple Watch 側邊「動作按鈕 (Action Button)」** 或錶面複雜功能，即可實現抬手一鍵隨口交代助理：
+
+### 🛠️ 步驟 1：建立新捷徑
+1. 開啟 iPhone 的 **「捷徑」** App 點擊右上角 **「+」**，命名為 `問問助理`。
+2. 點擊詳細資訊 (ⓘ 圖示)，勾選 **「在 Apple Watch 上顯示」**。
+
+### 📝 步驟 2：依序加入 4 個動作
+1. **【聽寫文字 (Dictate Text)】**：語言選「繁體中文 (台灣)」，停止聽寫選「暫停後」。
+2. **【取得 URL 內容 (Get Contents of URL)】**：
+   - **URL**：`http://<您的_TAILSCALE_DOMAIN>:8899/api/chat`
+   - **方法**：`POST`
+   - **標頭 (Headers)**：
+     - `Content-Type`: `application/json`
+     - `X-Agent-Key`: `<您在 .env 設定的 ASSISTANT_API_KEY>`
+   - **要求內文 (JSON)**：文字鍵值 `query` ➜ 帶入步驟 1 的 **【聽寫的文字】**
+3. **【取得辭典值 (Get Dictionary Value)】**：
+   - 金鑰：`reply`，來源：步驟 2 的 **【來自 URL 的內容】**
+4. **【顯示結果 (Show Result)】**：
+   - 文字：帶入步驟 3 的 **【辭典值】**（手錶安靜震動並彈出清晰卡片，點一下即關閉；若想朗讀可改用「朗讀文字」）。
+
+### ⌚ 步驟 3：綁定 Apple Watch 動作按鈕
+在 Apple Watch 上開啟「設定」➜「動作按鈕」➜「動作」選「捷徑」➜ 選擇「問問助理」。只要隨身攜帶的 iPhone 上開啟 Tailscale VPN，手錶發出的所有請求便能自動安全直連家中的 Mac mini！
 
 ---
 

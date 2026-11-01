@@ -29,7 +29,7 @@ description: 酷澎 (Coupang Taiwan) 雙軌價格監控守護神技能。支援�
 ## 核心檔案路徑
 
 - **主控 CLI 腳本**：`.agents/skills/coupang-tracker/scripts/coupang_tracker.py`
-- **爬蟲底層模組**：`scripts/coupang_price_tracker.py`
+- **爬蟲底層模組**：`.agents/skills/coupang-tracker/scripts/coupang_price_tracker.py`
 - **iOS 推播模組**：`scripts/ios_notify.py`
 - **狀態與快照檔**：`data/coupang_monitor_state.json`
 - **背景任務管理器**：`task_manager.py`
@@ -62,7 +62,7 @@ description: 酷澎 (Coupang Taiwan) 雙軌價格監控守護神技能。支援�
 *範例*：
 ```bash
 .venv/bin/python .agents/skills/coupang-tracker/scripts/coupang_tracker.py set --name "Apple iPhone 17 Pro" --threshold 35000
-.venv/bin/python .agents/skills/coupang-tracker/scripts/coupang_tracker.py set --name "Farmina 法米納 GC6 1.5kg 貓飼料" --threshold 900
+.venv/bin/python .agents/skills/coupang-tracker/scripts/coupang_tracker.py set --name "AirPods Pro 2" --threshold 6000
 ```
 
 ---

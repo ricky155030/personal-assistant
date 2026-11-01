@@ -28,21 +28,27 @@ try:
 except Exception:
     pass
 
-BASE_DIR = Path(__file__).resolve().parents[4]
+BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from common.venv_guard import ensure_venv
 ensure_venv()
 
-from scripts.coupang_price_tracker import CoupangPriceTracker, send_telegram_alert
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+try:
+    from coupang_price_tracker import CoupangPriceTracker, send_telegram_alert
+except ImportError:
+    from .coupang_price_tracker import CoupangPriceTracker, send_telegram_alert
 from scripts.ios_notify import send_critical_alert
 
 STATE_FILE = BASE_DIR / "data" / "coupang_monitor_state.json"
 LEGACY_STATE_FILE = BASE_DIR / "data" / "iphone18_monitor_state.json"
 
 DEFAULT_THRESHOLDS = {
-    "Farmina 法米納 GC6 1.5kg 貓飼料": 900,
     "Apple iPhone 17": 29000,
     "Apple iPhone 17 Pro": 35000,
     "Apple iPhone 18 Pro": 39500,
@@ -333,7 +339,7 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
         url = ci.get("url") or "https://cart.tw.coupang.com/cart"
 
         for k, th in thresholds.items():
-            # 支援貓飼料或特定指定型號
+            # 支援特定指定商品名稱或型號
             is_matched = False
             if ("Farmina" in k or "法米納" in k) and ("Farmina" in full_text or "法米納" in full_text):
                 is_matched = True
@@ -593,7 +599,7 @@ def main():
 
     # set / add
     p_set = subparsers.add_parser("set", aliases=["add"], help="新增或修改目標門檻價")
-    p_set.add_argument("--name", required=True, help="商品名稱或型號 (例如 'Apple iPhone 17' 或 'Farmina 法米納 GC6 1.5kg 貓飼料')")
+    p_set.add_argument("--name", required=True, help="商品名稱或型號 (例如 'Apple iPhone 17' 或 'AirPods Pro 2')")
     p_set.add_argument("--threshold", required=True, type=int, help="目標通知門檻金額 (例如 29000)")
     p_set.set_defaults(func=cmd_set)
 

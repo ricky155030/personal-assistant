@@ -37,7 +37,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = SKILL_DIR.parent.parent.parent
+PROJECT_ROOT = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 BROWSER_RELAY_DIR = PROJECT_ROOT / ".agents" / "skills" / "browser-relay" / "scripts"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
