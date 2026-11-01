@@ -9,6 +9,14 @@ Mac mini Personal Assistant - 模組化設定嚮導與技能調度引擎 (Setup 
 
 import os
 import sys
+
+# 跨平台 UTF-8 輸出防護：防止 Windows 終端預設 cp1252 編碼拋出 UnicodeEncodeError
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import json
 import secrets
 import shutil

@@ -10,6 +10,14 @@ Mac mini Assistant 背景任務管理器 (Background Task Manager)
 
 import os
 import sys
+
+# 跨平台 UTF-8 輸出防護：防止 Windows 終端預設 cp1252 編碼拋出 UnicodeEncodeError
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import json
 import time
 import signal
