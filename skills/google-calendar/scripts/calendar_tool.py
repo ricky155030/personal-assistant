@@ -5,28 +5,32 @@ import json
 import subprocess
 from datetime import datetime, timedelta
 from typing import Optional
-
-CALENDAR_MAP = {
-    "個人": os.getenv("GOOGLE_CALENDAR_PRIMARY_ID", "primary"),
-    "primary": "primary",
-    "Work": os.getenv("GOOGLE_CALENDAR_WORK_ID", "primary"),
-    "work": os.getenv("GOOGLE_CALENDAR_WORK_ID", "primary"),
-    "工作": os.getenv("GOOGLE_CALENDAR_WORK_ID", "primary"),
-    "待辦事項": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
-    "待辦": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
-    "todo": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
-    "繳費": os.getenv("GOOGLE_CALENDAR_BILL_ID", "primary"),
-    "bill": os.getenv("GOOGLE_CALENDAR_BILL_ID", "primary"),
-    "家族": os.getenv("GOOGLE_CALENDAR_FAMILY_ID", "primary"),
-    "family": os.getenv("GOOGLE_CALENDAR_FAMILY_ID", "primary"),
-    "運動飲食": os.getenv("GOOGLE_CALENDAR_SPORT_ID", "primary"),
-    "運動": os.getenv("GOOGLE_CALENDAR_SPORT_ID", "primary"),
-}
-
 from pathlib import Path
 import shutil
 
 BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
+
+# 載入環境變數以讀取日曆設定
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / os.getenv("ENV_FILE", ".env"), override=False)
+except Exception:
+    pass
+
+CALENDAR_MAP = {
+    "primary": "primary",
+    "個人": os.getenv("GOOGLE_CALENDAR_PRIMARY_ID", "primary"),
+    "待辦事項": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
+    "待辦": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
+    "todo": os.getenv("GOOGLE_CALENDAR_TODO_ID", "primary"),
+}
+try:
+    custom_cals = json.loads(os.getenv("GOOGLE_CALENDAR_ALIASES_JSON", "{}"))
+    if isinstance(custom_cals, dict):
+        CALENDAR_MAP.update(custom_cals)
+except Exception:
+    pass
+
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -41,28 +45,28 @@ from common.gws_client import (
 )
 
 def resolve_calendar_id(cal_name: str) -> str:
-    """解析行事曆 ID：優先由 CALENDAR_MAP 或環境變數取得，若無則嘗試由 gws list 比對同名日曆"""
+    """解析行事曆 ID：優先由 CALENDAR_MAP 或環境變數取得，若無則由 gws calendarList 動態比對同名日曆"""
     if not cal_name:
-        return "primary"
-    if "@" in cal_name:
+        return CALENDAR_MAP.get("待辦事項", "primary")
+    if "@" in cal_name or cal_name.endswith(".calendar.google.com"):
         return cal_name
     
-    mapped = CALENDAR_MAP.get(cal_name)
-    if mapped and mapped != "primary":
-        return mapped
-    if cal_name in ["個人", "primary"]:
-        return "primary"
+    cal_lower = cal_name.strip().lower()
+    for k, v in CALENDAR_MAP.items():
+        if k.lower() == cal_lower and v:
+            return v
 
     try:
         res = run_gws_command(["calendar", "calendarList", "list"])
         items = res.get("items", [])
         for item in items:
-            if item.get("summary") == cal_name:
+            summary = item.get("summary", "")
+            if summary.strip().lower() == cal_lower:
                 return item.get("id", "primary")
     except Exception:
         pass
 
-    return mapped or "primary"
+    return CALENDAR_MAP.get(cal_name) or "primary"
 
 def list_calendars():
     res = run_gws_command(["calendar", "calendarList", "list"])
@@ -213,40 +217,56 @@ def delete_event(cal_name: str, event_id: str):
     print(f"✅ 成功自「{cal_name}」行事曆刪除事件 (ID: {event_id})")
     return True
 
+def _is_date_time_str(s: str) -> bool:
+    s = s.strip()
+    return bool("-" in s and (len(s) == 10 or ":" in s or "T" in s))
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: calendar_tool.py [calendars | list <cal_name> <today|week|YYYY-MM-DD> | add <cal_name> <title> <start> [end] [location] | delete <cal_name> <event_id>]")
+        print("Usage: calendar_tool.py [calendars | list [cal_name] <today|week|upcoming|YYYY-MM-DD> | add [cal_name] <title> <start> [end] [location] | delete [cal_name] <event_id>]")
         sys.exit(1)
 
-    cmd = sys.argv[1]
+    cmd = sys.argv[1].lower()
     if cmd in ("calendars", "list_cals"):
         list_calendars()
     elif cmd == "list":
-        cal = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] in CALENDAR_MAP else "待辦事項"
-        date_filter = sys.argv[3] if len(sys.argv) > 3 else (sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] not in CALENDAR_MAP else "today")
+        date_keywords = ("today", "week", "upcoming")
+        arg2 = sys.argv[2] if len(sys.argv) > 2 else ""
+        is_date_arg = False
+        if arg2:
+            if arg2 in date_keywords or (len(arg2) == 10 and arg2.count("-") == 2):
+                is_date_arg = True
+
+        if is_date_arg:
+            cal = "待辦事項"
+            date_filter = arg2
+        else:
+            cal = arg2 or "待辦事項"
+            date_filter = sys.argv[3] if len(sys.argv) > 3 else "today"
         list_events(cal, date_filter)
     elif cmd == "add":
         if len(sys.argv) < 4:
             print("Usage: calendar_tool.py add [cal_name] <title> <start_time> [end_time] [location]")
             sys.exit(1)
-        if sys.argv[2] in CALENDAR_MAP:
-            cal = sys.argv[2]
-            title = sys.argv[3]
-            start = sys.argv[4]
-            end = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] != "none" else None
-            loc = sys.argv[6] if len(sys.argv) > 6 else None
-        else:
+        # 若第 3 個參數即為日期時間字串，表示第 2 個參數是 title，日曆預設為「待辦事項」
+        if _is_date_time_str(sys.argv[3]):
             cal = "待辦事項"
             title = sys.argv[2]
             start = sys.argv[3]
-            end = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "none" else None
+            end = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4].lower() != "none" else None
             loc = sys.argv[5] if len(sys.argv) > 5 else None
+        else:
+            cal = sys.argv[2]
+            title = sys.argv[3]
+            start = sys.argv[4]
+            end = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5].lower() != "none" else None
+            loc = sys.argv[6] if len(sys.argv) > 6 else None
         add_event(cal, title, start, end, loc)
     elif cmd == "delete":
         if len(sys.argv) < 3:
             print("Usage: calendar_tool.py delete [cal_name] <event_id>")
             sys.exit(1)
-        if sys.argv[2] in CALENDAR_MAP:
+        if len(sys.argv) >= 4:
             cal = sys.argv[2]
             eid = sys.argv[3]
         else:
@@ -255,6 +275,7 @@ def main():
         delete_event(cal, eid)
     else:
         print(f"Unknown command: {cmd}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

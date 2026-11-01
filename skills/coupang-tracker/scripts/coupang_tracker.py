@@ -48,12 +48,7 @@ from scripts.ios_notify import send_critical_alert
 STATE_FILE = BASE_DIR / "data" / "coupang_monitor_state.json"
 LEGACY_STATE_FILE = BASE_DIR / "data" / "iphone18_monitor_state.json"
 
-DEFAULT_THRESHOLDS = {
-    "Apple iPhone 17": 29000,
-    "Apple iPhone 17 Pro": 35000,
-    "Apple iPhone 18 Pro": 39500,
-    "Apple iPhone 18 Pro Max": 43000
-}
+DEFAULT_THRESHOLDS: Dict[str, int] = {}
 
 RUNNING = True
 
@@ -105,74 +100,39 @@ def save_state(state: Dict[str, Any]):
 
 
 def match_item_price(name: str, snapshot: Dict[str, Any]) -> Tuple[Optional[int], str]:
-    """從快照中尋找特定品項的現價與來源軌道"""
-    if not snapshot:
+    """從快照中尋找特定品項的現價與來源軌道（支援購物車與全網搜尋多詞通用匹配）"""
+    if not snapshot or not name:
         return None, "無資料"
     
     cart = snapshot.get("cart", {})
     bests = snapshot.get("search_bests", {})
+    name_norm = name.strip().lower()
+    tokens = [t.lower() for t in name.split() if len(t) > 1]
 
-    # 1. 飼料類 / Farmina
-    if "法米納" in name or "Farmina" in name:
+    # 1. 優先精準比對 (購物車 / 搜尋)
+    for k, p in cart.items():
+        if k.strip().lower() == name_norm:
+            return p, "購物車直連"
+    for k, p in bests.items():
+        if k.strip().lower() == name_norm:
+            return p, "全網搜尋"
+
+    # 2. 多詞完全包含比對
+    if tokens:
         for k, p in cart.items():
-            if "Farmina" in k or "法米納" in k:
+            if all(t in k.lower() for t in tokens):
                 return p, "購物車直連"
         for k, p in bests.items():
-            if "Farmina" in k or "法米納" in k:
-                return p, "搜尋頁"
-
-    # 2. iPhone 系列
-    if "iPhone" in name:
-        name_lower = name.lower()
-        # 先精確比對 search_bests
-        for k, p in bests.items():
-            if k.strip().lower() == name_lower:
-                return p, "全網搜尋"
-        
-        # 比對購物車與保留清單
-        for k, p in cart.items():
-            k_lower = k.lower()
-            if "512" in name_lower and ("512" not in k_lower and "512" not in name_lower):
-                continue
-            # 針對 512GB 特殊處理（若舊快照 key 僅為 "Apple iPhone 18 Pro Max" 且價格為 56700 等）
-            if "512" in name_lower:
-                if "512" in k_lower or (p > 52000 and "max" in k_lower):
-                    return p, "購物車直連"
-                continue
-            
-            # 一般 256GB / 規格
-            if "512" in k_lower or (p > 52000 and "max" in k_lower and "512" not in name_lower):
-                continue
-            if "pro" not in name_lower and "pro" in k_lower:
-                continue
-            if "max" not in name_lower and "max" in k_lower:
-                continue
-            if "e" not in name_lower and any(tag in k_lower for tag in [" 17e", "17e", " 16e", "16e"]):
-                continue
-
-            if "iphone 18 pro max" in name_lower and "iphone 18 pro max" in k_lower:
-                return p, "購物車保留"
-            if "iphone 18 pro" in name_lower and "iphone 18 pro" in k_lower and "max" not in k_lower:
-                return p, "購物車保留"
-            if "iphone 17 pro" in name_lower and "iphone 17 pro" in k_lower:
-                return p, "購物車保留"
-            if "iphone 17" in name_lower and "iphone 17" in k_lower and "pro" not in k_lower:
-                return p, "購物車保留"
-
-        # 模糊包含比對搜尋結果
-        for k, p in bests.items():
-            if all(part.lower() in k.lower() for part in name.split() if len(part) > 1):
+            if all(t in k.lower() for t in tokens):
                 return p, "全網搜尋"
 
-        return None, "待採樣"
-
-    # 3. 通用比對
-    for k, p in bests.items():
-        if name.lower() in k.lower():
-            return p, "全網搜尋"
+    # 3. 子字串包含比對
     for k, p in cart.items():
-        if name.lower() in k.lower():
-            return p, "購物車"
+        if name_norm in k.lower() or k.lower() in name_norm:
+            return p, "購物車直連"
+    for k, p in bests.items():
+        if name_norm in k.lower() or k.lower() in name_norm:
+            return p, "全網搜尋"
 
     return None, "待採樣"
 
@@ -339,12 +299,8 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
         url = ci.get("url") or "https://cart.tw.coupang.com/cart"
 
         for k, th in thresholds.items():
-            # 支援特定指定商品名稱或型號
-            is_matched = False
-            if ("Farmina" in k or "法米納" in k) and ("Farmina" in full_text or "法米納" in full_text):
-                is_matched = True
-            elif k.lower() in full_text.lower():
-                is_matched = True
+            tokens = [t.lower() for t in k.split() if len(t) > 1]
+            is_matched = (k.lower() in full_text.lower()) or (tokens and all(t in full_text.lower() for t in tokens))
 
             if is_matched:
                 if should_notify(k, p, th, state):
@@ -353,36 +309,33 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
                 else:
                     print(f"   ℹ️ [{k}] 購物車售價 ${p:,}，目標門檻 <${th:,}。")
 
-    # 軌道二：搜尋頁
-    print("🌐 [軌道 2: 搜尋全網比價] 正在巡檢全網特價...")
-    search_queries = set()
-    for k in state["thresholds"].keys():
-        if "iPhone 18" in k:
-            search_queries.add("iPhone 18 Pro")
-        elif "iPhone 17" in k:
-            search_queries.add("iPhone 17")
-
+    # 軌道二：搜尋頁 (若有指定特定監控門檻商品，執行全網比價)
+    search_queries = set(state.get("thresholds", {}).keys())
     raw_search = []
-    for q in search_queries:
-        res = tracker.search_products(q)
-        raw_search.extend(res)
+    if search_queries:
+        print("🌐 [軌道 2: 搜尋全網比價] 正在巡檢特價...")
+        for q in search_queries:
+            res = tracker.search_products(q)
+            raw_search.extend(res)
 
-    print(f"   搜尋頁抓取到 {len(raw_search)} 筆規格：")
-    for it in raw_search:
-        if "256GB" in it.get("capacity", "").upper():
-            print(f"   • {it['model']} | {it['color']} | 256GB -> ${it['sale_price']:,}")
+        if raw_search:
+            print(f"   搜尋頁抓取到 {len(raw_search)} 筆商品：")
+            for it in raw_search:
+                print(f"   • {it.get('model')} | {it.get('color', '')} | {it.get('capacity', '')} -> ${it.get('sale_price', 0):,}")
 
-    # 比對搜尋結果是否低於目標價
-    for it in raw_search:
-        m = it.get("model")
-        cap = it.get("capacity", "")
-        if "256GB" not in cap.upper() or m not in state["thresholds"]:
-            continue
-        p = it["sale_price"]
-        th = state["thresholds"][m]
-        if should_notify(m, p, th, state):
-            dispatch_alerts(m, f"{it['color']} / 256GB", p, th, it["url"])
-            state.setdefault("last_notified", {})[m] = {"price": p, "timestamp": time.time(), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+        # 比對搜尋結果是否低於目標價
+        for it in raw_search:
+            m = it.get("model", "")
+            p = it.get("sale_price")
+            if p is None:
+                continue
+            for th_k, th_val in state.get("thresholds", {}).items():
+                tokens = [t.lower() for t in th_k.split() if len(t) > 1]
+                if th_k.lower() in m.lower() or (tokens and all(t in m.lower() for t in tokens)):
+                    if should_notify(th_k, p, th_val, state):
+                        tag = f"{it.get('color', '')} {it.get('capacity', '')}".strip() or "特惠版"
+                        dispatch_alerts(th_k, tag, p, th_val, it.get("url") or "https://tw.coupang.com")
+                        state.setdefault("last_notified", {})[th_k] = {"price": p, "timestamp": time.time(), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
 
     # 記錄快照
     snapshot = {
@@ -393,9 +346,8 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
     }
     for it in raw_search:
         m = it.get("model")
-        cap = it.get("capacity", "")
-        if "256GB" in cap.upper():
-            p = it["sale_price"]
+        p = it.get("sale_price")
+        if m and p:
             if m not in snapshot["search_bests"] or p < snapshot["search_bests"][m]:
                 snapshot["search_bests"][m] = p
 

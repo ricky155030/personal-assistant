@@ -164,6 +164,39 @@ def test_google_sheets_tool_generalization():
     assert not _is_fuzzy_match("汽水", "全脂鮮奶")
 
 
+def test_skills_generalization():
+    """驗證 shopping-list, coupang-tracker, google-calendar 已全面通用化"""
+    import sys
+    from pathlib import Path
+
+    # 1. 驗證 coupang_tracker 通用比對
+    coupang_dir = Path(__file__).resolve().parents[1] / "skills" / "coupang-tracker" / "scripts"
+    if str(coupang_dir) not in sys.path:
+        sys.path.insert(0, str(coupang_dir))
+    from coupang_tracker import match_item_price, DEFAULT_THRESHOLDS
+    assert len(DEFAULT_THRESHOLDS) == 0, "DEFAULT_THRESHOLDS 應為空字典，不應硬編碼特定商品"
+    
+    mock_snapshot = {
+        "cart": {"飛利浦電動牙刷 HX6800": 1999, "UCC 職人濾掛咖啡 50入": 399},
+        "search_bests": {"幫寶適超薄乾爽拉拉褲 XL": 1299}
+    }
+    price, track = match_item_price("UCC 咖啡", mock_snapshot)
+    assert price == 399 and "購物車" in track
+    price, track = match_item_price("幫寶適 拉拉褲", mock_snapshot)
+    assert price == 1299 and "全網搜尋" in track
+
+    # 2. 驗證 google-calendar 通用日曆解析
+    cal_dir = Path(__file__).resolve().parents[1] / "skills" / "google-calendar" / "scripts"
+    if str(cal_dir) not in sys.path:
+        sys.path.insert(0, str(cal_dir))
+    from calendar_tool import resolve_calendar_id, _is_date_time_str
+    assert resolve_calendar_id("primary") == "primary"
+    assert resolve_calendar_id("待辦事項") is not None
+    assert _is_date_time_str("2026-11-05")
+    assert _is_date_time_str("2026-11-05 14:00")
+    assert not _is_date_time_str("買咖啡")
+
+
 if __name__ == "__main__":
     print("🧪 正在執行跨平台相容性測試...")
     test_browser_relay_cross_platform_config()
@@ -174,4 +207,6 @@ if __name__ == "__main__":
     print("  ✓ test_skills_doctor 通過")
     test_google_sheets_tool_generalization()
     print("  ✓ test_google_sheets_tool_generalization 通過")
+    test_skills_generalization()
+    print("  ✓ test_skills_generalization 通過")
     print("🎉 所有相容性測試 100% 通過！")

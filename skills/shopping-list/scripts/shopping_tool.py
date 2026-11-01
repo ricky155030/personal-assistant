@@ -42,7 +42,6 @@ except ImportError:
     )
 
 SHOPPING_SHEET_ID = os.getenv("SHOPPING_SHEET_ID", "YOUR_SHOPPING_SHEET_ID")
-BABY_SHEET_ID = os.getenv("SECONDARY_SHEET_ID", "")
 CACHE_FILE = BASE_DIR / "data" / "shopping_cache.json"
 
 
@@ -194,34 +193,25 @@ def add_item(
 
 def batch_complete_items(keywords: List[str]) -> Dict[str, Any]:
     """
-    批次標記多個項目為已買，並自動原子化雙向連動《嬰兒用品與待產備品清單》（極速 ⚡）
-    - 單次讀取待買清單 + 備品清單
+    批次標記多個項目為已買（極速 ⚡）
+    - 一次讀取待買快取
     - 記憶體中批量模糊比對與消歧義
-    - 分別以 batchUpdate 一次性同步雙表（2 次 API 請求搞定所有項目，取代過去 50+ 次循環調用）
+    - 以 batchUpdate 一次性同步 Google Sheets（1 次 API 請求搞定所有項目）
     """
     if not keywords:
         return {
             "success": True,
             "completed_count": 0,
             "completed_shopping": [],
-            "baby_synced_count": 0,
-            "synced_baby": [],
             "not_found": []
         }
 
     all_shopping = fetch_all_items()
-    baby_rows = get_sheet_values(BABY_SHEET_ID, "'備品清單'!A1:G150") or []
-
     now_time = datetime.now().strftime("%Y-%m-%d %H:%M")
     shopping_updates = []
-    baby_updates = []
-
     completed_shopping = []
-    synced_baby = []
     not_found = []
-
     matched_shopping_rows = set()
-    matched_baby_rows = set()
 
     for kw in keywords:
         kw = str(kw).strip()
@@ -229,9 +219,6 @@ def batch_complete_items(keywords: List[str]) -> Dict[str, Any]:
             continue
 
         shopping_matched = False
-        item_name_for_baby = kw
-
-        # 1. 比對待買清單 (優先比對未購買者)
         for it in all_shopping:
             if it["row_index"] in matched_shopping_rows:
                 continue
@@ -252,40 +239,13 @@ def batch_complete_items(keywords: List[str]) -> Dict[str, Any]:
                     "row": r_idx
                 })
                 shopping_matched = True
-                item_name_for_baby = it["item"]
                 break
 
-        # 2. 雙向連動：比對嬰兒備品清單 (同步標記已有)
-        baby_matched = False
-        if baby_rows:
-            for b_idx, b_row in enumerate(baby_rows[1:], start=2):
-                if b_idx in matched_baby_rows:
-                    continue
-                b_item = b_row[1] if len(b_row) > 1 else ""
-                b_note = b_row[4] if len(b_row) > 4 else ""
-                if (_is_fuzzy_match(kw, b_item) or _is_fuzzy_match(item_name_for_baby, b_item)) and "已有" not in b_note:
-                    matched_baby_rows.add(b_idx)
-                    baby_updates.append({
-                        "range": f"'備品清單'!E{b_idx}",
-                        "values": [["已有 (已買)"]]
-                    })
-                    synced_baby.append({
-                        "item": b_item,
-                        "row": b_idx,
-                        "category": b_row[0] if len(b_row) > 0 else ""
-                    })
-                    baby_matched = True
-                    break
-
-        if not shopping_matched and not baby_matched:
+        if not shopping_matched:
             not_found.append(kw)
 
-    # 批次提交 Google Sheets batchUpdate (極速：各只需 1 次 API 請求！)
     if shopping_updates:
         batch_update_values(SHOPPING_SHEET_ID, shopping_updates)
-
-    if baby_updates:
-        batch_update_values(BABY_SHEET_ID, baby_updates)
 
     # 刷新快取
     fetch_all_items(force_remote=True)
@@ -294,8 +254,6 @@ def batch_complete_items(keywords: List[str]) -> Dict[str, Any]:
         "success": True,
         "completed_count": len(completed_shopping),
         "completed_shopping": completed_shopping,
-        "baby_synced_count": len(synced_baby),
-        "synced_baby": synced_baby,
         "not_found": not_found
     }
 
@@ -303,22 +261,17 @@ def batch_complete_items(keywords: List[str]) -> Dict[str, Any]:
 def complete_item(keyword: str) -> Dict[str, Any]:
     """標記單一項目為已買（底層呼叫 batch_complete_items，享極速優勢）"""
     res = batch_complete_items([keyword])
-    if res.get("completed_count", 0) > 0 or res.get("baby_synced_count", 0) > 0:
-        c_item = (
-            res["completed_shopping"][0]["item"]
-            if res["completed_shopping"]
-            else (res["synced_baby"][0]["item"] if res["synced_baby"] else keyword)
-        )
-        cat = res["completed_shopping"][0]["category"] if res["completed_shopping"] else ""
+    if res.get("completed_count", 0) > 0:
+        c_item = res["completed_shopping"][0]["item"]
+        cat = res["completed_shopping"][0]["category"]
         return {
             "success": True,
             "item": c_item,
             "category": cat,
-            "baby_synced": res.get("baby_synced_count", 0) > 0,
             "completed_details": res
         }
     else:
-        return {"success": False, "message": f"在待買清單與備品清單中找不到未購買的『{keyword}』。"}
+        return {"success": False, "message": f"在待買清單中找不到未購買的『{keyword}』。"}
 
 
 def batch_operate(payload: Any) -> Dict[str, Any]:
@@ -396,59 +349,6 @@ def list_items(
     return filtered
 
 
-def sync_baby_items() -> Dict[str, Any]:
-    """
-    從《嬰兒用品與待產備品清單》中，把所有「待準備 / 待買」的母嬰品項
-    自動匯入到《家庭通用待買清單》作為初始種子資料（自動跳過已存在的項目）。
-    """
-    baby_rows = get_sheet_values(BABY_SHEET_ID, "'備品清單'!A1:G120")
-    if not baby_rows or len(baby_rows) <= 1:
-        return {"success": False, "message": "無法讀取嬰兒備品清單"}
-
-    current_items = fetch_all_items()
-    existing_names = [it["item"].lower() for it in current_items]
-
-    imported = []
-    now_str = datetime.now().strftime("%Y-%m-%d")
-
-    for r in baby_rows[1:]:
-        cat = r[0] if len(r) > 0 else ""
-        item = r[1] if len(r) > 1 else ""
-        spec = r[2] if len(r) > 2 else ""
-        qty = r[3] if len(r) > 3 else "1"
-        note = r[4] if len(r) > 4 else ""
-        rec = r[6] if len(r) > 6 else ""
-
-        # 篩選真正尚未點收、標記待準備的品項
-        if any(k in note for k in ["待準備", "待買", "考慮中"]) or any(k in item for k in ["待買"]):
-            if "已有" not in note and "點收完畢" not in note and "已買" not in note:
-                # 檢查是否已在待買清單
-                if any(it_name in item.lower() or item.lower() in it_name for it_name in existing_names):
-                    continue
-
-                full_qty = f"{qty} ({spec})" if spec else qty
-                channel = "日本/阿卡將" if "🇯🇵" in rec or "日本" in rec else "婦嬰店/藥局"
-                clean_note = rec.replace("🇯🇵", "").replace("🇹🇼", "").strip()
-
-                imported.append({
-                    "item": item,
-                    "category": f"嬰幼兒備品 ({cat})",
-                    "qty": full_qty,
-                    "channel": channel,
-                    "note": clean_note[:60]
-                })
-
-    if not imported:
-        return {"success": True, "imported_count": 0, "message": "母嬰待買項目皆已同步，無新增項目。"}
-
-    res = batch_add_items(imported)
-    return {
-        "success": True,
-        "imported_count": len(imported),
-        "items": [it["item"] for it in imported]
-    }
-
-
 def format_list_markdown(items: List[Dict[str, Any]]) -> str:
     """產生結構化漂亮的清單排版"""
     if not items:
@@ -463,12 +363,10 @@ def format_list_markdown(items: List[Dict[str, Any]]) -> str:
 
     icons = {
         "日常消耗": "🥛",
-        "嬰幼兒備品": "👶",
-        "媽媽待產": "🤰",
-        "日本採買": "🇯🇵",
-        "3C家電": "💻",
         "食品生鮮": "🍎",
-        "居家生活": "📦"
+        "居家生活": "📦",
+        "3C家電": "💻",
+        "藥妝保健": "💊"
     }
 
     lines = [f"🛒 **家庭待買清單**（共 {len(items)} 項待買）：\n"]
@@ -501,9 +399,9 @@ def main():
     # add
     p_add = subparsers.add_parser("add", help="新增單一待買項目")
     p_add.add_argument("item", help="品項名稱")
-    p_add.add_argument("--category", "-c", default="日常消耗", help="類別 (日常消耗/嬰幼兒備品/日本採買/3C家電/居家生活)")
+    p_add.add_argument("--category", "-c", default="日常消耗", help="類別 (日常消耗/食品生鮮/居家生活/3C家電/藥妝保健)")
     p_add.add_argument("--qty", "-q", default="1", help="數量或規格")
-    p_add.add_argument("--channel", "-l", default="", help="購買通路/地點 (全聯/好市多/阿卡將/日本)")
+    p_add.add_argument("--channel", "-l", default="", help="購買通路/地點 (全聯/好市多/屈臣氏/電商)")
     p_add.add_argument("--note", "-n", default="", help="備註說明")
 
     # batch-add
@@ -511,19 +409,16 @@ def main():
     p_badd.add_argument("payload", help="JSON 陣列字串、@檔案路徑或 -")
 
     # complete
-    p_done = subparsers.add_parser("done", help="標記單一品項已購買 (支援母嬰表雙向勾銷)")
+    p_done = subparsers.add_parser("done", help="標記單一品項已購買")
     p_done.add_argument("keyword", help="品項關鍵字")
 
     # batch-done
-    p_bdone = subparsers.add_parser("batch-done", help="批次標記多品項已買並雙向同步備品清單 (極速 ⚡)")
+    p_bdone = subparsers.add_parser("batch-done", help="批次標記多品項已買 (極速 ⚡)")
     p_bdone.add_argument("payload", help="關鍵字 JSON 陣列字串、@檔案路徑或 -")
 
     # batch
     p_batch = subparsers.add_parser("batch", help="統一全能批次操作 (同時新增多項與勾銷多項)")
     p_batch.add_argument("payload", help="包含 add 與 done 的 JSON 物件字串、@檔案路徑或 -")
-
-    # sync-baby
-    subparsers.add_parser("sync-baby", help="從嬰兒備品清單同步待買項目")
 
     args = parser.parse_args()
 
@@ -547,8 +442,7 @@ def main():
     elif args.command == "done":
         res = complete_item(args.keyword)
         if res.get("success"):
-            sync_msg = "（★ 已自動連動更新《嬰兒備品清單》為已有！）" if res.get("baby_synced") else ""
-            print(f"🎉 已將『{res.get('item')}』標記為已買！{sync_msg}")
+            print(f"🎉 已將『{res.get('item')}』標記為已買！")
         else:
             print(f"❌ {res.get('message')}")
             sys.exit(1)
@@ -556,16 +450,10 @@ def main():
     elif args.command == "batch-done":
         data = _parse_input_json(args.payload)
         res = batch_complete_items(data)
-        print(f"🎉 批次採購勾銷完成！共劃掉 {res['completed_count']} 項待買，並自動連動同步 {res['baby_synced_count']} 項嬰兒備品：\n")
+        print(f"🎉 批次採購勾銷完成！共劃掉 {res['completed_count']} 項待買：\n")
         if res["completed_shopping"]:
-            print("📌 《家庭通用待買清單》劃掉：")
             for c in res["completed_shopping"]:
                 print(f"• [{c['category']}] {c['item']} (第 {c['row']} 列 ➔ 已買)")
-            print()
-        if res["synced_baby"]:
-            print("📌 《嬰兒用品與待產備品清單》雙向同步 (標記為已有)：")
-            for b in res["synced_baby"]:
-                print(f"• [{b['category']}] {b['item']} (第 {b['row']} 列 ➔ 備註更新為「已有 (已買)」)")
             print()
         if res["not_found"]:
             print(f"⚠️ 未在清單中找到的品項 ({len(res['not_found'])} 項): {', '.join(res['not_found'])}")
@@ -576,8 +464,7 @@ def main():
         res = batch_operate(data)
         add_cnt = res["added"].get("added_count", 0)
         done_cnt = res["done"].get("completed_count", 0)
-        sync_cnt = res["done"].get("baby_synced_count", 0)
-        print(f"⚡ 統一批次處理完畢！新增 {add_cnt} 項，勾銷 {done_cnt} 項待買（同步 {sync_cnt} 項備品）：\n")
+        print(f"⚡ 統一批次處理完畢！新增 {add_cnt} 項，勾銷 {done_cnt} 項待買：\n")
         if res["added"].get("items"):
             print("📝 【新增待買項目】：")
             for it in res["added"]["items"]:
@@ -588,16 +475,7 @@ def main():
             for c in res["done"]["completed_shopping"]:
                 print(f"• [{c['category']}] {c['item']} ➔ 已買")
             print()
-        if res["done"].get("synced_baby"):
-            print("👶 【嬰兒備品雙向同步】：")
-            for b in res["done"]["synced_baby"]:
-                print(f"• [{b['category']}] {b['item']} ➔ 已有 (已買)")
-            print()
         print(json.dumps(res, ensure_ascii=False))
-
-    elif args.command == "sync-baby":
-        res = sync_baby_items()
-        print(f"🔄 母嬰待買同步完成！共匯入 {res.get('imported_count')} 筆項目。")
 
     elif args.command == "list" or not args.command:
         status = getattr(args, "status", "待買")
