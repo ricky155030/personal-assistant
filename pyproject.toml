@@ -3,7 +3,7 @@ name = "personal-assistant"
 version = "0.1.0"
 description = "Mac mini Personal AI Assistant"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "cryptography>=50.0.2",
     "fastapi>=0.115.0",
@@ -16,5 +16,6 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.32",
     "shortcuts>=0.11.0",
-    "uvicorn[standard]>=0.30.0",
+    "uvicorn>=0.30.0",
+    "uvloop>=0.21.0; sys_platform != 'win32'",
 ]
