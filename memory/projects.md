@@ -16,6 +16,14 @@
 - **用途**：家庭全域採買行動中心（日常日用品、採買代購），由專屬技能 `shopping-list` 進行維護。
 - **狀態**：[運作中]
 
+### 嬰兒用品與待產備品清單 (Baby & Newborn Checklist)
+- **試算表別名**：`baby`、`newborn`
+- **試算表 ID**：`13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas`
+- **線上網址**：https://docs.google.com/spreadsheets/d/13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas/edit
+- **用途**：追蹤與管理新生兒備品、衣物尺寸、大型用品（汽座、推車、澡盆、消毒鍋等）現況與採買狀態。
+- **存取方式**：透過通用 `google-sheets` 技能（例如：`sheets_tool.py search baby "汽座"` 或 `read baby`）進行動態查詢與更新。
+- **狀態**：[運作中]
+
 ---
 
 ## 2. 待辦與排程原則
