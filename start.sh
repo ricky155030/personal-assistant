@@ -25,8 +25,12 @@ if [ ! -f "$TARGET_ENV" ]; then
     fi
 fi
 
-# 動態解析監聽埠號 (支援 ASSISTANT_PORT 或 PORT 環境變數)
-PORT="${ASSISTANT_PORT:-${PORT:-8899}}"
+# 動態解析監聽埠號 (支援 shell 環境變數或從 TARGET_ENV 檔案讀取)
+ENV_PORT=""
+if [ -f "$TARGET_ENV" ]; then
+    ENV_PORT=$(grep -E '^(ASSISTANT_PORT|PORT)=' "$TARGET_ENV" | tail -n 1 | cut -d '=' -f2 | tr -d '"'\'' ' | tr -d '\r')
+fi
+PORT="${ASSISTANT_PORT:-${PORT:-${ENV_PORT:-8899}}}"
 
 echo "=== 正在啟動 Personal Assistant ==="
 echo "工作目錄: $DIR"

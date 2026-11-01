@@ -568,15 +568,22 @@ class ClaudeWorker:
                 if msg_type == "assistant":
                     msg = data.get("message", {})
                     content_list = msg.get("content", [])
+                    has_tool_use = any(p.get("type") == "tool_use" for p in content_list)
+
                     for part in content_list:
                         ptype = part.get("type")
                         if ptype == "text":
                             txt = part.get("text", "")
                             if txt:
-                                if first_token_time is None:
-                                    first_token_time = time.perf_counter() - start_t
-                                full_reply_parts.append(txt)
-                                yield ("text", txt)
+                                if has_tool_use:
+                                    # 工具調用前的過渡墊話（如「我先查一下...」），作為即時步驟狀態展示，不污染最終正式文字
+                                    yield ("status", txt)
+                                else:
+                                    # 最終完整回答
+                                    if first_token_time is None:
+                                        first_token_time = time.perf_counter() - start_t
+                                    full_reply_parts.append(txt)
+                                    yield ("text", txt)
                         elif ptype == "tool_use":
                             tool_name = part.get("name", "")
                             tool_input = part.get("input", {})
@@ -587,14 +594,15 @@ class ClaudeWorker:
                 elif msg_type == "result":
                     turn_result = data
                     res_text = data.get("result", "")
-                    if not full_reply_parts and res_text:
+                    if res_text and not full_reply_parts:
                         full_reply_parts.append(res_text)
                         yield ("text", res_text)
                     break
 
             total_latency = time.perf_counter() - start_t
             self.last_active_time = time.time()
-            full_reply = "".join(full_reply_parts)
+            final_res = turn_result.get("result", "")
+            full_reply = final_res if final_res else "".join(full_reply_parts)
             clean_reply = full_reply.replace("**", "").replace("#", "").replace("`", "").strip()
 
             turn_result["clean_reply"] = clean_reply

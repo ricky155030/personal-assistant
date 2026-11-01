@@ -152,7 +152,8 @@ class TaskQueue:
         finished_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         latency = round(end_ts - start_ts, 3)
 
-        raw_reply = "".join(card.collected_text).strip() or turn_result.get("clean_reply", "")
+        final_result_text = turn_result.get("result") or turn_result.get("clean_reply")
+        raw_reply = final_result_text.strip() if final_result_text else "".join(card.collected_text).strip()
         clean_reply = raw_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
 
         thinking_level = turn_result.get("thinking_level", "low")

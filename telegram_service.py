@@ -1164,7 +1164,8 @@ async def process_telegram_request(
             raise e
 
         card.finalize()
-        clean_out = "".join(card.collected_text).strip() or turn_result.get("clean_reply", "")
+        final_result_text = turn_result.get("result") or turn_result.get("clean_reply")
+        clean_out = final_result_text.strip() if final_result_text else "".join(card.collected_text).strip()
         return clean_out, turn_result, card.msg_id
 
     try:

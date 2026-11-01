@@ -23,7 +23,15 @@ if (-not (Test-Path $TargetEnv)) {
     }
 }
 
-$Port = if ($env:ASSISTANT_PORT) { $env:ASSISTANT_PORT } elseif ($env:PORT) { $env:PORT } else { "8899" }
+$EnvPort = ""
+if (Test-Path $TargetEnv) {
+    Get-Content $TargetEnv | ForEach-Object {
+        if ($_ -match '^(?:ASSISTANT_PORT|PORT)\s*=\s*["'']?(\d+)["'']?') {
+            $EnvPort = $matches[1]
+        }
+    }
+}
+$Port = if ($env:ASSISTANT_PORT) { $env:ASSISTANT_PORT } elseif ($env:PORT) { $env:PORT } elseif ($EnvPort) { $EnvPort } else { "8899" }
 
 Write-Host "=== 正在啟動 Personal Assistant ===" -ForegroundColor Green
 Write-Host "工作目錄: $ScriptDir"
