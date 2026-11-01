@@ -13,19 +13,29 @@ import os
 import sys
 import json
 import time
-import fcntl
 import shutil
+import tempfile
 import threading
 import subprocess
 import urllib.request
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GWS_DIR = Path.home() / ".config" / "gws"
 GWS_BACKUP_DIR = GWS_DIR / ".backup"
-GWS_LOCK_FILE = Path("/tmp/mac_mini_gws_cred.lock")
-GWS_AUTH_ALERT_STAMP = Path("/tmp/mac_mini_gws_auth_alert.stamp")
+GWS_LOCK_FILE = Path(tempfile.gettempdir()) / "mac_mini_gws_cred.lock"
+GWS_AUTH_ALERT_STAMP = Path(tempfile.gettempdir()) / "mac_mini_gws_auth_alert.stamp"
 AUTH_ALERT_COOLDOWN_SEC = 6 * 3600  # 6 小時內最多發送一次過期告警
 
 _THREAD_LOCK = threading.Lock()
@@ -42,7 +52,13 @@ class _FileLockContext:
         try:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
             self._fd = os.open(str(self.lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(self._fd, fcntl.LOCK_EX)
+            if fcntl:
+                fcntl.flock(self._fd, fcntl.LOCK_EX)
+            elif msvcrt:
+                try:
+                    msvcrt.locking(self._fd, msvcrt.LK_LOCK, 1)
+                except Exception:
+                    pass
         except Exception:
             pass
         return self
@@ -50,7 +66,13 @@ class _FileLockContext:
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             if self._fd is not None:
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                if fcntl:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                elif msvcrt:
+                    try:
+                        msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+                    except Exception:
+                        pass
                 os.close(self._fd)
                 self._fd = None
         except Exception:
