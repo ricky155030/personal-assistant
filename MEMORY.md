@@ -1,4 +1,4 @@
-# Personal Assistant Master Memory (`agent.md`)
+# Personal Assistant Master Memory (`MEMORY.md`)
 
 > 此檔案為 Mac mini 個人助理的完整聚合記憶庫（由 `memory/*.md` 自動同步生成）。
 > 模組化子記憶位於 `memory/` 目錄，具體日程與待辦事項由 Google Calendar「待辦事項」日曆維護。

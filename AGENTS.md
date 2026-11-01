@@ -53,7 +53,7 @@
      - `memory/preferences.md`：飲食生活、系統與工具偏好。
      - `memory/projects.md`：專案目標與排程原則。
      - `memory/notes.md`：重大里程碑與備忘筆記。
-   - 根目錄 `agent.md` 為全域聚合編譯檔，由 `memory_manager` 自動同步。
+   - 根目錄 `MEMORY.md` 為全域聚合編譯檔，由 `memory_manager` 自動同步。
    - **記憶萃取與沉澱邊界 (Memory Ingestion Boundaries)**：
      - **必須主動沉澱（長期資產）**：
        - 專案與外部資產（Google Sheets/Docs、Notion、GitHub Repo 等持久連結）$\rightarrow$ 寫入 `memory/projects.md`。
@@ -66,7 +66,7 @@
      - 當助理主動記錄長期資產或偏好時，**必須在 Telegram 鏡像回覆末尾顯式標註秘書備忘**：
        `───────────────`
        `📝 秘書備忘：已將 [...] 收錄至 memory/...。若不需要請直接告知撤回。`
-     - 主人若後續回覆「這不用記」或要求撤回，助理必須立刻從對應模組移除並重新同步 `agent.md`。
+     - 主人若後續回覆「這不用記」或要求撤回，助理必須立刻從對應模組移除並重新同步 `MEMORY.md`。
 2. **專屬技能調用**：
    - 本專案目錄 `.agents/skills/` 內存放了主人的個人專屬技能，優先調用合適技能。
    - **Google Calendar 待辦管理**：主人交代的所有日程、會議、待辦與提醒，一律固定寫入「待辦事項」行事曆中。

@@ -2,7 +2,7 @@
 Mac mini Assistant 每日記憶庫夜間審查與自動歸檔排程器 (Daily Memory Audit & Sync Scheduler)
 
 職責：
-1. 每天固定時間（預設 23:30）檢查 memory/ 目錄與 agent.md 是否有異動。
+1. 每天固定時間（預設 23:30）檢查 memory/ 目錄與 MEMORY.md 是否有異動。
 2. 若有變動，呼叫 LLM 進行記憶審查、格式校對與語意摘要。
 3. 自動執行 git add, commit, push origin main。
 4. 推送 Telegram 歸檔報告給主人。
@@ -23,9 +23,9 @@ from memory_manager import memory_manager
 from telegram_service import send_telegram_sync
 
 def audit_diff_with_llm(diff_text: str, status_text: str) -> Dict[str, str]:
-    """呼叫 LLM 審查 memory/ 與 agent.md 的變更內容並產生 Commit Message"""
+    """呼叫 LLM 審查 memory/ 與 MEMORY.md 的變更內容並產生 Commit Message"""
     prompt = (
-        "請以專業個人執行秘書的身分，審查以下 Mac mini 個人助理記憶庫（memory/ 與 agent.md）的當日異動 (Git Diff)。\n\n"
+        "請以專業個人執行秘書的身分，審查以下 Mac mini 個人助理記憶庫（memory/ 與 MEMORY.md）的當日異動 (Git Diff)。\n\n"
         "任務：\n"
         "1. 檢查內容是否符合結構化記憶規範（去除冗詞雜訊、確認分類合宜）。\n"
         "2. 以繁體中文條列摘要今天變更的核心重點（1～3 點，每點前面加符號 •，簡明俐落）。\n"
@@ -63,7 +63,7 @@ def audit_diff_with_llm(diff_text: str, status_text: str) -> Dict[str, str]:
 
     # 回退預設值
     return {
-        "summary": "• 記憶庫模組與 agent.md 自動同步更新",
+        "summary": "• 記憶庫模組與 MEMORY.md 自動同步更新",
         "commit_message": f"docs(memory): sync daily memory ({datetime.now().strftime('%Y-%m-%d')})",
     }
 
@@ -71,15 +71,15 @@ def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
     """
     檢查記憶庫狀態，若有更新則編譯、由 LLM 審查、Commit、Push 並推播 Telegram
     """
-    # 1. 確保最新模組聚合編譯至 agent.md
+    # 1. 確保最新模組聚合編譯至 MEMORY.md
     try:
-        memory_manager.sync_to_agent_md()
+        memory_manager.sync_to_memory_md()
     except Exception as e:
-        print(f"[MemoryScheduler] ⚠️ 同步 agent.md 發生錯誤: {e}")
+        print(f"[MemoryScheduler] ⚠️ 同步 MEMORY.md 發生錯誤: {e}")
 
     # 2. 檢查 Git 狀態
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain", "memory/", "agent.md"],
+        ["git", "status", "--porcelain", "memory/", "MEMORY.md"],
         capture_output=True,
         text=True,
         cwd=settings.BASE_DIR,
@@ -95,7 +95,7 @@ def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
 
     # 3. 提取 Diff
     diff_proc = subprocess.run(
-        ["git", "diff", "memory/", "agent.md"],
+        ["git", "diff", "memory/", "MEMORY.md"],
         capture_output=True,
         text=True,
         cwd=settings.BASE_DIR,
@@ -110,7 +110,7 @@ def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
 
     # 5. Git Add, Commit, Push
     try:
-        subprocess.run(["git", "add", "memory/", "agent.md"], check=True, cwd=settings.BASE_DIR)
+        subprocess.run(["git", "add", "memory/", "MEMORY.md"], check=True, cwd=settings.BASE_DIR)
         subprocess.run(["git", "commit", "-m", commit_msg], check=True, cwd=settings.BASE_DIR)
         push_proc = subprocess.run(
             ["git", "push", "origin", "main"],
@@ -137,7 +137,7 @@ def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
     tg_text = (
         f"🌙 <b>【每日記憶庫夜間歸檔完成】</b>\n\n"
         f"📝 <b>變更摘要</b>：\n{summary}\n\n"
-        f"🔍 <b>LLM 審查</b>：格式已校驗，agent.md 已同步編譯\n"
+        f"🔍 <b>LLM 審查</b>：格式已校驗，MEMORY.md 已同步編譯\n"
         f"🚀 <b>GitHub</b>：已自動提交並推送 (<code>{commit_hash}</code>)"
     )
     send_telegram_sync(tg_text, parse_mode="HTML")

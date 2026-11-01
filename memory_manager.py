@@ -14,19 +14,20 @@ class MemoryManager:
       - projects.md: 專案目標與日曆委派原則
       - notes.md: 重大里程碑與備忘筆記
     日常待辦事項則動態委派至 Google Calendar「待辦事項」。
-    同時自動編譯聚合為 agent.md 以相容全系統一次性閱讀需求。
+    同時自動編譯聚合為 MEMORY.md 以相容全系統一次性閱讀需求。
     """
 
-    def __init__(self, memory_dir: Path = settings.MEMORY_DIR, agent_md_path: Path = settings.AGENT_MD_PATH):
+    def __init__(self, memory_dir: Path = settings.MEMORY_DIR, memory_md_path: Path = settings.MEMORY_MD_PATH):
         self.memory_dir = memory_dir
-        self.agent_md_path = agent_md_path
+        self.memory_md_path = memory_md_path
+        self.agent_md_path = memory_md_path  # 兼容別名
         self.profile_path = self.memory_dir / "profile.md"
         self.preferences_path = self.memory_dir / "preferences.md"
         self.projects_path = self.memory_dir / "projects.md"
         self.notes_path = self.memory_dir / "notes.md"
 
         self._ensure_files_exist()
-        self.sync_to_agent_md()
+        self.sync_to_memory_md()
 
     def _ensure_files_exist(self):
         """確保 memory 目錄與基礎模組檔案齊全"""
@@ -87,7 +88,7 @@ class MemoryManager:
         ]
         
         banner = (
-            "# Personal Assistant Master Memory (`agent.md`)\n\n"
+            "# Personal Assistant Master Memory (`MEMORY.md`)\n\n"
             "> 此檔案為 Mac mini 個人助理的完整聚合記憶庫（由 `memory/*.md` 自動同步生成）。\n"
             "> 模組化子記憶位於 `memory/` 目錄，具體日程與待辦事項由 Google Calendar「待辦事項」日曆維護。\n\n"
             "---\n\n"
@@ -102,20 +103,24 @@ class MemoryManager:
         
         return banner + "\n\n---\n\n".join(sections) + "\n"
 
-    def sync_to_agent_md(self):
-        """將編譯後的記憶同步至 agent.md，確保向下相容與全域載入"""
+    def sync_to_memory_md(self):
+        """將編譯後的記憶同步至 MEMORY.md，確保向下相容與全域載入"""
         try:
-            self._backup(self.agent_md_path)
+            self._backup(self.memory_md_path)
             full_content = self.compile_memory()
-            self.agent_md_path.write_text(full_content, encoding="utf-8")
+            self.memory_md_path.write_text(full_content, encoding="utf-8")
         except Exception as e:
-            self._log_audit("error", {"action": "sync_to_agent_md", "error": str(e)})
+            self._log_audit("error", {"action": "sync_to_memory_md", "error": str(e)})
+
+    def sync_to_agent_md(self):
+        """相容別名"""
+        self.sync_to_memory_md()
 
     def read_memory(self) -> str:
         """讀取聚合後的完整記憶"""
-        if not self.agent_md_path.exists():
-            self.sync_to_agent_md()
-        return self.agent_md_path.read_text(encoding="utf-8")
+        if not self.memory_md_path.exists():
+            self.sync_to_memory_md()
+        return self.memory_md_path.read_text(encoding="utf-8")
 
     def read_module(self, name: str) -> Optional[str]:
         """讀取單一模組內容 (例如 'preferences', 'profile', 'notes')"""
@@ -148,8 +153,8 @@ class MemoryManager:
         updated_content = "\n".join(new_lines) + "\n"
         self.preferences_path.write_text(updated_content, encoding="utf-8")
         
-        # 同步回 agent.md
-        self.sync_to_agent_md()
+        # 同步回 MEMORY.md
+        self.sync_to_memory_md()
         self._log_audit("preference", {"category": category, "detail": detail})
         return f"已記錄偏好至 memory/preferences.md：[{category}] {detail}"
 
@@ -164,7 +169,7 @@ class MemoryManager:
         updated_content = content + f"\n{new_entry}\n"
         self.notes_path.write_text(updated_content, encoding="utf-8")
         
-        self.sync_to_agent_md()
+        self.sync_to_memory_md()
         self._log_audit("note", {"note": note})
         return f"已添加備忘至 memory/notes.md：{note}"
 
@@ -189,7 +194,7 @@ class MemoryManager:
         with open(settings.DEMANDS_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(demand_record, ensure_ascii=False) + "\n")
             
-        self.sync_to_agent_md()
+        self.sync_to_memory_md()
         self._log_audit("demand", demand_record)
         return f"已記錄專案項目至 memory/projects.md：[{status}] {title}"
 

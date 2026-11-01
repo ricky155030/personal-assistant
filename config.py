@@ -59,7 +59,8 @@ class Settings(BaseModel):
 
     # 檔案路徑
     BASE_DIR: Path = BASE_DIR
-    AGENT_MD_PATH: Path = BASE_DIR / "agent.md"
+    MEMORY_MD_PATH: Path = BASE_DIR / "MEMORY.md"
+    AGENT_MD_PATH: Path = MEMORY_MD_PATH  # 兼容別名
     MEMORY_DIR: Path = BASE_DIR / "memory"
     DATA_DIR: Path = BASE_DIR / "data"
     HANDOFFS_DIR: Path = BASE_DIR / "data" / "handoffs"

@@ -642,10 +642,10 @@ def run_interactive_wizard():
 
     try:
         from memory_manager import MemoryManager
-        MemoryManager().sync_to_agent_md()
-        print(f"✅ 已自動編譯全域記憶庫聚合檔：{Colors.BOLD}{BASE_DIR / 'agent.md'}{Colors.ENDC}")
+        MemoryManager().sync_to_memory_md()
+        print(f"✅ 已自動編譯全域記憶庫聚合檔：{Colors.BOLD}{BASE_DIR / 'MEMORY.md'}{Colors.ENDC}")
     except Exception as e:
-        print(f"{Colors.YELLOW}⚠️ 自動編譯 agent.md 略過 ({e}){Colors.ENDC}")
+        print(f"{Colors.YELLOW}⚠️ 自動編譯 MEMORY.md 略過 ({e}){Colors.ENDC}")
 
     print(f"\n{Colors.CYAN}{Colors.BOLD}══════════════════════════════════════════════════════════════════════════════")
     print(f"🎉 恭喜！Mac mini Personal Assistant 初始化配置完成！")
@@ -735,7 +735,7 @@ def run_non_interactive(args):
 
     try:
         from memory_manager import MemoryManager
-        MemoryManager().sync_to_agent_md()
+        MemoryManager().sync_to_memory_md()
     except Exception:
         pass
 

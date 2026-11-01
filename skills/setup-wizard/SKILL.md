@@ -1,6 +1,6 @@
 ---
 name: setup-wizard
-description: 個人 AI 助理初始化、隱私金鑰設定、技能模組前置相依檢驗 (Doctor) 與配置管理技能。當主人要求「初始化個人助理」、「設定個人資訊」、「設定帳號密碼」、「修改 Telegram token」、「更新通訊白名單」、「開啟/啟用技能」、「關閉/停用技能」、「技能健檢/Doctor」、「日曆ID設定」、「/setup」時觸發本技能。引導配置主人稱呼、聯絡資訊、Telegram Token、Tailscale 網域、安全性 API Key、技能專屬參數與相依檢驗，並自動同步全域模組化記憶庫 (memory/ 與 agent.md)。
+description: 個人 AI 助理初始化、隱私金鑰設定、技能模組前置相依檢驗 (Doctor) 與配置管理技能。當主人要求「初始化個人助理」、「設定個人資訊」、「設定帳號密碼」、「修改 Telegram token」、「更新通訊白名單」、「開啟/啟用技能」、「關閉/停用技能」、「技能健檢/Doctor」、「日曆ID設定」、「/setup」時觸發本技能。引導配置主人稱呼、聯絡資訊、Telegram Token、Tailscale 網域、安全性 API Key、技能專屬參數與相依檢驗，並自動同步全域模組化記憶庫 (memory/ 與 MEMORY.md)。
 ---
 
 # 個人助理設定嚮導與技能調度引擎 (Setup Wizard & Skills Engine)
@@ -113,4 +113,4 @@ python3 setup.py
 ## 🔒 安全與透明度原則
 1. **本地檔案權限保護**：寫入的 `.env` 檔案權限嚴格設為 `600`（僅本機使用者可讀）。
 2. **機敏資訊不進 Git**：Telegram Token、API Key 等均只存在於本機 `.env`，嚴禁寫入任何 Git 追蹤檔案。
-3. **記憶同步透明化**：任何身分資訊變更均即時記錄於 `memory/profile.md` 並聚合編譯至 `agent.md`。
+3. **記憶同步透明化**：任何身分資訊變更均即時記錄於 `memory/profile.md` 並聚合編譯至 `MEMORY.md`。
