@@ -167,31 +167,43 @@ class QuotaService:
             else:
                 lines.append(f"• 重啟保護門檻：<b>{context_status.get('threshold', 0):.0%}</b> (超過且連續閒置 {idle_thresh} 分鐘自動 Session Handoff)\n")
 
-        if summary.get("email") or summary.get("plan_tier"):
+        engine = (context_status.get("engine") if context_status else "")
+        if not engine:
+            try:
+                from config import settings
+                engine = getattr(settings, "AGENT_ENGINE", "agy")
+            except Exception:
+                engine = "agy"
+
+        if engine.lower() != "claude" and (summary.get("email") or summary.get("plan_tier")):
             account_info = summary.get("email", "")
             if summary.get("plan_tier"):
                 account_info += f" ({summary.get('plan_tier')})"
             lines.append(f"👤 <b>方案帳號</b>：<code>{account_info}</code>\n")
 
-        # Gemini 配額
-        lines.append("🔵 <b>Google Gemini 配額</b>")
-        lines.append(f"• <b>5 小時區間 (Rolling 5h)</b>：<b>{g_5h['remaining_pct']}%</b> 剩餘")
-        if g_5h.get("refreshes_in"):
-            reset_hint = f" (約台北時間 {g_5h['reset_time_taipei']})" if g_5h.get("reset_time_taipei") else ""
-            lines.append(f"  ⏳ 刷新倒數：<code>{g_5h['refreshes_in']}</code>{reset_hint}")
-        lines.append(f"  {_bar(g_5h['remaining_pct'])}\n")
+        if engine.lower() == "claude":
+            lines.append("🟣 <b>Claude Code 引擎運行中</b>")
+            lines.append("• 核心調度 Anthropic Claude 模型，不消耗 Gemini 額度。\n")
+        else:
+            # Gemini 配額
+            lines.append("🔵 <b>Google Gemini 配額</b>")
+            lines.append(f"• <b>5 小時區間 (Rolling 5h)</b>：<b>{g_5h['remaining_pct']}%</b> 剩餘")
+            if g_5h.get("refreshes_in"):
+                reset_hint = f" (約台北時間 {g_5h['reset_time_taipei']})" if g_5h.get("reset_time_taipei") else ""
+                lines.append(f"  ⏳ 刷新倒數：<code>{g_5h['refreshes_in']}</code>{reset_hint}")
+            lines.append(f"  {_bar(g_5h['remaining_pct'])}\n")
 
-        lines.append(f"• <b>7 天週區間 (Weekly 7d)</b>：<b>{g_w['remaining_pct']}%</b> 剩餘")
-        if g_w.get("refreshes_in"):
-            reset_hint = f" (約台北時間 {g_w['reset_time_taipei']})" if g_w.get("reset_time_taipei") else ""
-            lines.append(f"  ⏳ 刷新倒數：<code>{g_w['refreshes_in']}</code>{reset_hint}")
-        lines.append(f"  {_bar(g_w['remaining_pct'])}\n")
+            lines.append(f"• <b>7 天週區間 (Weekly 7d)</b>：<b>{g_w['remaining_pct']}%</b> 剩餘")
+            if g_w.get("refreshes_in"):
+                reset_hint = f" (約台北時間 {g_w['reset_time_taipei']})" if g_w.get("reset_time_taipei") else ""
+                lines.append(f"  ⏳ 刷新倒數：<code>{g_w['refreshes_in']}</code>{reset_hint}")
+            lines.append(f"  {_bar(g_w['remaining_pct'])}\n")
 
-        # 第三方模型
-        if p3_5h.get("remaining_pct") is not None or p3_w.get("remaining_pct") is not None:
-            lines.append("🟣 <b>第三方模型 (Claude / GPT 3P)</b>")
-            lines.append(f"• 5 小時區間：<b>{p3_5h['remaining_pct']}%</b> 剩餘 ({p3_5h.get('refreshes_in', '')})")
-            lines.append(f"• 7 天週區間：<b>{p3_w['remaining_pct']}%</b> 剩餘 ({p3_w.get('refreshes_in', '')})\n")
+            # 第三方模型
+            if p3_5h.get("remaining_pct") is not None or p3_w.get("remaining_pct") is not None:
+                lines.append("🟣 <b>第三方模型 (Claude / GPT 3P)</b>")
+                lines.append(f"• 5 小時區間：<b>{p3_5h['remaining_pct']}%</b> 剩餘 ({p3_5h.get('refreshes_in', '')})")
+                lines.append(f"• 7 天週區間：<b>{p3_w['remaining_pct']}%</b> 剩餘 ({p3_w.get('refreshes_in', '')})\n")
 
         return "\n".join(lines)
 

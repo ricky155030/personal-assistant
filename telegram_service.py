@@ -360,25 +360,18 @@ def markdown_to_telegram_html(text: str, allow_quotes: bool = True) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
 
-def format_telegram_response(
-    reply: str,
+def build_info_line(
     user_query: str,
+    reply: str,
     latency: float,
     actions: Optional[List[str]] = None,
-    report_link_html: str = "",
     thinking_level: Optional[str] = None
 ) -> str:
     """
-    依照方案 1（置底一體化 Quote）格式化 Telegram 訊息：
-    第一行：使用者問題
-    第二行：⏱️ 耗時 ｜ 🛠️ 技能 ｜ ⚡ 7d: 週配額% (Thinking Level)
+    依照當前啟動之大腦引擎動態產生 Telegram 置底卡片之指標列：
+    - agy (Gemini): ⏱️ 耗時 ｜ 🛠️ 技能 ｜ ⚡ 7d: 週配額% (Level) ｜ 🧠 Context: X%
+    - claude / 其他: ⏱️ 耗時 ｜ 🛠️ 技能 (Level) ｜ 🧠 Context: X% (不放 Gemini 7d 週配額)
     """
-    try:
-        q_summary = quota_service.get_quota_summary()
-        g_w_pct = q_summary.get("gemini", {}).get("weekly_7d", {}).get("remaining_pct", 100.0)
-    except Exception:
-        g_w_pct = 100.0
-
     # 1. 耗時格式化 (極速家電通道以兩位小數呈現，一般查詢以一位小數呈現)
     if latency < 0.1:
         latency_str = f"⚡ {latency:.2f}s"
@@ -393,7 +386,7 @@ def format_telegram_response(
     if not level_candidate and actions:
         for a in actions:
             a_lower = a.lower()
-            if "thinking:" in a_lower or "level:" in a_lower or "(low)" in a_lower or "(med)" in a_lower or "(high)" in a_lower or "(medium)" in a_lower:
+            if any(k in a_lower for k in ["thinking:", "level:", "(low)", "(med)", "(high)", "(medium)"]):
                 if "low" in a_lower:
                     level_candidate = "low"
                 elif "high" in a_lower:
@@ -402,17 +395,79 @@ def format_telegram_response(
                     level_candidate = "med"
                 break
 
+    lvl_name = ""
     level_tag = ""
+    ctx_pct = None
+
     if level_candidate:
         lvl_map = {"low": "Low", "medium": "Med", "med": "Med", "high": "High"}
-        level_tag = f" ({lvl_map.get(level_candidate.lower(), level_candidate.capitalize())})"
+        lvl_name = lvl_map.get(level_candidate.lower(), level_candidate.capitalize())
+        level_tag = f" ({lvl_name})"
 
-    # 4. 週配額格式化 (在配額旁邊標記思考等級)
-    quota_str = f"⚡ 7d: {g_w_pct:.1f}%{level_tag}"
+        # 讀取當前大腦的 Context 用量百分比
+        try:
+            lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
+            brain_key = f"{lvl_norm}_brain"
+            stat = get_active_brain().get_status()
+            target_brain = stat.get(brain_key, {})
+            ctx_pct = target_brain.get("percent")
+            if ctx_pct is None or ctx_pct == 0:
+                import urllib.request, json
+                req = urllib.request.Request(f"http://127.0.0.1:{settings.PORT}/api/quota")
+                with urllib.request.urlopen(req, timeout=0.5) as resp:
+                    api_data = json.loads(resp.read().decode("utf-8"))
+                    ctx_pct = api_data.get("context", {}).get(brain_key, {}).get("percent", 0.0)
+        except Exception:
+            pass
+    else:
+        # 若無指定等級，嘗試讀取整體 Context 用量
+        try:
+            stat = get_active_brain().get_status()
+            ctx_pct = stat.get("med_brain", {}).get("percent", stat.get("percent"))
+        except Exception:
+            pass
 
-    # 5. 第二行指標列
-    info_line = f"{latency_str} ｜ {skill} ｜ {quota_str}"
+    # 4. 判斷當前大腦引擎 (agy / claude / etc.)
+    engine = ""
+    try:
+        engine = (get_active_brain().get_status().get("engine") or getattr(settings, "AGENT_ENGINE", "agy")).lower()
+    except Exception:
+        engine = getattr(settings, "AGENT_ENGINE", "agy").lower()
 
+    parts = [latency_str]
+    if engine == "agy":
+        try:
+            q_summary = quota_service.get_quota_summary()
+            g_w_pct = q_summary.get("gemini", {}).get("weekly_7d", {}).get("remaining_pct", 100.0)
+        except Exception:
+            g_w_pct = 100.0
+        quota_str = f"⚡ 7d: {g_w_pct:.1f}%{level_tag}"
+        parts.append(skill)
+        parts.append(quota_str)
+    else:
+        # 非 agy 引擎 (如 claude): 依主人指示不顯示 Gemini 7d 週配額，若有等級則標註於技能旁
+        skill_display = f"{skill} ({lvl_name})" if lvl_name else skill
+        parts.append(skill_display)
+
+    if ctx_pct is not None:
+        parts.append(f"🧠 Context: {ctx_pct:.1f}%")
+
+    return " ｜ ".join(parts)
+
+def format_telegram_response(
+    reply: str,
+    user_query: str,
+    latency: float,
+    actions: Optional[List[str]] = None,
+    report_link_html: str = "",
+    thinking_level: Optional[str] = None
+) -> str:
+    """
+    依照方案 1（置底一體化 Quote）格式化 Telegram 訊息：
+    第一行：使用者問題
+    第二行：依大腦動態格式化指標列 (agy 顯示 7d 週配額，claude 顯示模型等級與 Context)
+    """
+    info_line = build_info_line(user_query, reply, latency, actions, thinking_level)
     clean_reply = markdown_to_telegram_html(reply.strip())
     safe_user_query = html.escape(user_query)
     return f"🤖 {clean_reply}{report_link_html}\n\n<blockquote>👤 <i>{safe_user_query}</i>\n{info_line}</blockquote>"
@@ -492,56 +547,7 @@ def send_formatted_telegram_reply(
     4. 末段附帶置底 Quote 效能卡片與報告連結
     5. 各段落獨立 Markdown->Telegram HTML 渲染與 Fallback 標籤淨化
     """
-    try:
-        q_summary = quota_service.get_quota_summary()
-        g_w_pct = q_summary.get("gemini", {}).get("weekly_7d", {}).get("remaining_pct", 100.0)
-    except Exception:
-        g_w_pct = 100.0
-
-    latency_str = f"⚡ {latency:.2f}s" if latency < 0.1 else f"⏱️ {latency:.1f}s"
-    skill = infer_skill(user_query, reply, actions)
-
-    level_candidate = thinking_level
-    if not level_candidate and actions:
-        for a in actions:
-            a_lower = a.lower()
-            if any(k in a_lower for k in ["thinking:", "level:", "(low)", "(med)", "(high)", "(medium)"]):
-                if "low" in a_lower:
-                    level_candidate = "low"
-                elif "high" in a_lower:
-                    level_candidate = "high"
-                elif "med" in a_lower or "medium" in a_lower:
-                    level_candidate = "med"
-                break
-
-    level_tag = ""
-    ctx_str = ""
-    if level_candidate:
-        lvl_map = {"low": "Low", "medium": "Med", "med": "Med", "high": "High"}
-        lvl_name = lvl_map.get(level_candidate.lower(), level_candidate.capitalize())
-        level_tag = f" ({lvl_name})"
-        
-        # 讀取當前大腦的 Context 用量百分比
-        try:
-            lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
-            brain_key = f"{lvl_norm}_brain"
-            stat = get_active_brain().get_status()
-            target_brain = stat.get(brain_key, {})
-            ctx_pct = target_brain.get("percent")
-            if ctx_pct is None or ctx_pct == 0:
-                # 若當前進程池未記錄，向本機 API 服務查詢即時狀態
-                import urllib.request, json
-                req = urllib.request.Request(f"http://127.0.0.1:{settings.PORT}/api/quota")
-                with urllib.request.urlopen(req, timeout=0.5) as resp:
-                    api_data = json.loads(resp.read().decode("utf-8"))
-                    ctx_pct = api_data.get("context", {}).get(brain_key, {}).get("percent", 0.0)
-            if ctx_pct is not None:
-                ctx_str = f" ｜ 🧠 Context: {ctx_pct:.1f}%"
-        except Exception:
-            pass
-
-    quota_str = f"⚡ 7d: {g_w_pct:.1f}%{level_tag}"
-    info_line = f"{latency_str} ｜ {skill} ｜ {quota_str}{ctx_str}"
+    info_line = build_info_line(user_query, reply, latency, actions, thinking_level)
     safe_user_query = html.escape(user_query)
     quote_card = f"\n\n<blockquote>👤 <i>{safe_user_query}</i>\n{info_line}</blockquote>"
 

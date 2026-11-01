@@ -12,6 +12,14 @@ import subprocess
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
+# ponytail: 腳本直接執行時 shell 不會載入 .env，不補這段 SHEET_ALIASES_JSON 永遠讀不到
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / os.getenv("ENV_FILE", ".env"), override=False)
+except Exception:
+    pass
+
 SHEET_ALIASES = {
     "shopping": os.getenv("SHOPPING_SHEET_ID", ""),
     "待買": os.getenv("SHOPPING_SHEET_ID", ""),
@@ -23,7 +31,6 @@ try:
 except Exception:
     pass
 
-BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 

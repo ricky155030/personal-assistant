@@ -110,6 +110,36 @@ def test_claude_singleton_interface():
     assert "餐廳訂位" in status_text or "瀏覽器" in status_text
 
 
+def test_telegram_metadata_dispatch_by_engine():
+    """驗證 Telegram 訊息置底指標列依引擎分流（Claude 排除 Gemini 7d 週配額，AGY 保留）"""
+    from telegram_service import build_info_line
+    from quota_service import quota_service
+    from config import settings
+
+    orig_engine = settings.AGENT_ENGINE
+
+    try:
+        # 1. 測試 AGY 引擎
+        settings.AGENT_ENGINE = "agy"
+        line_agy = build_info_line("你好", "好的", 1.2, actions=["thinking: med"])
+        assert "7d:" in line_agy, f"AGY 指標列應包含 7d 週配額: {line_agy}"
+        assert "Med" in line_agy
+
+        # 2. 測試 Claude 引擎
+        settings.AGENT_ENGINE = "claude"
+        line_claude = build_info_line("你能存取我的 google sheet 嗎", "可以的", 50.3, actions=["thinking: med"])
+        assert "7d:" not in line_claude, f"Claude 指標列絕不應包含 7d 週配額: {line_claude}"
+        assert "Med" in line_claude, f"Claude 指標列應於技能旁標註等級: {line_claude}"
+        assert "核心大腦" in line_claude
+
+        # 3. 測試 /status 訊息在 Claude 引擎下排除 Gemini 配額
+        status_claude = quota_service.format_telegram_message({"engine": "claude", "is_ready": True})
+        assert "Google Gemini 配額" not in status_claude
+        assert "Claude Code 引擎運行中" in status_claude
+    finally:
+        settings.AGENT_ENGINE = orig_engine
+
+
 if __name__ == "__main__":
     print("🧪 正在執行跨平台相容性測試...")
     test_browser_relay_cross_platform_config()
