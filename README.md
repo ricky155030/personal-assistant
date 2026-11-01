@@ -156,14 +156,41 @@ python3 setup.py
 
 > 💡 **對話式設定**：服務啟動後，您亦可隨時在 Antigravity CLI 或 Telegram 對話中說「**幫我設定個人資訊**」或「**初始化設定**」，直接呼叫內建的 `setup-wizard` 技能以對話方式完成配置！
 
-### 4. 啟動服務
+### 4. 啟動服務 (手動啟動 vs 開機自啟)
+
+系統提供多種運行方式，可依您的使用情境選擇：
+
+#### 🔹 模式 A：前台手動啟動 (開發除錯最推薦)
+能直接在終端機查看即時思考、工具調用與錯誤訊息：
 ```bash
-# 開發前台啟動（若尚未設定，將自動提示啟動嚮導）
+# macOS / Linux:
 ./start.sh
 
-# 或以背景守護模式啟動
+# Windows (PowerShell):
+.\start.ps1
+
+# 或跨平台通用直接指令:
+uv run uvicorn main:app --host 0.0.0.0 --port 8899
+```
+
+#### 🔹 模式 B：背景不掛斷啟動 (終端關閉繼續跑)
+```bash
+# macOS / Linux:
 nohup ./start.sh > data/assistant.log 2>&1 &
 ```
+
+#### 🔹 模式 C：開機常駐守護 (全天候家電模式，防重開機失聯)
+若您經常透過 Apple Watch 隨身交代，建議掛載為系統常駐守護（支援開機自啟與崩潰自動重啟）：
+- **macOS (`launchd`)**：
+  參考 `scripts/com.user.personal-assistant.plist.example`，將設定檔複製至 `~/Library/LaunchAgents/` 並以 `launchctl load` 載入即可。
+- **Windows (工作排程器)**：
+  在 PowerShell 以系統管理員執行：
+  ```powershell
+  $action = New-ScheduledTaskAction -Execute "uv" -Argument "run uvicorn main:app --host 0.0.0.0 --port 8899" -WorkingDirectory "$PWD"
+  $trigger = New-ScheduledTaskTrigger -AtLogOn
+  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0
+  Register-ScheduledTask -TaskName "PersonalAssistant" -Action $action -Trigger $trigger -Settings $settings
+  ```
 
 啟動後，API 預設監聽於 `http://0.0.0.0:8899`。
 

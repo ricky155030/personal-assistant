@@ -23,7 +23,7 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
-echo "=== 正在啟動 Mac mini Personal Assistant ==="
+echo "=== 正在啟動 Personal Assistant ==="
 echo "工作目錄: $DIR"
 echo "監聽埠號: 8899"
 
