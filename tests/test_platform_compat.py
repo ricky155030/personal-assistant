@@ -140,6 +140,30 @@ def test_telegram_metadata_dispatch_by_engine():
         settings.AGENT_ENGINE = orig_engine
 
 
+def test_google_sheets_tool_generalization():
+    """驗證 google-sheets 工具已完全通用化，無特定領域硬編碼 (如 baby) 並支援網址解析"""
+    import sys
+    from pathlib import Path
+    sheets_script_dir = Path(__file__).resolve().parents[1] / "skills" / "google-sheets" / "scripts"
+    if str(sheets_script_dir) not in sys.path:
+        sys.path.insert(0, str(sheets_script_dir))
+    
+    from sheets_tool import resolve_sheet_id, _is_fuzzy_match
+
+    # 1. 支援直接傳入完整 Google Sheets 網址並自動擷取 ID
+    test_url = "https://docs.google.com/spreadsheets/d/13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas/edit?gid=0#gid=0"
+    extracted_id = resolve_sheet_id(test_url)
+    assert extracted_id == "13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas", f"未能正確擷取試算表 ID: {extracted_id}"
+
+    # 2. 支援一般 ID 與別名
+    assert resolve_sheet_id("dummy_id_123") == "dummy_id_123"
+
+    # 3. 驗證模糊搜尋為通用比對
+    assert _is_fuzzy_match("鮮奶", "全脂鮮牛奶 936ml")
+    assert _is_fuzzy_match("apple pie", "Fresh Apple Pie Recipe")
+    assert not _is_fuzzy_match("汽水", "全脂鮮奶")
+
+
 if __name__ == "__main__":
     print("🧪 正在執行跨平台相容性測試...")
     test_browser_relay_cross_platform_config()
@@ -148,4 +172,6 @@ if __name__ == "__main__":
     print("  ✓ test_task_manager_lifecycle 通過")
     test_skills_doctor()
     print("  ✓ test_skills_doctor 通過")
+    test_google_sheets_tool_generalization()
+    print("  ✓ test_google_sheets_tool_generalization 通過")
     print("🎉 所有相容性測試 100% 通過！")
