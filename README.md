@@ -1,8 +1,8 @@
-# 🏛️ Mac mini Personal Assistant (個人 AI 私有化助理)
+# 🏛️ Personal Assistant (私有化常駐個人 AI 助理)
 
-專為 **Mac mini 本機私有化常駐** 與 **穿戴裝置（Apple Watch、iPhone、Telegram）** 設計的高效能個人 AI 助理。
+專為 **本機私有化常駐（macOS / Windows / Linux）** 與 **穿戴行動裝置（Apple Watch、iPhone、Telegram）** 設計的高效能個人 AI 助理。
 
-Mac mini 擔任「大腦與記憶中樞」，由常駐型 **Antigravity CLI (`agy`)** 結合 **FastAPI** 驅動，維護本地模組化的永久記憶庫，並透過 Tailscale 加密網道提供全天候秒級安全連線。
+由您的個人主機（Mac mini、Windows PC、Linux 迷你伺服器等）擔任「大腦與記憶中樞」，由常駐型 **Antigravity CLI (`agy`)** 結合 **FastAPI** 驅動，維護本地模組化的永久記憶庫，並透過 Tailscale 加密網道提供全天候秒級安全連線。
 
 ---
 
@@ -22,7 +22,7 @@ Mac mini 擔任「大腦與記憶中樞」，由常駐型 **Antigravity CLI (`ag
 4. **⚙️ 背景任務守護神 (`task_manager.py`) 與 Fast Handoff**：
    - 耗時任務（價格監控、社團雷達等）秒級登記脫鉤，主大腦立即釋放，背景 Worker 獨立輪詢並在命中時主動推播。
 5. **🛡️ Browser Relay 真實 Chrome 自動化**：
-   - 直接操控 Mac mini 本機真實 Chrome（Chrome-Assistant Profile），零外掛依賴，天然免疫 Cloudflare / Akamai 等驗證盾。
+   - 直接操控本機真實 Google Chrome（Chrome-Assistant Profile），跨平台原生支援 macOS、Windows 與 Linux，零外掛依賴，天然免疫 Cloudflare / Akamai 等驗證盾。
 
 ---
 
@@ -30,34 +30,34 @@ Mac mini 擔任「大腦與記憶中樞」，由常駐型 **Antigravity CLI (`ag
 
 ```mermaid
 flowchart LR
-    subgraph Clients [終端裝置]
-        AW[Apple Watch 動作按鈕]
-        TG[Telegram Bot]
-        CLI[Terminal CLI]
+    subgraph Clients ["終端裝置"]
+        AW["Apple Watch 動作按鈕"]
+        TG["Telegram Bot"]
+        CLI["Terminal CLI"]
     end
 
-    subgraph Network [Tailscale 加密網道]
-        TS[Tailscale DNS :8899]
+    subgraph Network ["Tailscale 加密網道"]
+        TS["Tailscale DNS (:8899)"]
     end
 
-    subgraph Core [Mac mini 常駐服務]
-        API[FastAPI 後端]
-        Fast[fast_intent 極速通道]
-        Agy[agy_singleton 常駐代理]
-        Mem[memory/ 模組化記憶庫]
-        TM[TaskManager 背景進程]
-        Reports[/reports 靜態服務]
+    subgraph Core ["主機常駐服務 (Host Engine)"]
+        API["FastAPI 後端"]
+        Fast["fast_intent 極速通道"]
+        Agy["agy_singleton 常駐代理"]
+        Mem["memory/ 模組化記憶庫"]
+        TM["TaskManager 背景進程"]
+        Reports["/reports 靜態服務"]
     end
 
-    subgraph Skills [專屬技能庫]
-        BR[browser-relay]
-        CP[coupang-tracker]
-        FB[fb-group-monitor]
-        GCal[google-calendar]
-        GSheet[google-sheets]
-        GMail[gmail]
-        Shop[shopping-list]
-        iMsg[imessage]
+    subgraph Skills ["專屬技能庫"]
+        BR["browser-relay"]
+        CP["coupang-tracker"]
+        FB["fb-group-monitor"]
+        GCal["google-calendar"]
+        GSheet["google-sheets"]
+        GMail["gmail"]
+        Shop["shopping-list"]
+        iMsg["imessage (macOS)"]
     end
 
     AW --> TS --> API
@@ -119,12 +119,13 @@ python3 setup.py skills set google-calendar,google-sheets,imessage
 ## 🚀 快速上手指南
 
 ### 1. 系統需求
-- **硬體**：Mac mini (Apple Silicon M 系列推薦) 或 macOS 設備
-- **軟體**：
-  - macOS 14+ (Sonoma / Sequoia)
+- **作業系統**：跨平台原生支援 **macOS**（Sonoma / Sequoia 等）、**Windows 10/11**（原生直接支援，免 WSL）、或 **Linux**（Ubuntu / Debian 等家用伺服器）
+- **硬體**：任何可常駐連網的電腦設備（Mac mini、MacBook、Windows PC、迷你主機等）
+- **軟體環境**：
   - Python 3.11+（推薦使用 [uv](https://github.com/astral-sh/uv) 管理）
+  - [Google Chrome](https://www.google.com/chrome/)（用於真實瀏覽器自動化）
   - [Google Antigravity CLI (`agy`)](https://github.com)
-  - [Tailscale](https://tailscale.com/)（用於裝置間安全內網連線）
+  - [Tailscale](https://tailscale.com/)（用於穿戴裝置與手機之安全內網連線）
 
 ### 2. 安裝與設定虛擬環境
 ```bash
@@ -134,7 +135,13 @@ cd personal-assistant
 
 # 使用 uv 建立虛擬環境並安裝相依套件
 uv venv
+
+# 啟用環境 (macOS / Linux)
 source .venv/bin/activate
+# 或 Windows (PowerShell)
+# .venv\Scripts\Activate.ps1
+
+# 安裝依賴
 uv pip install -e .
 ```
 
@@ -185,7 +192,7 @@ nohup ./start.sh > data/assistant.log 2>&1 &
    - 文字：帶入步驟 3 的 **【辭典值】**（手錶安靜震動並彈出清晰卡片，點一下即關閉；若想朗讀可改用「朗讀文字」）。
 
 ### ⌚ 步驟 3：綁定 Apple Watch 動作按鈕
-在 Apple Watch 上開啟「設定」➜「動作按鈕」➜「動作」選「捷徑」➜ 選擇「問問助理」。只要隨身攜帶的 iPhone 上開啟 Tailscale VPN，手錶發出的所有請求便能自動安全直連家中的 Mac mini！
+在 Apple Watch 上開啟「設定」➜「動作按鈕」➜「動作」選「捷徑」➜ 選擇「問問助理」。只要隨身攜帶的 iPhone 上開啟 Tailscale VPN，手錶發出的所有請求便能自動安全直連家中的主機！
 
 ---
 
