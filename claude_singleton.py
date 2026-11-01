@@ -224,11 +224,21 @@ class ClaudeWorker:
         )
         self.reader_thread.start()
 
+        # ponytail: claude CLI 收到第一則 user 訊息後才會吐 init，空等永遠等不到，先送 warmup 觸發
+        try:
+            self.proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": "reply with exactly: ok"}}) + "\n")
+            self.proc.stdin.flush()
+        except Exception:
+            pass
+
         # 等待 Claude Code 拋出 init 系統事件
         try:
             deadline = time.time() + 60.0
             while time.time() < deadline:
-                line = self.stdout_queue.get(timeout=2.0)
+                try:
+                    line = self.stdout_queue.get(timeout=2.0)
+                except queue.Empty:
+                    continue
                 if not line:
                     continue
                 try:
@@ -244,6 +254,21 @@ class ClaudeWorker:
                     elapsed = time.time() - t0
                     self._is_ready = True
                     print(f"[ClaudeWorker:{self.name.upper()}] ✅ 就緒！耗時 {elapsed:.2f}s | Session ID: {self.session_id}")
+                    # 消化 warmup 問答殘留 (assistant + result)，避免污染首次真實查詢
+                    drain_deadline = time.time() + 30.0
+                    while time.time() < drain_deadline:
+                        try:
+                            dline = self.stdout_queue.get(timeout=2.0)
+                        except queue.Empty:
+                            break
+                        if not dline:
+                            continue
+                        try:
+                            ddata = json.loads(dline)
+                        except Exception:
+                            continue
+                        if ddata.get("type") == "result":
+                            break
                     # 檢查並消化交接備忘
                     self._consume_and_archive_handoff()
                     return
