@@ -4,14 +4,15 @@ from pathlib import Path
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# 優先載入專案內 .env，若無則依序參考系統環境變數
+# 優先載入專案內 .env (支援以 ENV_FILE 自訂指定多實例設定)
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env", override=True)
+ENV_FILE_NAME = os.getenv("ENV_FILE", ".env")
+load_dotenv(BASE_DIR / ENV_FILE_NAME, override=True)
 
 class Settings(BaseModel):
     # 服務網路設定
     HOST: str = os.getenv("ASSISTANT_HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("ASSISTANT_PORT", "8899"))
+    PORT: int = int(os.getenv("ASSISTANT_PORT", os.getenv("PORT", "8899")))
     
     # 捷徑對接安全性密鑰 (建議在 .env 中自訂)
     API_KEY: str = os.getenv("ASSISTANT_API_KEY", "your-watch-secret")

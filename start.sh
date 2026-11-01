@@ -11,9 +11,11 @@ if [ "$1" = "setup" ] || [ "$1" = "--setup" ]; then
     exit 0
 fi
 
-# 初次啟動檢查：若尚未建立 .env，引導啟動設定嚮導
-if [ ! -f ".env" ]; then
-    echo "⚠️ 尚未偵測到 .env 設定檔！"
+TARGET_ENV="${ENV_FILE:-.env}"
+
+# 初次啟動檢查：若尚未建立設定檔，引導啟動設定嚮導
+if [ ! -f "$TARGET_ENV" ]; then
+    echo "⚠️ 尚未偵測到 $TARGET_ENV 設定檔！"
     read -p "是否立即啟動初始化設定嚮導？(Y/n): " choice
     choice=${choice:-Y}
     if [[ "$choice" =~ ^[Yy]$ ]]; then
@@ -23,8 +25,12 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
+# 動態解析監聽埠號 (支援 ASSISTANT_PORT 或 PORT 環境變數)
+PORT="${ASSISTANT_PORT:-${PORT:-8899}}"
+
 echo "=== 正在啟動 Personal Assistant ==="
 echo "工作目錄: $DIR"
-echo "監聽埠號: 8899"
+echo "設定檔案: $TARGET_ENV"
+echo "監聽埠號: $PORT"
 
-exec uv run uvicorn main:app --host 0.0.0.0 --port 8899
+exec uv run uvicorn main:app --host 0.0.0.0 --port "$PORT"
