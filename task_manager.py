@@ -28,10 +28,37 @@ TASKS_JSON_PATH = settings.DATA_DIR / "background_tasks.json"
 TASK_LOGS_DIR = settings.DATA_DIR / "task_logs"
 
 def is_pid_alive(pid: int) -> bool:
-    """檢查指定 PID 是否仍在運行中"""
+    """檢查指定 PID 是否仍在運行中 (跨平台支援 macOS / Linux / Windows)"""
     if pid <= 0:
         return False
+
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid
+            )
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            STILL_ACTIVE = 259
+            return exit_code.value == STILL_ACTIVE
+        except Exception:
+            return False
+
     try:
+        # 若為當前進程之子進程，嘗試非阻塞檢查並回收 zombie
+        try:
+            wpid, _ = os.waitpid(pid, os.WNOHANG)
+            if wpid == pid:
+                return False
+        except (ChildProcessError, OSError):
+            pass
+
         os.kill(pid, 0)
         return True
     except OSError:
@@ -89,14 +116,23 @@ class TaskManager:
         if args:
             cmd.extend(args)
 
-        # start_new_session=True 讓其成為完全獨立的進程群組 (Detached OS Daemon)
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            cwd=str(settings.BASE_DIR),
-            start_new_session=True
-        )
+        # 跨平台完全脫鉤啟動 (Detached OS Daemon)
+        popen_kwargs: Dict[str, Any] = {
+            "stdout": log_fp,
+            "stderr": subprocess.STDOUT,
+            "cwd": str(settings.BASE_DIR),
+        }
+        if sys.platform == "win32":
+            creationflags = 0
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+            if hasattr(subprocess, "DETACHED_PROCESS"):
+                creationflags |= subprocess.DETACHED_PROCESS
+            popen_kwargs["creationflags"] = creationflags
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        proc = subprocess.Popen(cmd, **popen_kwargs)
         log_fp.close()
 
         record = {
@@ -268,7 +304,22 @@ class TaskManager:
             return {"success": False, "error": f"讀取日誌失敗: {e}"}
 
     def _terminate_process(self, pid: int) -> bool:
-        """優雅關閉進程，若未退出則強制 SIGKILL"""
+        """優雅關閉進程，若未退出則強制關閉 (跨平台支援 macOS / Linux / Windows)"""
+        if sys.platform == "win32":
+            try:
+                # Windows: 先嘗試溫和 taskkill，若未結束則加上 /F (強制) 與 /T (遞迴子進程樹)
+                subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True, check=False)
+                for _ in range(10):
+                    time.sleep(0.1)
+                    if not is_pid_alive(pid):
+                        return True
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+                time.sleep(0.1)
+                return not is_pid_alive(pid)
+            except Exception as e:
+                print(f"[TaskManager] Windows 終止進程 {pid} 失敗: {e}", file=sys.stderr)
+                return False
+
         try:
             os.kill(pid, signal.SIGTERM)
             for _ in range(10):

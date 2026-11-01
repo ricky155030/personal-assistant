@@ -33,7 +33,9 @@ from dotenv import load_dotenv
 load_dotenv(BASE_DIR / ".env")
 
 import importlib.util
-BR_PATH = BASE_DIR / ".agents" / "skills" / "browser-relay" / "scripts" / "browser_relay.py"
+BR_PATH = BASE_DIR / "skills" / "browser-relay" / "scripts" / "browser_relay.py"
+if not BR_PATH.exists():
+    BR_PATH = BASE_DIR / ".agents" / "skills" / "browser-relay" / "scripts" / "browser_relay.py"
 spec = importlib.util.spec_from_file_location("browser_relay", BR_PATH)
 br = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(br)

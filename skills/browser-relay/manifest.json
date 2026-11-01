@@ -6,12 +6,13 @@
   "required": true,
   "default": true,
   "prerequisites": {
-    "os": ["darwin"],
+    "os": ["darwin", "win32", "linux"],
     "binaries": [
       {
         "cmd": "Google Chrome",
         "path_check": "/Applications/Google Chrome.app",
-        "install_hint": "請先安裝 Google Chrome 應用程式 (/Applications/Google Chrome.app)"
+        "path_check_win32": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "install_hint": "請先安裝 Google Chrome 應用程式"
       }
     ],
     "services": [

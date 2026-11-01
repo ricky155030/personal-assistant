@@ -19,7 +19,8 @@ import sys
 import os
 import json
 import time
-import fcntl
+import shutil
+import tempfile
 import argparse
 import subprocess
 import urllib.parse
@@ -27,6 +28,16 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union, Tuple
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
@@ -41,15 +52,63 @@ except ImportError:
     print("請使用虛擬環境中的 Python 執行：.venv/bin/python", file=sys.stderr)
     sys.exit(1)
 
-CHROME_BIN = os.getenv("CHROME_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-PROFILE_DIR = os.getenv(
-    "CHROME_ASSISTANT_PROFILE",
-    str(Path.home() / "Library" / "Application Support" / "Google" / "Chrome-Assistant")
-)
+
+def detect_chrome_bin() -> str:
+    """自動跨平台偵測本機真實 Google Chrome 執行檔路徑"""
+    env_bin = os.getenv("CHROME_PATH")
+    if env_bin and os.path.exists(env_bin):
+        return env_bin
+
+    if sys.platform == "darwin":
+        default_mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if os.path.exists(default_mac):
+            return default_mac
+    elif sys.platform == "win32":
+        candidates = [
+            Path(os.environ.get("PROGRAMFILES", "C:\\Program Files")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        ]
+        for c in candidates:
+            if c.exists():
+                return str(c)
+        which_chrome = shutil.which("chrome") or shutil.which("chrome.exe")
+        if which_chrome:
+            return which_chrome
+        return str(candidates[0])
+    else:
+        for c in ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]:
+            if os.path.exists(c):
+                return c
+        which_chrome = shutil.which("google-chrome") or shutil.which("chromium")
+        if which_chrome:
+            return which_chrome
+        return "/usr/bin/google-chrome"
+
+    return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+def get_default_profile_dir() -> str:
+    """取得跨平台專屬 Chrome-Assistant Profile 目錄"""
+    env_dir = os.getenv("CHROME_ASSISTANT_PROFILE")
+    if env_dir:
+        return env_dir
+    if sys.platform == "darwin":
+        return str(Path.home() / "Library" / "Application Support" / "Google" / "Chrome-Assistant")
+    elif sys.platform == "win32":
+        local_app = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        return str(Path(local_app) / "Google" / "Chrome-Assistant")
+    else:
+        return str(Path.home() / ".config" / "google-chrome-assistant")
+
+
+CHROME_BIN = detect_chrome_bin()
+PROFILE_DIR = get_default_profile_dir()
 CDP_PORT = int(os.getenv("CHROME_ASSISTANT_PORT", "9223"))
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
-CDP_LOCK_FILE = Path("/tmp/chrome_assistant_cdp.lock")
-CDP_LOCK_META_FILE = Path("/tmp/chrome_assistant_cdp.lock.json")
+TEMP_DIR = Path(tempfile.gettempdir())
+CDP_LOCK_FILE = TEMP_DIR / "chrome_assistant_cdp.lock"
+CDP_LOCK_META_FILE = TEMP_DIR / "chrome_assistant_cdp.lock.json"
 
 
 class ChromeAssistantClient:
@@ -89,13 +148,22 @@ class ChromeAssistantClient:
         if headless:
             cmd.append("--headless=new")
 
-        # 以獨立 session 在後台脫鉤啟動，終端結束時不被隨之銷毀
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
+        # 跨平台後台脫鉤啟動真實 Chrome 核心
+        popen_kwargs: Dict[str, Any] = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if sys.platform == "win32":
+            creationflags = 0
+            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+            if hasattr(subprocess, "DETACHED_PROCESS"):
+                creationflags |= subprocess.DETACHED_PROCESS
+            popen_kwargs["creationflags"] = creationflags
+        else:
+            popen_kwargs["start_new_session"] = True
+
+        subprocess.Popen(cmd, **popen_kwargs)
 
         start_t = time.perf_counter()
         while time.perf_counter() - start_t < timeout:
@@ -110,7 +178,7 @@ class ChromeAssistantClient:
         """
         [INFRA-02] 跨進程輕量級 CDP 操作互斥鎖 (Cross-Process Mutex)
         防止背景任務 (FB 社團監控、蝦皮上架) 與前景訂位同時爭奪 Chrome 視窗焦點或誤關彼此分頁。
-        若持有鎖之進程異常崩潰，作業系統核心會自動釋放 flock，保證零死鎖。
+        跨平台支援 macOS / Linux (flock) 與 Windows (msvcrt locking)。
         """
         CDP_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(CDP_LOCK_FILE), os.O_CREAT | os.O_RDWR, 0o600)
@@ -119,7 +187,11 @@ class ChromeAssistantClient:
         try:
             while True:
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    if fcntl:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    elif msvcrt:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                     acquired = True
                     break
                 except (IOError, OSError):
@@ -149,7 +221,11 @@ class ChromeAssistantClient:
                 except Exception:
                     pass
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    if fcntl:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    elif msvcrt:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
                 except Exception:
                     pass
             try:
@@ -896,9 +972,28 @@ class ChromeAssistantClient:
             return True
 
     def quit_browser(self) -> bool:
-        """關閉 Chrome-Assistant 瀏覽器"""
+        """關閉 Chrome-Assistant 瀏覽器 (跨平台支援 macOS / Linux / Windows)"""
         if not self.is_running():
             return True
+
+        if sys.platform == "win32":
+            try:
+                cmd = f'netstat -ano | findstr :{self.port}'
+                out = subprocess.check_output(cmd, shell=True, text=True)
+                pids = set()
+                for line in out.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 5 and "LISTENING" in parts:
+                        pid = parts[-1]
+                        if pid.isdigit() and int(pid) > 0:
+                            pids.add(int(pid))
+                for pid in pids:
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+                time.sleep(0.5)
+                return not self.is_running()
+            except Exception:
+                return False
+
         try:
             out = subprocess.check_output(["lsof", "-ti", f":{self.port}"], text=True).strip()
             pids = [int(p) for p in out.splitlines() if p.isdigit()]

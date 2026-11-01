@@ -250,10 +250,23 @@ def check_skill_doctor(skill_name: str, manifest: Optional[Dict[str, Any]] = Non
     # 2. 二進位工具檢驗 (Binaries / CLI tools)
     for b in prereqs.get("binaries", []):
         cmd = b.get("cmd")
-        path_check = b.get("path_check")
+        path_check = b.get(f"path_check_{sys.platform}", b.get("path_check"))
         install_hint = b.get("install_hint", f"需安裝 {cmd}")
         found = False
-        if path_check:
+
+        if cmd == "Google Chrome":
+            if sys.platform == "darwin":
+                found = Path("/Applications/Google Chrome.app").exists()
+            elif sys.platform == "win32":
+                candidates = [
+                    Path(os.environ.get("PROGRAMFILES", "C:\\Program Files")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                    Path(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                    Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                ]
+                found = any(c.exists() for c in candidates) or bool(shutil.which("chrome") or shutil.which("chrome.exe"))
+            else:
+                found = any(Path(p).exists() for p in ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"]) or bool(shutil.which("google-chrome") or shutil.which("chromium"))
+        elif path_check:
             found = Path(path_check).exists()
         else:
             found = bool(shutil.which(cmd))

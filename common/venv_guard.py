@@ -13,7 +13,16 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = PROJECT_ROOT / ".venv"
-VENV_PYTHON = VENV_DIR / "bin" / "python"
+if sys.platform == "win32":
+    VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
+else:
+    VENV_PYTHON = VENV_DIR / "bin" / "python"
+
+# 彈性回退：若在非預期目錄結構中存在另一端的 Python 執行檔
+if not VENV_PYTHON.exists():
+    alt_python = VENV_DIR / "Scripts" / "python.exe" if sys.platform != "win32" else VENV_DIR / "bin" / "python"
+    if alt_python.exists():
+        VENV_PYTHON = alt_python
 
 
 def ensure_venv() -> None:
