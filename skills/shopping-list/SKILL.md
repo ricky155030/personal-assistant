@@ -32,3 +32,13 @@ python3 .agents/skills/shopping-list/scripts/shopping_tool.py batch-add '[
 python3 .agents/skills/shopping-list/scripts/shopping_tool.py done "鮮奶"
 python3 .agents/skills/shopping-list/scripts/shopping_tool.py batch-done '["鮮奶", "洗衣精"]'
 ```
+
+### 4. 依情境與地點篩選 (`list --channel` / `list --category`)
+```bash
+# 查特定地點/通路（例如：好市多、全聯、日本代購）
+python3 .agents/skills/shopping-list/scripts/shopping_tool.py list --channel "好市多"
+python3 .agents/skills/shopping-list/scripts/shopping_tool.py list --channel "日本"
+
+# 查特定分類（例如：食品生鮮、日常消耗、嬰幼兒備品）
+python3 .agents/skills/shopping-list/scripts/shopping_tool.py list --category "食品生鮮"
+```
