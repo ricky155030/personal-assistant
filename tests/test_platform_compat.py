@@ -132,10 +132,10 @@ def test_telegram_metadata_dispatch_by_engine():
         assert "Med" in line_claude, f"Claude 指標列應於技能旁標註等級: {line_claude}"
         assert "核心大腦" in line_claude
 
-        # 3. 測試 /status 訊息在 Claude 引擎下排除 Gemini 配額
+        # 3. 測試 /status 訊息在 Claude 引擎下排除 Gemini 配額與冗餘說明
         status_claude = quota_service.format_telegram_message({"engine": "claude", "is_ready": True})
         assert "Google Gemini 配額" not in status_claude
-        assert "Claude Code 引擎運行中" in status_claude
+        assert "Context 上下文" in status_claude
     finally:
         settings.AGENT_ENGINE = orig_engine
 

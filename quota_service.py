@@ -175,16 +175,13 @@ class QuotaService:
             except Exception:
                 engine = "agy"
 
-        if engine.lower() != "claude" and (summary.get("email") or summary.get("plan_tier")):
-            account_info = summary.get("email", "")
-            if summary.get("plan_tier"):
-                account_info += f" ({summary.get('plan_tier')})"
-            lines.append(f"👤 <b>方案帳號</b>：<code>{account_info}</code>\n")
+        if engine.lower() != "claude":
+            if summary.get("email") or summary.get("plan_tier"):
+                account_info = summary.get("email", "")
+                if summary.get("plan_tier"):
+                    account_info += f" ({summary.get('plan_tier')})"
+                lines.append(f"👤 <b>方案帳號</b>：<code>{account_info}</code>\n")
 
-        if engine.lower() == "claude":
-            lines.append("🟣 <b>Claude Code 引擎運行中</b>")
-            lines.append("• 核心調度 Anthropic Claude 模型，不消耗 Gemini 額度。\n")
-        else:
             # Gemini 配額
             lines.append("🔵 <b>Google Gemini 配額</b>")
             lines.append(f"• <b>5 小時區間 (Rolling 5h)</b>：<b>{g_5h['remaining_pct']}%</b> 剩餘")
