@@ -1,0 +1,16 @@
+{
+  "name": "coupang-tracker",
+  "title": "酷澎 (Coupang Taiwan) 價格監控",
+  "category": "ecommerce",
+  "description": "雙軌巡檢（購物車直連 + 全網比價），目標門檻降價即時通報",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "skills": ["browser-relay"],
+    "browser_session": {
+      "url": "https://cart.tw.coupang.com/cart",
+      "hint": "需要酷澎帳號登入狀態以讀取購物車。若未登入，助理可開啟 Chrome-Assistant 供您手動登入一次。"
+    }
+  },
+  "config": []
+}

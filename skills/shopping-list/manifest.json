@@ -1,0 +1,20 @@
+{
+  "name": "shopping-list",
+  "title": "家庭待買清單 (Shopping List)",
+  "category": "productivity",
+  "description": "日常日用品採買清單管理與 Google Sheets 雙向同步",
+  "required": false,
+  "default": true,
+  "prerequisites": {
+    "skills": ["google-sheets"]
+  },
+  "config": [
+    {
+      "key": "SHOPPING_SHEET_ID",
+      "label": "待買清單 Google 試算表 ID",
+      "default": "",
+      "required": false,
+      "hint": "Google Sheets 網址 /d/ 後面的長字串"
+    }
+  ]
+}

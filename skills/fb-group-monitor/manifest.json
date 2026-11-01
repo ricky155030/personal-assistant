@@ -1,0 +1,16 @@
+{
+  "name": "fb-group-monitor",
+  "title": "Facebook 社團新貼文監控",
+  "category": "social",
+  "description": "定時巡檢特定 FB 社團最新貼文，以 LLM 判讀買賣與關鍵字條件",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "skills": ["browser-relay"],
+    "browser_session": {
+      "url": "https://www.facebook.com/",
+      "hint": "需要 Facebook 登入狀態以瀏覽社團貼文。"
+    }
+  },
+  "config": []
+}

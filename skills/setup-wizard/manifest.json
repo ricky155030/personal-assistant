@@ -1,0 +1,39 @@
+{
+  "name": "setup-wizard",
+  "title": "設定嚮導與技能管理 (Setup Wizard)",
+  "category": "core",
+  "description": "個人身分、安全金鑰與技能模組開關管理",
+  "required": true,
+  "default": true,
+  "prerequisites": {
+    "os": ["darwin", "linux"]
+  },
+  "config": [
+    {
+      "key": "ASSISTANT_API_KEY",
+      "label": "捷徑與通訊認證金鑰 (X-Agent-Key)",
+      "required": true,
+      "auto_generate": true,
+      "hint": "用於 Apple Watch / iPhone 捷徑認證"
+    },
+    {
+      "key": "TAILSCALE_DOMAIN",
+      "label": "Tailscale MagicDNS 網域",
+      "default": "your-mac-mini.ts.net",
+      "required": false,
+      "hint": "用於安全內網穿透與 HTML 報告直連"
+    },
+    {
+      "key": "TELEGRAM_BOT_TOKEN",
+      "label": "Telegram Bot Token",
+      "required": false,
+      "hint": "向 @BotFather 申請取得"
+    },
+    {
+      "key": "TELEGRAM_CHAT_ID",
+      "label": "Telegram 個人 Chat ID",
+      "required": false,
+      "hint": "向 @userinfobot 取得個人數字 ID"
+    }
+  ]
+}

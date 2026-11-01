@@ -1,0 +1,26 @@
+{
+  "name": "imessage",
+  "title": "Mac 原生 iMessage 通訊",
+  "category": "communication",
+  "description": "透過 macOS 訊息 App 自動發送訊息給家人（嚴格白名單保護）",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "os": ["darwin"],
+    "system_app": "Messages"
+  },
+  "config": [
+    {
+      "key": "OWNER_PHONE",
+      "label": "主人本人手機號碼 (含國碼，如 +886912345678)",
+      "required": true,
+      "hint": "iMessage 白名單：別名「我」、「自己」、「主人」"
+    },
+    {
+      "key": "FAMILY_PHONE",
+      "label": "家人或伴侶手機號碼 (選填)",
+      "required": false,
+      "hint": "iMessage 白名單：別名「家人」、「老婆」、「先生」"
+    }
+  ]
+}

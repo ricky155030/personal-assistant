@@ -1,0 +1,33 @@
+{
+  "name": "google-sheets",
+  "title": "Google Sheets 雲端試算表管理",
+  "category": "productivity",
+  "description": "安全查詢、追加與更新 Google 試算表資料",
+  "required": false,
+  "default": true,
+  "prerequisites": {
+    "binaries": [
+      {
+        "cmd": "gws",
+        "install_hint": "請先安裝 Google Workspace CLI：npm install -g @googleworkspace/cli"
+      }
+    ],
+    "auth": [
+      {
+        "name": "gws_sheets_auth",
+        "check_cmd": "gws drive files list --params '{\"pageSize\": 1}'",
+        "setup_cmd": "gws auth setup",
+        "hint": "尚未完成 Google 授權，請執行 gws auth setup 綁定 Google 帳號"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "SHOPPING_SHEET_ID",
+      "label": "預設試算表 ID (例如待買清單)",
+      "default": "",
+      "required": false,
+      "hint": "Google Sheets 網址 /d/ 後面的長字串 (選填，可稍後設定)"
+    }
+  ]
+}

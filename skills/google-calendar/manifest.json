@@ -1,0 +1,33 @@
+{
+  "name": "google-calendar",
+  "title": "Google Calendar 待辦與日程管理",
+  "category": "productivity",
+  "description": "待辦事項、日程會議、繳費與行程提醒集中管理",
+  "required": false,
+  "default": true,
+  "prerequisites": {
+    "binaries": [
+      {
+        "cmd": "gws",
+        "install_hint": "請先安裝 Google Workspace CLI：npm install -g @googleworkspace/cli"
+      }
+    ],
+    "auth": [
+      {
+        "name": "gws_calendar_auth",
+        "check_cmd": "gws calendar calendarList list --params '{\"maxResults\": 1}'",
+        "setup_cmd": "gws auth setup",
+        "hint": "尚未完成 Google Calendar 授權，請執行 gws auth setup 綁定 Google 帳號"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "GOOGLE_CALENDAR_TODO_ID",
+      "label": "待辦事項日曆 ID",
+      "default": "primary",
+      "required": false,
+      "hint": "直接 Enter 即使用主要個人日曆 (primary)，或貼上自訂之群組日曆 ID"
+    }
+  ]
+}

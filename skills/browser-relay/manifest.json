@@ -1,0 +1,26 @@
+{
+  "name": "browser-relay",
+  "title": "本機真實 Chrome 自動化 (Browser Relay)",
+  "category": "core",
+  "description": "抗防爬蟲盾真實瀏覽器操作，訂位、搶票與動態網頁互動底層",
+  "required": true,
+  "default": true,
+  "prerequisites": {
+    "os": ["darwin"],
+    "binaries": [
+      {
+        "cmd": "Google Chrome",
+        "path_check": "/Applications/Google Chrome.app",
+        "install_hint": "請先安裝 Google Chrome 應用程式 (/Applications/Google Chrome.app)"
+      }
+    ],
+    "services": [
+      {
+        "name": "cdp_port",
+        "port": 9223,
+        "hint": "Chrome-Assistant 偵錯埠 (首次調用時自動啟動)"
+      }
+    ]
+  },
+  "config": []
+}

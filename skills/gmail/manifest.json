@@ -1,0 +1,25 @@
+{
+  "name": "gmail",
+  "title": "Gmail 重要郵件檢索與摘要",
+  "category": "productivity",
+  "description": "最新信件檢索、銀行與掛號帳單等重要通知過濾",
+  "required": false,
+  "default": true,
+  "prerequisites": {
+    "binaries": [
+      {
+        "cmd": "gws",
+        "install_hint": "請先安裝 Google Workspace CLI：npm install -g @googleworkspace/cli"
+      }
+    ],
+    "auth": [
+      {
+        "name": "gws_gmail_auth",
+        "check_cmd": "gws gmail users messages list --params '{\"userId\": \"me\", \"maxResults\": 1}'",
+        "setup_cmd": "gws auth setup",
+        "hint": "尚未完成 Gmail 授權，請執行 gws auth setup 綁定 Google 帳號"
+      }
+    ]
+  },
+  "config": []
+}
