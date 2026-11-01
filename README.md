@@ -2,14 +2,15 @@
 
 專為 **本機私有化常駐（macOS / Windows / Linux）** 與 **穿戴行動裝置（Apple Watch、iPhone、Telegram）** 設計的高效能個人 AI 助理。
 
-由您的個人主機（Mac mini、Windows PC、Linux 迷你伺服器等）擔任「大腦與記憶中樞」，由常駐型 **Antigravity CLI (`agy`)** 結合 **FastAPI** 驅動，維護本地模組化的永久記憶庫，並透過 Tailscale 加密網道提供全天候秒級安全連線。
+由您的個人主機（Mac mini、Windows PC、Linux 迷你伺服器等）擔任「大腦與記憶中樞」，支援**雙核心常駐大腦引擎（Google Antigravity CLI / Gemini 或 Anthropic Claude Code CLI）**，結合 **FastAPI** 驅動，維護本地模組化的永久記憶庫，並透過 Tailscale 加密網道提供全天候秒級安全連線。
 
 ---
 
 ## 🌟 核心架構亮點
 
-1. **⚡ 常駐大腦單例 (agy Singleton Worker)**：
-   - 預熱常駐 `stream-json` 行程，消弭每次 CLI 啟動的冷啟動開銷，對話延遲由 2.4s 降至 **<0.6s**。
+1. **⚡ 雙核心常駐大腦引擎 (Dual Brain Engine: AGY / Claude)**：
+   - **Antigravity CLI (`agy`) 模式**：預設引擎，預熱常駐 `stream-json` 行程，支援 Low / Med / High 三級思考大腦分流，對話延遲由 2.4s 降至 **<0.6s**。
+   - **Claude Code CLI (`claude`) 模式**：原生支援 Anthropic Claude 模型常駐進程池（`claude_singleton.py`），具備獨立 Session 與上下文保護防線，透過 `.env` 變數 `AGENT_ENGINE=claude` 一鍵無縫切換。
    - 內建 **Context 上下文防線**：對話超過閾值（30%）或閒置超時自動重啟，確保記憶體永不膨脹。
 2. **🧠 秘書級模組化長效記憶庫 (`memory/`)**：
    - 解耦為 `profile.md`（身分與溝通分流）、`preferences.md`（生活與系統偏好）、`projects.md`（專案目標）與 `notes.md`（重要備忘）。
@@ -43,7 +44,7 @@ flowchart LR
     subgraph Core ["主機常駐服務 (Host Engine)"]
         API["FastAPI 後端"]
         Fast["fast_intent 極速通道"]
-        Agy["agy_singleton 常駐代理"]
+        BrainPool["雙核心大腦引擎\n(agy_singleton / claude_singleton)"]
         Mem["memory/ 模組化記憶庫"]
         TM["TaskManager 背景進程"]
         Reports["/reports 靜態服務"]
@@ -62,12 +63,12 @@ flowchart LR
 
     AW --> TS --> API
     TG <--> API
-    CLI --> Agy
+    CLI --> BrainPool
     API --> Fast
-    API --> Agy
-    Agy <--> Mem
-    Agy --> TM
-    Agy --> Skills
+    API --> BrainPool
+    BrainPool <--> Mem
+    BrainPool --> TM
+    BrainPool --> Skills
     TM --> Skills
     Reports --> TS
 ```
@@ -82,12 +83,12 @@ flowchart LR
 | :--- | :--- | :--- | :--- |
 | **`setup-wizard`** | 核心 | 🔒 **必備** | 互動式與 LLM 對話式設定嚮導，管理身分、金鑰與技能開關 |
 | **`browser-relay`** | 核心 | 🔒 **必備** | 操控本機真實 Chrome 進行 DOM 辨識、填表、點擊與批次動作（抗驗證盾） |
-| **`google-calendar`** | 生產力 | 🟢 **啟用** | Google 行事曆日程查詢、新增與「待辦事項」日曆動態維護 |
-| **`google-sheets`** | 生產力 | 🟢 **啟用** | Google Sheets 試算表查詢、寫入、追加與資料庫管理 |
-| **`gmail`** | 生產力 | 🟢 **啟用** | 透過 Google Workspace CLI 安全搜尋與讀取郵件摘要 |
-| **`shopping-list`** | 生產力 | 🟢 **啟用** | 家庭通用待買清單，支援地點分類、批次新增與採買雙向勾銷 |
+| **`google-calendar`** | 生產力 | 🟢 **啟用** | Google 行事曆日程查詢、新增、自訂日曆 API 動態比對與「待辦事項」維護 |
+| **`google-sheets`** | 生產力 | 🟢 **啟用** | 通用 Google Sheets 管理：支援試算表網址自動解析 ID、表頭動態對齊搜尋、讀寫與追加 |
+| **`gmail`** | 生產力 | 🟢 **啟用** | 透過 Google Workspace CLI 安全搜尋與多線程並發讀取郵件摘要 |
+| **`shopping-list`** | 生產力 | 🟢 **啟用** | 家庭通用待買清單：支援日常生鮮、日本代購、3C家電等多情境地點分類、批次新增與快速勾銷 |
 | **`imessage`** | 通訊 | ⚪ *可選* | 透過 macOS 原生 AppleScript 安全發送 iMessage（白名單防誤發） |
-| **`coupang-tracker`** | 電商 | ⚪ *可選* | 酷澎雙軌價格監控守護神（購物車直連 + 搜尋比價），破盤自動通報 |
+| **`coupang-tracker`** | 電商 | ⚪ *可選* | 酷澎雙軌通用價格監控（購物車直連 + 搜尋比價），破盤自動通報 |
 | **`fb-group-monitor`** | 社群 | ⚪ *可選* | 監控 FB 社團最新貼文，以 LLM 語意條件自動篩選並即時推播 |
 | **`shopee-seller`** | 電商 | ⚪ *可選* | 拍照自動視覺辨識商品、產生文案、圖床壓縮、CDP 批次自動上架 |
 
@@ -194,6 +195,16 @@ nohup ./start.sh > data/assistant.log 2>&1 &
 
 啟動後，API 預設監聽於 `http://0.0.0.0:8899`。
 
+#### 🔹 模式 D：多實例與不同大腦獨立運行 (Multi-Instance)
+系統支援透過 `ENV_FILE` 與動態埠號在同一台電腦並行多個助理實例（例如 port 8899 跑生產環境，port 8900 跑測試或 Claude 大腦）：
+```bash
+# 實例 1：生產環境 (讀取 .env，Port 8899，預設 agy 引擎)
+./start.sh
+
+# 實例 2：測試環境 (讀取 .env.test，Port 8900，例如設定 AGENT_ENGINE=claude)
+ENV_FILE=.env.test ./start.sh
+```
+
 ---
 
 ## ⌚ Apple Watch 與穿戴裝置捷徑設定
@@ -223,8 +234,12 @@ nohup ./start.sh > data/assistant.log 2>&1 &
 
 ---
 
-## 🛠️ 常見維護指令
+## 🛠️ 常見維護指令與測試
+
 ```bash
+# 本地相容性測試驗證 (跨平台 Windows/Linux/macOS 語法與邏輯)
+uv run pytest
+
 # 查看背景任務列表 (TaskManager)
 python3 task_manager.py list
 
@@ -233,6 +248,10 @@ python3 task_manager.py kill "<任務名稱>"
 
 # 手動同步與審查今日記憶
 python3 memory_scheduler.py --once
+
+# 追蹤最新 GitHub Actions CI 狀態
+gh run list -L 3
+gh run watch <run_id>
 ```
 
 ---
