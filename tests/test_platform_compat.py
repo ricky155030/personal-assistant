@@ -95,6 +95,21 @@ def test_skills_doctor():
     assert "setup-wizard" in skill_names
 
 
+def test_claude_singleton_interface():
+    """驗證 claude_singleton 模組介面與狀態規格符合規範"""
+    from claude_singleton import claude_singleton, format_claude_tool_status
+    stat = claude_singleton.get_status()
+    assert isinstance(stat, dict)
+    assert stat["engine"] == "claude"
+    assert "low_brain" in stat
+    assert "med_brain" in stat
+    assert "high_brain" in stat
+
+    # 驗證工具狀態轉換
+    status_text = format_claude_tool_status("Bash", {"command": "python3 skills/browser-relay/scripts/browser_relay.py open https://inline.app"})
+    assert "餐廳訂位" in status_text or "瀏覽器" in status_text
+
+
 if __name__ == "__main__":
     print("🧪 正在執行跨平台相容性測試...")
     test_browser_relay_cross_platform_config()

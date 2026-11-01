@@ -32,6 +32,18 @@ class Settings(BaseModel):
     OMP_BIN: str = os.getenv("OMP_BIN", shutil.which("omp") or os.path.expanduser("~/.local/bin/omp"))
     OMP_MODEL: str = os.getenv("OMP_MODEL", "minimax/MiniMax-M2.5-lightning")
     
+    # Claude Code CLI 設定
+    CLAUDE_BIN: str = os.getenv(
+        "CLAUDE_BIN",
+        shutil.which("claude")
+        or (shutil.which("claude.cmd") if sys.platform == "win32" else None)
+        or os.path.expanduser("~/.local/bin/claude")
+    )
+    CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "")
+    CLAUDE_MODEL_LOW: str = os.getenv("CLAUDE_MODEL_LOW", "")
+    CLAUDE_MODEL_MED: str = os.getenv("CLAUDE_MODEL_MED", "")
+    CLAUDE_MODEL_HIGH: str = os.getenv("CLAUDE_MODEL_HIGH", "")
+    
     # LLM 設定 (當使用 direct 模式時)
     # 支援 MiniMax / Gemini / OpenAI / Ollama / DeepSeek 等
     LLM_API_KEY: str = (

@@ -56,8 +56,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """服務啟動時預熱啟動 agy 守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
-    if settings.AGENT_ENGINE == "agy":
+    """服務啟動時預熱啟動代理守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
+    if settings.AGENT_ENGINE == "claude":
+        from claude_singleton import claude_singleton
+        claude_singleton.start()
+    elif settings.AGENT_ENGINE == "agy":
         agy_singleton.start()
     if settings.TELEGRAM_BOT_TOKEN:
         asyncio.create_task(start_telegram_bot())
@@ -476,7 +479,11 @@ async def trigger_memory_sync():
 def get_usage():
     """查看 Gemini 5h / 7days 與 3P 模型的即時額度配額"""
     from quota_service import quota_service
-    stat = agy_singleton.get_status()
+    if settings.AGENT_ENGINE == "claude":
+        from claude_singleton import claude_singleton
+        stat = claude_singleton.get_status()
+    else:
+        stat = agy_singleton.get_status()
     return {
         "status": "ok",
         "quota": quota_service.get_quota_summary(force_refresh=True),

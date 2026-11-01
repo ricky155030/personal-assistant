@@ -19,6 +19,13 @@ from quota_service import quota_service
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
+def get_active_brain():
+    """動態取得當前啟用的常駐大腦 (agy 或 claude)"""
+    if getattr(settings, "AGENT_ENGINE", "agy").lower() == "claude":
+        from claude_singleton import claude_singleton
+        return claude_singleton
+    return agy_singleton
+
 def infer_skill(query: str, reply: str, actions: Optional[List[str]] = None) -> str:
     """推斷本次對話使用的主要技能或資料來源"""
     act_str = " ".join(actions or []).lower()
@@ -518,7 +525,7 @@ def send_formatted_telegram_reply(
         try:
             lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
             brain_key = f"{lvl_norm}_brain"
-            stat = agy_singleton.get_status()
+            stat = get_active_brain().get_status()
             target_brain = stat.get(brain_key, {})
             ctx_pct = target_brain.get("percent")
             if ctx_pct is None or ctx_pct == 0:
@@ -1129,7 +1136,7 @@ async def process_telegram_request(
         card = TelegramLiveCard(chat_id=chat_id)
         turn_result = {}
         try:
-            stream_gen = agy_singleton.send_query_stream(effective_query, media=media_list if media_list else None)
+            stream_gen = get_active_brain().send_query_stream(effective_query, media=media_list if media_list else None)
             while True:
                 item = next(stream_gen)
                 if isinstance(item, tuple) and len(item) == 2:
@@ -1340,13 +1347,13 @@ async def start_telegram_bot():
 
                     # 系統狀態與配額整合指令：/status, /usage, /quota, /context, 狀態, 用量, 額度, 配額
                     if user_text.lower() in ("/status", "/usage", "/quota", "/context", "狀態", "用量", "額度", "配額"):
-                        stat = agy_singleton.get_status()
+                        stat = get_active_brain().get_status()
                         status_msg = quota_service.format_telegram_message(context_status=stat)
                         await send_telegram_message(status_msg, chat_id=chat_id)
                         continue
 
                     if user_text.lower() in ("/restart", "/reset", "重啟", "重置"):
-                        agy_singleton.trigger_restart_with_notification("主人手動指令觸發")
+                        get_active_brain().trigger_restart_with_notification("主人手動指令觸發")
                         continue
 
                     if user_text.lower() in ("/memory", "記憶", "記憶庫"):
