@@ -95,3 +95,12 @@
    - **執行鐵律**：
      - **關鍵資訊欠缺 ➔ 立即反問，秒級釋放**：發現參數不全或存在多個分支時，**當前 turn 必須立即向主人提問並結束 turn**，保持對話管道即時暢通。
      - **獲得確認 ➔ 精準單點執行**：一旦主人回覆指定目標，助理才啟動單一目標的精準深度操作。
+7. **程式碼交付與 CI 綠燈閉環原則 (Definition of Done: CI Verification Policy)**：
+   - **本機先行驗證 (Pre-flight Check)**：任何程式碼變更在 `git commit` 前，必須先於本地執行 `uv run pytest`，確保本機測試 100% 通過，絕不將低階語法或單元測試錯誤提交推送到遠端。
+   - **CI 綠燈才算完工 (CI Green as Definition of Done)**：
+     - `git push` 不代表任務交付完成。
+     - Push 後必須立即在背景追蹤該次 GitHub Actions CI 狀態（例如使用 `gh run watch <run_id>` 或非同步輪詢）。
+     - **紅燈自動自癒 (Auto-Heal on CI Failure)**：
+       - 若 CI 失敗，主動擷取 `gh run view <run_id> --log-failed` 深入診斷跨平台（如 Windows、Ubuntu、各 Python 版本）的失敗根因。
+       - 自動就地修復程式碼、提交並再次推送，循環驗證直到 CI 全綠燈為止。
+       - **嚴禁在 CI 仍在跑或紅燈時向主人回報「已完成」**，確保 main 分支永遠保持全綠健康狀態。
