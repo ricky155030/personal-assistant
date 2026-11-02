@@ -151,9 +151,9 @@ def test_google_sheets_tool_generalization():
     from sheets_tool import resolve_sheet_id, _is_fuzzy_match
 
     # 1. 支援直接傳入完整 Google Sheets 網址並自動擷取 ID
-    test_url = "https://docs.google.com/spreadsheets/d/13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas/edit?gid=0#gid=0"
+    test_url = "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit?gid=0#gid=0"
     extracted_id = resolve_sheet_id(test_url)
-    assert extracted_id == "13S7Nkg0pm7EMFAOPT1YqdthmXtLdrvNwnbsR3Wsqhas", f"未能正確擷取試算表 ID: {extracted_id}"
+    assert extracted_id == "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms", f"未能正確擷取試算表 ID: {extracted_id}"
 
     # 2. 支援一般 ID 與別名
     assert resolve_sheet_id("dummy_id_123") == "dummy_id_123"

@@ -122,7 +122,7 @@ async def health_check():
     return {
         "status": "ok",
         "time": datetime.now().isoformat(),
-        "tailscale_ip": "100.78.198.14",
+        "tailscale_ip": os.getenv("TAILSCALE_IP", ""),
         "tailscale_domain": settings.TAILSCALE_DOMAIN,
         "port": settings.PORT
     }

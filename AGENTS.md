@@ -104,3 +104,14 @@
        - 若 CI 失敗，主動擷取 `gh run view <run_id> --log-failed` 深入診斷跨平台（如 Windows、Ubuntu、各 Python 版本）的失敗根因。
        - 自動就地修復程式碼、提交並再次推送，循環驗證直到 CI 全綠燈為止。
        - **嚴禁在 CI 仍在跑或紅燈時向主人回報「已完成」**，確保 main 分支永遠保持全綠健康狀態。
+8. **零機敏資訊外洩天條 (Zero-Data-Leak Policy & Commit Guard)**：
+   - **核心鐵律**：本專案為開源專案與公開/共享代碼庫，**絕對 100% 嚴禁將任何主人個人機敏資訊、私有網路架構或正式環境憑證寫入或 Commit 至 Git 倉庫**。
+   - **嚴格禁止寫入代碼與文件之機敏項目（Zero-Tolerance Blacklist）**：
+     1. **正式金鑰與密鑰**：如 `TELEGRAM_BOT_TOKEN`、`HASS_TOKEN`、`ASSISTANT_API_KEY`、`OPENAI_API_KEY`、`GEMINI_API_KEY`、身分證字號 (`USER_ID_NO`)、生日密碼 (`USER_BIRTH_MMDD`)、各平台帳號密碼等。此類資訊僅能存在於本地未追蹤之 `.env`。
+     2. **真實個人身分與姓名**：主人姓名、家人姓名（如 `hungwei`、`jochun` 等）、真實手機號碼、個人真實 Email。文檔、註解與測試一律使用 `<您的稱呼>`、`Alex`、`person.user` 或公開範例。
+     3. **內部網路與設備實體 IP**：Tailscale 網段 IP（如 `100.x.y.z`）、區域網路 IP（`192.168.x.x`）、特定 Tailscale 節點私有域名（如 `*.tail32f67c.ts.net`）。代碼與範例一律使用環境變數、`http://homeassistant.local:8123` 或 `<your-device-domain>.ts.net`。
+     4. **真實家電硬體實體代碼**：特定硬體 Switch/Sensor MAC ID（如 `0xa4c138...`、`sonoff_...`、`158d00...` 等）。真實設備對照一律由本機未追蹤之 `data/devices.json` 載入，代碼範例僅能使用通用命名（如 `switch.living_room_light`）。
+     5. **私人雲端資產 ID 與網址**：真實 Google 試算表 ID（如家庭待產備品、記帳表格之真實 Sheet ID）、私有 Google Drive 連結、私人 Facebook 社團網址。範例一律使用 `<YOUR_SPREADSHEET_ID>` 或公開 Dummy ID。
+   - **Commit 前強制防護查驗 (Pre-Commit Zero-Leak Gate)**：
+     - 在執行 `git commit` 前，除了 `uv run pytest` 本機綠燈外，**必須主動執行機敏關鍵字與 IP 模式掃描**（檢查 `git diff --cached` 是否含有 IP、人名、實體硬體標識或真實金鑰）。
+     - 若檢測到任何非 Dummy 假資料的真實私有標識，**嚴禁 Commit**，必須就地脫敏抽離至未追蹤的本機配置後方可提交。
