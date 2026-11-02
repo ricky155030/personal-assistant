@@ -95,6 +95,19 @@ def test_skills_doctor():
     assert "setup-wizard" in skill_names
 
 
+def test_health_check_endpoint():
+    """驗證 FastAPI /health 與 /api/health 端點正確回應"""
+    from fastapi.testclient import TestClient
+    from main import app
+    client = TestClient(app)
+    res = client.get("/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert "tailscale_ip" in data
+    assert "tailscale_domain" in data
+
+
 def test_claude_singleton_interface():
     """驗證 claude_singleton 模組介面與狀態規格符合規範"""
     from claude_singleton import claude_singleton, format_claude_tool_status
