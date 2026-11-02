@@ -1,0 +1,10 @@
+{
+  "name": "personal-briefing",
+  "title": "個人簡報與晨間進度彙整",
+  "category": "productivity",
+  "description": "整合 Google Calendar 待辦事項、核心專案目標與重要備忘筆記的每日簡報",
+  "required": false,
+  "default": false,
+  "prerequisites": {},
+  "config": []
+}

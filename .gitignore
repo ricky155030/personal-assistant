@@ -27,6 +27,10 @@ specs/
 .agents/skills/coupang-tracker
 .agents/skills/fb-group-monitor
 .agents/skills/shopee-seller
+.agents/skills/home-assistant
+.agents/skills/bill-auditor
+.agents/skills/current-location
+.agents/skills/personal-briefing
 *.bak
 .DS_Store
 *.m4a

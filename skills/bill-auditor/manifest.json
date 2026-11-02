@@ -1,0 +1,32 @@
+{
+  "name": "bill-auditor",
+  "title": "信用卡帳單審計與總帳管理",
+  "category": "finance",
+  "description": "各大銀行信用卡對帳單本機安全解密、逐筆明細解析、自動同步至 Google Sheets 財務總帳與固定訂閱雷達",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "binaries": [
+      {
+        "cmd": "gws",
+        "install_hint": "請先安裝 Google Workspace CLI：npm install -g @googleworkspace/cli"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "USER_ID_NO",
+      "label": "身分證字號 (解密用)",
+      "default": "",
+      "required": false,
+      "hint": "各大銀行加密帳單 PDF 解密使用 (例如 A123456789，僅存於本機不對外傳輸)"
+    },
+    {
+      "key": "USER_BIRTH_MMDD",
+      "label": "生日4碼 (MMDD)",
+      "default": "",
+      "required": false,
+      "hint": "部分銀行帳單 PDF 密碼組合使用 (如 0815)"
+    }
+  ]
+}

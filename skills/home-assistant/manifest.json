@@ -1,0 +1,36 @@
+{
+  "name": "home-assistant",
+  "title": "Home Assistant 智慧家電控制",
+  "category": "iot",
+  "description": "控制與查詢 Home Assistant 燈光開關、空調冷氣、窗簾與環境感測器",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "env": [
+      {
+        "key": "HASS_URL",
+        "hint": "請設定 Home Assistant 網址 (如 http://homeassistant.local:8123)"
+      },
+      {
+        "key": "HASS_TOKEN",
+        "hint": "請設定 Home Assistant 長效存取權杖 (Long-Lived Access Token)"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "HASS_URL",
+      "label": "Home Assistant 網址",
+      "default": "http://homeassistant.local:8123",
+      "required": true,
+      "hint": "Home Assistant 主機位置 (支援區網 IP 或 Tailscale 網域)"
+    },
+    {
+      "key": "HASS_TOKEN",
+      "label": "長效存取權杖",
+      "default": "",
+      "required": true,
+      "hint": "於 HA 使用者設定檔頁底產生的 Long-Lived Access Token"
+    }
+  ]
+}

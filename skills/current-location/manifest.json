@@ -1,0 +1,29 @@
+{
+  "name": "current-location",
+  "title": "即時物理定位與逆地理編碼",
+  "category": "utility",
+  "description": "由 Home Assistant GPS 座標逆地理編碼解析出具體國家、城市、行政區與商圈地標",
+  "required": false,
+  "default": false,
+  "prerequisites": {
+    "env": [
+      {
+        "key": "HASS_URL",
+        "hint": "請設定 Home Assistant 網址"
+      },
+      {
+        "key": "HASS_TOKEN",
+        "hint": "請設定 Home Assistant 長效存取權杖"
+      }
+    ]
+  },
+  "config": [
+    {
+      "key": "HA_PERSON_ENTITY",
+      "label": "Home Assistant 人員實體 ID",
+      "default": "person.user",
+      "required": false,
+      "hint": "用於取得 GPS 經緯度座標的實體 ID (例如 person.user)"
+    }
+  ]
+}

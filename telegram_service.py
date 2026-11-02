@@ -49,6 +49,14 @@ def infer_skill(query: str, reply: str, actions: Optional[List[str]] = None) -> 
         return "📅 待辦行事曆"
     if "search_web" in act_str or any(k in q_lower for k in ["天氣", "搜尋", "查一下", "最新", "股價", "新聞", "匯率"]):
         return "🌐 即時連網"
+    if "homeassistant" in act_str or "home-assistant" in act_str or "ha_tool" in act_str:
+        return "💡 智慧家電"
+    if "location" in act_str or "current-location" in act_str or "get_location" in act_str:
+        return "📍 即時定位"
+    if "bill-auditor" in act_str or "bill_auditor" in act_str or "auditor" in act_str:
+        return "💳 帳單審計"
+    if "personal-briefing" in act_str or "briefing" in act_str:
+        return "📰 個人簡報"
     if "fb_group_monitor" in act_str or "fb-group-monitor" in act_str or any(k in q_lower for k in ["社團", "fb社團", "貼文監控"]):
         return "📡 社團雷達"
     return "🤖 核心大腦"

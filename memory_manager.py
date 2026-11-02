@@ -80,12 +80,19 @@ class MemoryManager:
 
     def compile_memory(self) -> str:
         """依序聚合各模組內容為完整的全域記憶文本"""
-        ordered_files = [
-            ("profile.md", self.profile_path),
-            ("preferences.md", self.preferences_path),
-            ("projects.md", self.projects_path),
-            ("notes.md", self.notes_path),
-        ]
+        standard_names = ["profile.md", "preferences.md", "homeassistant.md", "projects.md", "notes.md"]
+        ordered_files = []
+        for name in standard_names:
+            p = self.memory_dir / name
+            if p.exists():
+                ordered_files.append((name, p))
+
+        # 動態載入其餘自訂模組
+        seen_names = set(standard_names)
+        if self.memory_dir.exists():
+            for p in sorted(self.memory_dir.glob("*.md")):
+                if p.name not in seen_names and not p.name.startswith("."):
+                    ordered_files.append((p.name, p))
         
         banner = (
             "# Personal Assistant Master Memory (`MEMORY.md`)\n\n"

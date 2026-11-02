@@ -59,6 +59,10 @@ flowchart LR
         GMail["gmail"]
         Shop["shopping-list"]
         iMsg["imessage (macOS)"]
+        HA["home-assistant"]
+        Loc["current-location"]
+        Bill["bill-auditor"]
+        Brief["personal-briefing"]
     end
 
     AW --> TS --> API
@@ -87,6 +91,10 @@ flowchart LR
 | **`google-sheets`** | 生產力 | 🟢 **啟用** | 通用 Google Sheets 管理：支援試算表網址自動解析 ID、表頭動態對齊搜尋、讀寫與追加 |
 | **`gmail`** | 生產力 | 🟢 **啟用** | 透過 Google Workspace CLI 安全搜尋與多線程並發讀取郵件摘要 |
 | **`shopping-list`** | 生產力 | 🟢 **啟用** | 家庭通用待買清單：支援日常生鮮、日本代購、3C家電等多情境地點分類、批次新增與快速勾銷 |
+| **`home-assistant`** | 物聯網 | ⚪ *可選* | 控制與查詢 Home Assistant 智慧家電（燈光開關、冷氣空調、窗簾與環境感測器） |
+| **`current-location`** | 工具 | ⚪ *可選* | 由 Home Assistant GPS 座標逆地理編碼解析出具體國家、城市、行政區與商圈地標 |
+| **`bill-auditor`** | 財務 | ⚪ *可選* | 信用卡帳單本機安全解密、逐筆明細解析、自動同步至 Google Sheets 總帳與固定訂閱雷達 |
+| **`personal-briefing`** | 生產力 | ⚪ *可選* | 晨間個人簡報：整合 Google Calendar 待辦事項、核心專案目標與重要備忘筆記 |
 | **`imessage`** | 通訊 | ⚪ *可選* | 透過 macOS 原生 AppleScript 安全發送 iMessage（白名單防誤發） |
 | **`coupang-tracker`** | 電商 | ⚪ *可選* | 酷澎雙軌通用價格監控（購物車直連 + 搜尋比價），破盤自動通報 |
 | **`fb-group-monitor`** | 社群 | ⚪ *可選* | 監控 FB 社團最新貼文，以 LLM 語意條件自動篩選並即時推播 |
