@@ -21,6 +21,7 @@ data/*
 reports/*
 !reports/.gitkeep
 specs/
+memory/homeassistant.md
 
 # User enabled optional skill symlinks (prevent dirtying working tree)
 .agents/skills/imessage
