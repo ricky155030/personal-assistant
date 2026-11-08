@@ -19,6 +19,7 @@ import time
 import random
 import signal
 import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -61,6 +62,29 @@ def sig_handler(signum, frame):
 
 signal.signal(signal.SIGINT, sig_handler)
 signal.signal(signal.SIGTERM, sig_handler)
+
+
+def format_time_ago(ts_str: Optional[str]) -> str:
+    """將時間字串轉換為人類可讀的相對時間 (如: 5分鐘前、2天前)"""
+    if not ts_str:
+        return "未知"
+    try:
+        t = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        diff = datetime.now() - t
+        secs = int(diff.total_seconds())
+        if secs < 0:
+            return "剛剛"
+        if secs < 60:
+            return "剛剛"
+        elif secs < 3600:
+            return f"{secs // 60} 分鐘前"
+        elif secs < 86400:
+            return f"{secs // 3600} 小時前"
+        else:
+            days = secs // 86400
+            return f"{days} 天前"
+    except Exception:
+        return str(ts_str)
 
 
 def load_state() -> Dict[str, Any]:
@@ -245,69 +269,95 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
 
     # 軌道一：購物車直連 (全品項自動降價監控)
     print("🛒 [軌道 1: 購物車直連] 正在讀取購物車主區商品...")
-    cart_items = tracker.fetch_cart_items()
-    print(f"   購物車讀取到 {len(cart_items)} 項商品：")
+    cart_items, is_logged_in = tracker.fetch_cart_items_with_status()
+    print(f"   購物車讀取到 {len(cart_items)} 項商品 (登入狀態: {'🟢 已登入' if is_logged_in else '🔴 未登入/過期'})：")
     for ci in cart_items:
         print(f"   • {ci['title'][:35]}.. ({ci['option']}) -> 現價: ${ci['sale_price']:,}")
 
-    # 維護購物車自動追蹤基準價
-    cart_baselines = state.setdefault("cart_baselines", {})
+    state["session_status"] = "LOGGED_IN" if is_logged_in else "LOGGED_OUT"
 
-    # 1. 自動追蹤購物車所有品項降價 (Auto-Track)
-    for ci in cart_items:
-        item_key = f"{ci['title']} ({ci['option']})".strip()
-        current_p = ci["sale_price"]
-        orig_p = ci.get("original_price") or current_p
-        url = ci.get("url") or "https://cart.tw.coupang.com/cart"
+    if is_logged_in:
+        state["last_cart_sync_at"] = now_str
+        # 維護購物車自動追蹤基準價
+        cart_baselines = state.setdefault("cart_baselines", {})
+        current_item_keys = set()
 
-        if item_key not in cart_baselines:
-            cart_baselines[item_key] = {
-                "title": ci["title"],
-                "option": ci["option"],
-                "baseline_price": current_p,
-                "original_price": orig_p,
-                "first_seen": now_str,
-                "last_price": current_p,
-                "last_seen": now_str
-            }
-            print(f"   ✨ [自動追蹤] 新入購物車品項：【{item_key}】(初始基準: ${current_p:,})")
-        else:
-            base_info = cart_baselines[item_key]
-            base_p = base_info.get("baseline_price", current_p)
-            base_info["last_price"] = current_p
-            base_info["last_seen"] = now_str
-            base_info["original_price"] = orig_p
+        # 1. 自動追蹤購物車所有品項降價 (Auto-Track)
+        for ci in cart_items:
+            item_key = f"{ci['title']} ({ci['option']})".strip()
+            current_item_keys.add(item_key)
+            current_p = ci["sale_price"]
+            orig_p = ci.get("original_price") or current_p
+            url = ci.get("url") or "https://cart.tw.coupang.com/cart"
 
-            # 若現價低於初始基準價，立即推播通報！
-            if current_p < base_p:
-                drop_amount = base_p - current_p
-                notify_key = f"cart_drop:{item_key}"
-                if should_notify(notify_key, current_p, base_p, state):
-                    dispatch_cart_drop_alert(ci["title"], ci["option"], current_p, base_p, drop_amount, url)
-                    state.setdefault("last_notified", {})[notify_key] = {
-                        "price": current_p,
-                        "timestamp": time.time(),
-                        "time": now_str
-                    }
-                    base_info["baseline_price"] = current_p  # 更新基準
+            if item_key not in cart_baselines:
+                cart_baselines[item_key] = {
+                    "title": ci["title"],
+                    "option": ci["option"],
+                    "baseline_price": current_p,
+                    "original_price": orig_p,
+                    "first_seen": now_str,
+                    "last_price": current_p,
+                    "last_seen": now_str
+                }
+                print(f"   ✨ [自動追蹤] 新入購物車品項：【{item_key}】(初始基準: ${current_p:,})")
+            else:
+                base_info = cart_baselines[item_key]
+                base_p = base_info.get("baseline_price", current_p)
+                base_info["last_price"] = current_p
+                base_info["last_seen"] = now_str
+                base_info["original_price"] = orig_p
 
-    # 2. 同步檢查手動門檻 (Thresholds)
-    thresholds = state.get("thresholds", {})
-    for ci in cart_items:
-        full_text = f"{ci['title']} {ci.get('option', '')}".strip()
-        p = ci["sale_price"]
-        url = ci.get("url") or "https://cart.tw.coupang.com/cart"
+                # 若現價低於初始基準價，立即推播通報！
+                if current_p < base_p:
+                    drop_amount = base_p - current_p
+                    notify_key = f"cart_drop:{item_key}"
+                    if should_notify(notify_key, current_p, base_p, state):
+                        dispatch_cart_drop_alert(ci["title"], ci["option"], current_p, base_p, drop_amount, url)
+                        state.setdefault("last_notified", {})[notify_key] = {
+                            "price": current_p,
+                            "timestamp": time.time(),
+                            "time": now_str
+                        }
+                        base_info["baseline_price"] = current_p  # 更新基準
 
-        for k, th in thresholds.items():
-            tokens = [t.lower() for t in k.split() if len(t) > 1]
-            is_matched = (k.lower() in full_text.lower()) or (tokens and all(t in full_text.lower() for t in tokens))
+        # 2. 同步檢查手動門檻 (Thresholds)
+        thresholds = state.get("thresholds", {})
+        for ci in cart_items:
+            full_text = f"{ci['title']} {ci.get('option', '')}".strip()
+            p = ci["sale_price"]
+            url = ci.get("url") or "https://cart.tw.coupang.com/cart"
 
-            if is_matched:
-                if should_notify(k, p, th, state):
-                    dispatch_alerts(k, ci.get("option", "主商品"), p, th, url)
-                    state.setdefault("last_notified", {})[k] = {"price": p, "timestamp": time.time(), "time": now_str}
-                else:
-                    print(f"   ℹ️ [{k}] 購物車售價 ${p:,}，目標門檻 <${th:,}。")
+            for k, th in thresholds.items():
+                tokens = [t.lower() for t in k.split() if len(t) > 1]
+                is_matched = (k.lower() in full_text.lower()) or (tokens and all(t in full_text.lower() for t in tokens))
+
+                if is_matched:
+                    if should_notify(k, p, th, state):
+                        dispatch_alerts(k, ci.get("option", "主商品"), p, th, url)
+                        state.setdefault("last_notified", {})[k] = {"price": p, "timestamp": time.time(), "time": now_str}
+                    else:
+                        print(f"   ℹ️ [{k}] 購物車售價 ${p:,}，目標門檻 <${th:,}。")
+
+        # 3. 自動歸檔：若已確認登入，且品項連續超過 24 小時未再出現於購物車
+        archived_baselines = state.setdefault("archived_cart_baselines", {})
+        keys_to_archive = []
+        for k, info in list(cart_baselines.items()):
+            if k not in current_item_keys:
+                last_seen_str = info.get("last_seen")
+                if last_seen_str:
+                    try:
+                        last_seen_dt = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M:%S")
+                        if (datetime.now() - last_seen_dt).total_seconds() > 86400:
+                            keys_to_archive.append(k)
+                    except Exception:
+                        pass
+        for k in keys_to_archive:
+            print(f"   📦 [歸檔] 品項已超過 24 小時未在購物車出現，自動歸檔：【{k}】")
+            archived_baselines[k] = cart_baselines.pop(k)
+            archived_baselines[k]["archived_at"] = now_str
+    else:
+        print("   ⚠️ 酷澎未登入或 Session 已失效，暫停更新購物車基準，避免誤判。")
 
     # 軌道二：搜尋頁 (若有指定特定監控門檻商品，執行全網比價)
     search_queries = set(state.get("thresholds", {}).keys())
@@ -368,12 +418,43 @@ def cmd_status(args):
     total_checks = state.get("total_checks", len(snapshots))
     cart_baselines = state.get("cart_baselines", {})
     thresholds = state.get("thresholds", {})
+    session_status = state.get("session_status", "UNKNOWN")
+    last_cart_sync = state.get("last_cart_sync_at")
+
+    # 精準以 last_seen 區分「在線新鮮 (Active)」與「過期待同步 (Stale)」
+    active_items = []
+    stale_items = []
+
+    now_dt = datetime.now()
+    for k, info in cart_baselines.items():
+        if "保留清單" in k or "保留清單" in info.get("option", ""):
+            continue
+        last_seen_str = info.get("last_seen")
+        is_fresh = False
+        diff_secs = 999999
+        if last_seen_str:
+            try:
+                last_seen_dt = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M:%S")
+                diff_secs = (now_dt - last_seen_dt).total_seconds()
+                # 巡檢週期為 6 分鐘，以 1 小時 (3600 秒) 內見過視為在線有效
+                if diff_secs <= 3600:
+                    is_fresh = True
+            except Exception:
+                pass
+
+        if is_fresh:
+            active_items.append((k, info, diff_secs))
+        else:
+            stale_items.append((k, info, diff_secs))
 
     if args.json:
         data = {
             "last_checked_at": last_time,
             "total_checks": total_checks,
-            "cart_items_auto_tracked": cart_baselines,
+            "session_status": session_status,
+            "last_cart_sync_at": last_cart_sync,
+            "cart_active_items": {k: info for k, info, _ in active_items},
+            "cart_stale_items": {k: info for k, info, _ in stale_items},
             "manual_thresholds": thresholds,
             "latest_snapshot": latest_snapshot,
             "recent_snapshots_count": len(snapshots)
@@ -382,20 +463,31 @@ def cmd_status(args):
         return
 
     print("══════════════════════════════════════════════════════════════════════════════")
-    print(f"📊 酷澎購物車守護神巡檢日誌 (最新狀態報表)")
-    print(f"🕒 最後巡檢時間: {last_time}  |  🔄 累計巡檢次數: {total_checks} 次")
+    print("📊 酷澎購物車守護神巡檢日誌 (最新狀態報表)")
+    print(f"🕒 守護進程時間: {last_time}  |  🔄 累計巡檢次數: {total_checks} 次")
+    if session_status == "LOGGED_IN":
+        print("🔐 會員登入狀態: 🟢 已登入")
+    elif session_status == "LOGGED_OUT":
+        print("🔐 會員登入狀態: 🔴 Session 已過期 (請於 Chrome-Assistant 登入)")
+    else:
+        print("🔐 會員登入狀態: ⚪ 待確認")
+
+    if last_cart_sync:
+        print(f"🛒 購物車最後同步: {last_cart_sync} ({format_time_ago(last_cart_sync)})")
+    else:
+        print("🛒 購物車最後同步: 尚未成功同步")
     print("══════════════════════════════════════════════════════════════════════════════")
 
-    print("\n🛒 【購物車主區品項 (全自動降價追蹤中)】")
-    print(f"{'商品品名與規格':<42} | {'目前現價':<10} | {'基準現價':<10} | {'差額':<9} | {'狀態'}")
-    print("------------------------------------------------------------------------------")
-    if not cart_baselines:
-        print("（目前購物車無記錄，執行巡檢後將自動登記購物車現有品項）")
+    print("\n🛒 【購物車主區品項 (即時在線追蹤中)】")
+    if not active_items:
+        if session_status == "LOGGED_OUT":
+            print("（⚠️ 目前未偵測到在線品項。原因：酷澎登入已過期，請重新登入以恢復同步）")
+        else:
+            print("（目前購物車無在線品項，新商品放入購物車後將自動同步）")
     else:
-        for k, info in cart_baselines.items():
-            # 排除保留清單
-            if "保留清單" in k or "保留清單" in info.get("option", ""):
-                continue
+        print(f"{'商品品名與規格':<42} | {'目前現價':<10} | {'基準最低價':<10} | {'差額':<9} | {'狀態'}")
+        print("------------------------------------------------------------------------------")
+        for k, info, _ in active_items:
             cur_p = info.get("last_price", info.get("baseline_price", 0))
             base_p = info.get("baseline_price", cur_p)
             diff = cur_p - base_p
@@ -415,6 +507,19 @@ def cmd_status(args):
                 status = "📈 價格回彈"
 
             print(f"{name_display:<40} | {price_str:<10} | {base_str:<10} | {diff_str:<9} | {status}")
+
+    # 若有過期品項，移入歷史暫存區塊，並顯式標註最後同步時間與警告
+    if stale_items:
+        print("\n📦 【歷史追蹤快照 (非即時現價 / 待重新同步)】")
+        print(f"{'商品品名與規格':<40} | {'歷史記錄價':<10} | {'最後同步時間':<22} | {'狀態說明'}")
+        print("------------------------------------------------------------------------------")
+        for k, info, _ in stale_items:
+            cur_p = info.get("last_price", info.get("baseline_price", 0))
+            last_seen_str = info.get("last_seen", "未知")
+            time_ago = format_time_ago(last_seen_str)
+            sync_col = f"{last_seen_str[:16]} ({time_ago})"
+            name_display = f"{info.get('title', k)[:22]} ({info.get('option', '')[:12]})"
+            print(f"{name_display:<38} | ${cur_p:<9,} | {sync_col:<20} | ⚠️ 過期快照 (非現價)")
 
     # 手動目標門檻項目 (例如外部或特別指定的理想價)
     if thresholds:

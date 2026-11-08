@@ -20,7 +20,7 @@ import argparse
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 BASE_DIR = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists() or (p / ".git").exists()), Path(__file__).resolve().parents[2])
 if str(BASE_DIR) not in sys.path:
@@ -72,17 +72,24 @@ def send_telegram_alert(message: str) -> bool:
 class CoupangPriceTracker:
     def __init__(self):
         self.client = br.ChromeAssistantClient()
+        self.last_login_valid: bool = True
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     def fetch_cart_items(self) -> List[Dict[str, Any]]:
+        """向後相容介面：取得購物車商品清單"""
+        items, _ = self.fetch_cart_items_with_status()
+        return items
+
+    def fetch_cart_items_with_status(self) -> Tuple[List[Dict[str, Any]], bool]:
         """
-        軌道一：從已登入的購物車取得即時商品與價格
+        軌道一：從已登入的購物車取得即時商品與價格，並嚴謹回傳登入驗證狀態
         - 包含購物車中商品
-        - 包含「你之前想購買的商品 (Saved for Later)」
-        - 完全不走搜尋頁，100% 避開 Akamai WAF
+        - 嚴謹區分「已登入但車內為空」與「Session 過期/未登入」
+        - 回傳: (parsed_items, is_logged_in)
         """
         self.client.ensure_chrome()
         cart_url = "https://cart.tw.coupang.com/cart"
+        is_logged_in = True
 
         with self.client.session_lock("coupang_tracker:cart", timeout=30.0):
             with br.sync_playwright() as p:
@@ -213,6 +220,26 @@ class CoupangPriceTracker:
 
                 body_text = target_page.evaluate("document.body.innerText")
 
+                auth_check = target_page.evaluate("""() => {
+                    const title = document.title || "";
+                    const url = window.location.href || "";
+                    if (title.includes("Access Denied")) return { logged_in: false, reason: "Access Denied" };
+                    if (url.includes("login") || url.includes("member.tw.coupang.com")) return { logged_in: false, reason: "Login page redirected" };
+
+                    const elements = Array.from(document.querySelectorAll("a, button, span, div"));
+                    const hasLogin = elements.some(el => (el.innerText || "").trim() === "登入");
+                    const hasUser = elements.some(el => {
+                        const t = (el.innerText || "").trim();
+                        return t.includes("我的酷澎") || t.includes("登出") || t.includes("會員專區") || t.includes("訂單查詢");
+                    });
+                    if (hasLogin && !hasUser) {
+                        return { logged_in: false, reason: "Login button detected without active user session" };
+                    }
+                    return { logged_in: true, reason: "OK" };
+                }""")
+                is_logged_in = auth_check.get("logged_in", True)
+                self.last_login_valid = is_logged_in
+
         parsed_cart = []
         if dom_items:
             for item in dom_items:
@@ -279,7 +306,10 @@ class CoupangPriceTracker:
         # 2. 保留清單（你之前想購買的商品）已依指示停用追蹤，僅專注於購物車主區
         # （若未來需要啟用可開啟）
 
-        return parsed_cart
+        if not is_logged_in:
+            print("⚠️ [酷澎購物車] 偵測到登入已過期或處於訪客模式，無法同步個人購物車商品。", file=sys.stderr)
+
+        return parsed_cart, is_logged_in
 
     def search_products(self, query: str, wait_seconds: float = 3.0) -> List[Dict[str, Any]]:
         """軌道二：透過 Chrome-Assistant 開啟搜尋頁並抓取解析商品列表"""
