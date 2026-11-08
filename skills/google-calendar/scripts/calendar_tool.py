@@ -133,7 +133,7 @@ def list_events(cal_name: str = "個人", date_filter: str = "today"):
         loc_str = f" | 地點: {loc}" if loc else ""
         print(f"• [{start} ~ {end}] {summary}{loc_str}")
 
-def add_event(cal_name: str, title: str, start_str: str, end_str: Optional[str] = None, location: Optional[str] = None, dry_run: bool = False):
+def add_event(cal_name: str, title: str, start_str: str, end_str: Optional[str] = None, location: Optional[str] = None, dry_run: bool = False, recurrence: Optional[list] = None):
     cid = resolve_calendar_id(cal_name)
     
     # 解析日期時間
@@ -186,6 +186,8 @@ def add_event(cal_name: str, title: str, start_str: str, end_str: Optional[str] 
     }
     if location:
         body["location"] = location
+    if recurrence:
+        body["recurrence"] = recurrence
 
     params = {"calendarId": cid}
     args = ["calendar", "events", "insert", "--params", json.dumps(params), "--json", json.dumps(body)]
@@ -245,23 +247,38 @@ def main():
             date_filter = sys.argv[3] if len(sys.argv) > 3 else "today"
         list_events(cal, date_filter)
     elif cmd == "add":
-        if len(sys.argv) < 4:
-            print("Usage: calendar_tool.py add [cal_name] <title> <start_time> [end_time] [location]")
+        args = sys.argv[2:]
+        recurrence = None
+        dry_run = False
+        
+        # 提取選項
+        if "--dry-run" in args:
+            dry_run = True
+            args.remove("--dry-run")
+        if "--recurrence" in args:
+            idx = args.index("--recurrence")
+            if idx + 1 < len(args):
+                rrule_val = args[idx + 1]
+                recurrence = [rrule_val]
+                del args[idx:idx + 2]
+
+        if len(args) < 2:
+            print("Usage: calendar_tool.py add [cal_name] <title> <start_time> [end_time] [location] [--recurrence <RRULE>] [--dry-run]")
             sys.exit(1)
-        # 若第 3 個參數即為日期時間字串，表示第 2 個參數是 title，日曆預設為「待辦事項」
-        if _is_date_time_str(sys.argv[3]):
+        # 若第 2 個參數即為日期時間字串，表示第 1 個參數是 title，日曆預設為「待辦事項」
+        if len(args) >= 2 and _is_date_time_str(args[1]):
             cal = "待辦事項"
-            title = sys.argv[2]
-            start = sys.argv[3]
-            end = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4].lower() != "none" else None
-            loc = sys.argv[5] if len(sys.argv) > 5 else None
+            title = args[0]
+            start = args[1]
+            end = args[2] if len(args) > 2 and args[2].lower() != "none" else None
+            loc = args[3] if len(args) > 3 else None
         else:
-            cal = sys.argv[2]
-            title = sys.argv[3]
-            start = sys.argv[4]
-            end = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5].lower() != "none" else None
-            loc = sys.argv[6] if len(sys.argv) > 6 else None
-        add_event(cal, title, start, end, loc)
+            cal = args[0]
+            title = args[1]
+            start = args[2] if len(args) > 2 else ""
+            end = args[3] if len(args) > 3 and args[3].lower() != "none" else None
+            loc = args[4] if len(args) > 4 else None
+        add_event(cal, title, start, end, loc, dry_run=dry_run, recurrence=recurrence)
     elif cmd == "delete":
         if len(sys.argv) < 3:
             print("Usage: calendar_tool.py delete [cal_name] <event_id>")

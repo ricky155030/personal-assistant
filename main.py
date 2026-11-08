@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, Header, HTTPException, Depends, status, File, Form, UploadFile
+from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -37,6 +38,87 @@ def sanitize_for_tts(text: str) -> str:
     clean = re.sub(r"\s+([。，、！？.!?])", r"\1", clean).strip()
     return clean
 
+class TTSSentenceExtractor:
+    """串流切句與程式碼區塊過濾器：將 LLM 吐出的文字即時過濾程式碼並切分為朗讀句子"""
+    def __init__(self):
+        self.buffer = ""
+        self.in_code_block = False
+        self.sentence_buffer = ""
+        self.delimiters = set("。！？；!?\n")
+
+    def feed(self, delta: str) -> List[str]:
+        sentences = []
+        self.buffer += delta
+
+        while True:
+            if not self.in_code_block:
+                idx = self.buffer.find("```")
+                if idx != -1:
+                    text_before = self.buffer[:idx]
+                    self.buffer = self.buffer[idx + 3:]
+                    self.in_code_block = True
+                    sentences.extend(self._process_text(text_before))
+                    continue
+                else:
+                    if self.buffer.endswith("`"):
+                        safe_len = len(self.buffer) - (2 if self.buffer.endswith("``") else 1)
+                        if safe_len > 0:
+                            confirmed = self.buffer[:safe_len]
+                            self.buffer = self.buffer[safe_len:]
+                            sentences.extend(self._process_text(confirmed))
+                    else:
+                        confirmed = self.buffer
+                        self.buffer = ""
+                        sentences.extend(self._process_text(confirmed))
+                    break
+            else:
+                idx = self.buffer.find("```")
+                if idx != -1:
+                    self.buffer = self.buffer[idx + 3:]
+                    self.in_code_block = False
+                    continue
+                else:
+                    if self.buffer.endswith("`"):
+                        safe_len = len(self.buffer) - (2 if self.buffer.endswith("``") else 1)
+                        self.buffer = self.buffer[safe_len:]
+                    else:
+                        self.buffer = ""
+                    break
+        return sentences
+
+    def _process_text(self, text: str) -> List[str]:
+        sentences = []
+        for ch in text:
+            self.sentence_buffer += ch
+            if ch in self.delimiters:
+                clean = sanitize_for_tts(self.sentence_buffer)
+                if len(clean) >= 1 and any(c.isalnum() for c in clean):
+                    sentences.append(clean)
+                self.sentence_buffer = ""
+            elif len(self.sentence_buffer) > 60 and ch in "，,":
+                clean = sanitize_for_tts(self.sentence_buffer)
+                if len(clean) >= 1 and any(c.isalnum() for c in clean):
+                    sentences.append(clean)
+                self.sentence_buffer = ""
+        return sentences
+
+    def flush(self) -> List[str]:
+        sentences = []
+        if not self.in_code_block and self.sentence_buffer:
+            clean = sanitize_for_tts(self.sentence_buffer)
+            if len(clean) >= 1 and any(c.isalnum() for c in clean):
+                sentences.append(clean)
+            self.sentence_buffer = ""
+        return sentences
+
+def extract_tts_sentences(buffer: str, in_code_block: bool = False) -> tuple[List[str], str, bool]:
+    """輔助函式：自一段文字中提取完整 TTS 句子，並回傳 (句子列表, 剩餘緩衝, 是否仍在程式碼區塊)"""
+    extractor = TTSSentenceExtractor()
+    extractor.in_code_block = in_code_block
+    sentences = extractor.feed(buffer)
+    remaining = extractor.sentence_buffer if not extractor.in_code_block else ""
+    return sentences, remaining, extractor.in_code_block
+
 app = FastAPI(
     title="Mac mini Personal Assistant API",
     description="專為 Apple Watch Ultra 與 iOS 捷徑設計的個人助理後端",
@@ -45,6 +127,11 @@ app = FastAPI(
 
 # 掛載 HTML 報告目錄 (供 Tailscale 遠端檢視)
 app.mount("/reports", StaticFiles(directory=str(settings.REPORTS_DIR), html=True), name="reports")
+
+# 掛載靜態資源與 iOS SideStore 軟體源目錄
+STATIC_DIR = settings.BASE_DIR / "static"
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # 允許跨來源請求 (包含 Tailscale 網域與本機)
 app.add_middleware(
@@ -57,11 +144,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """服務啟動時預熱啟動代理守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
-    if settings.AGENT_ENGINE == "claude":
-        from claude_singleton import claude_singleton
-        claude_singleton.start()
-    elif settings.AGENT_ENGINE == "agy":
+    """服務啟動時預熱啟動 agy 守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
+    if settings.AGENT_ENGINE == "agy":
         agy_singleton.start()
     if settings.TELEGRAM_BOT_TOKEN:
         asyncio.create_task(start_telegram_bot())
@@ -76,6 +160,10 @@ class ChatRequest(BaseModel):
     media: Optional[List[dict]] = None
     image_path: Optional[str] = None
     image_paths: Optional[List[str]] = None
+    image_base64: Optional[str] = None
+    level: Optional[str] = None
+    tts_voice: Optional[str] = "zh-TW-HsiaoChenNeural"
+    tts_rate: Optional[str] = "+0%"
 
 class ChatResponse(BaseModel):
     reply: str
@@ -112,7 +200,7 @@ async def index():
     return {
         "status": "online",
         "service": "Mac mini Personal Assistant",
-        "owner": os.getenv("ASSISTANT_OWNER", "User"),
+        "owner": os.getenv("ASSISTANT_OWNER", "<您的稱呼>"),
         "tailscale_domain": settings.TAILSCALE_DOMAIN,
         "docs_url": "/docs"
     }
@@ -353,6 +441,351 @@ def chat(
         latency_seconds=latency
     )
 
+@app.get("/api/voice-chat/tts")
+async def voice_tts_endpoint(
+    text: str,
+    voice: str = "zh-TW-HsiaoChenNeural",
+    _authorized: bool = Depends(verify_token)
+):
+    """即時文字轉類神經語音端點 (微軟 Edge-TTS MP3 串流)"""
+    from tts_service import synthesize_to_bytes
+    audio_bytes = await synthesize_to_bytes(text, voice=voice)
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="語音合成失敗或無有效文字")
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+import threading as _threading
+
+_ACTIVE_VOICE_CANCEL_EVENTS: set = set()
+_VOICE_CANCEL_LOCK = _threading.Lock()
+
+
+class CancelChatRequest(BaseModel):
+    level: Optional[str] = None
+    reason: Optional[str] = "user_cancelled"
+
+
+@app.post("/api/voice-chat/cancel")
+def cancel_voice_chat(
+    payload: Optional[CancelChatRequest] = None,
+    _authorized: bool = Depends(verify_token)
+):
+    """iOS 端一鍵停止/語音打斷專用端點：
+    1. 觸發所有活躍 SSE 串流之 cancel_event，立即中止 TTS 合成並攔截 Telegram 推播
+    2. 對底層 agy acp 發送原生 `session/cancel`，於 6~15ms 內強制中止大腦思考與執行中工具
+    """
+    level = payload.level if payload else None
+    with _VOICE_CANCEL_LOCK:
+        active_count = len(_ACTIVE_VOICE_CANCEL_EVENTS)
+        for ev in list(_ACTIVE_VOICE_CANCEL_EVENTS):
+            ev.set()
+    acp_res = agy_singleton.cancel_active_turns(level=level)
+    print(f"[cancel_voice_chat] 🛑 收到取消請求 (active_streams={active_count}, acp_cancelled={acp_res})")
+    return {
+        "status": "cancelled",
+        "active_streams_signaled": active_count,
+        "acp": acp_res
+    }
+
+
+@app.post("/api/voice-chat/stream")
+async def voice_chat_stream(
+    payload: ChatRequest,
+    _authorized: bool = Depends(verify_token)
+):
+    """iOS 隨身語音/Vibe Coding 專用 SSE 串流端點：
+    同時推流文字增量 (text_delta)、工具進度 (status) 與純口語切句 (tts_sentence)。
+    支援中途透過 /api/voice-chat/cancel 或斷開連線觸發 ACP 原生 `session/cancel`。
+    """
+    import time
+    import threading
+    import mimetypes
+    from pathlib import Path
+
+    start_ts = time.perf_counter()
+    user_query = payload.query.strip()
+    client_source = payload.client or "ios-voice"
+    level = payload.level
+    cancel_event = threading.Event()
+    worker_finished = threading.Event()
+    with _VOICE_CANCEL_LOCK:
+        _ACTIVE_VOICE_CANCEL_EVENTS.add(cancel_event)
+
+    # 解析多模態 media 圖片
+    import base64
+    import uuid
+    effective_media: List[dict] = []
+    upload_dir = settings.BASE_DIR / "data" / "ios_uploads"
+    for item in (payload.media or []):
+        if "uri" in item:
+            effective_media.append(item)
+        elif "data_base64" in item:
+            try:
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                raw_bytes = base64.b64decode(item["data_base64"])
+                saved_file = upload_dir / f"ios_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+                saved_file.write_bytes(raw_bytes)
+                effective_media.append({
+                    "mime_type": item.get("mime_type", "image/jpeg"),
+                    "uri": str(saved_file.resolve())
+                })
+            except Exception as ex:
+                print(f"[voice_chat_stream] Failed to decode media base64: {ex}")
+
+    if payload.image_base64:
+        try:
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            raw_bytes = base64.b64decode(payload.image_base64)
+            saved_file = upload_dir / f"ios_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+            saved_file.write_bytes(raw_bytes)
+            effective_media.append({
+                "mime_type": "image/jpeg",
+                "uri": str(saved_file.resolve())
+            })
+        except Exception as ex:
+            print(f"[voice_chat_stream] Failed to decode image_base64: {ex}")
+
+    if payload.image_path:
+        img_p = Path(payload.image_path).resolve()
+        if img_p.exists():
+            mime_type, _ = mimetypes.guess_type(str(img_p))
+            effective_media.append({
+                "mime_type": mime_type or "image/jpeg",
+                "uri": str(img_p)
+            })
+    if payload.image_paths:
+        for p in payload.image_paths:
+            img_p = Path(p).resolve()
+            if img_p.exists():
+                mime_type, _ = mimetypes.guess_type(str(img_p))
+                effective_media.append({
+                    "mime_type": mime_type or "image/jpeg",
+                    "uri": str(img_p)
+                })
+
+    loop = asyncio.get_running_loop()
+    event_queue: asyncio.Queue = asyncio.Queue()
+    tts_voice = payload.tts_voice or "zh-TW-HsiaoChenNeural"
+    tts_rate = payload.tts_rate or "+0%"
+    tts_queue: asyncio.Queue = asyncio.Queue()
+
+    async def tts_worker():
+        from tts_service import synthesize_to_base64
+        while True:
+            item = await tts_queue.get()
+            if item is None:
+                tts_queue.task_done()
+                break
+            seq, sentence = item
+            if cancel_event.is_set():
+                tts_queue.task_done()
+                continue
+            try:
+                audio_b64 = await synthesize_to_base64(sentence, voice=tts_voice, rate=tts_rate)
+                if audio_b64 and not cancel_event.is_set():
+                    await event_queue.put({
+                        "type": "audio_chunk",
+                        "seq": seq,
+                        "sentence": sentence,
+                        "audio_base64": audio_b64,
+                        "format": "mp3"
+                    })
+            except Exception as ex:
+                print(f"[tts_worker] Error synthesizing sentence {seq}: {ex}")
+            finally:
+                tts_queue.task_done()
+
+    tts_task = asyncio.create_task(tts_worker())
+
+    if not user_query and not effective_media:
+        with _VOICE_CANCEL_LOCK:
+            _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
+        async def empty_gen():
+            msg = "我沒有聽到任何內容，請再試一次。"
+            yield f"data: {json.dumps({'type': 'tts_sentence', 'sentence': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'text_delta', 'delta': msg}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'full_reply': msg, 'latency': 0.0, 'thinking_level': level or 'med', 'report_url': ''}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(
+            empty_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+        )
+
+    if not user_query and effective_media:
+        user_query = f"請幫我分析這 {len(effective_media)} 張圖片。" if len(effective_media) > 1 else "請幫我分析這張圖片"
+
+    existing_reports = {f.name: f.stat().st_mtime for f in settings.REPORTS_DIR.glob("*.html")}
+
+    def stream_worker():
+        actions = [f"client: {client_source}"]
+        full_reply_parts = []
+        turn_result = {}
+        extractor = TTSSentenceExtractor()
+        sentence_seq = 0
+
+        try:
+            gen = personal_agent.stream(
+                user_query,
+                client=client_source,
+                media=effective_media if effective_media else None,
+                level=level
+            )
+            while True:
+                if cancel_event.is_set():
+                    agy_singleton.cancel_active_turns(level=level)
+                    break
+                try:
+                    ev_type, ev_data = next(gen)
+                except StopIteration as stop_err:
+                    turn_result = stop_err.value or {}
+                    break
+
+                if cancel_event.is_set():
+                    agy_singleton.cancel_active_turns(level=level)
+                    break
+
+                if ev_type == "thought":
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "thought_delta", "delta": ev_data}
+                    )
+                elif ev_type == "status":
+                    status_text = ev_data
+                    clean_status = sanitize_for_tts(status_text)
+                    actions.append(f"tool: {status_text[:30]}")
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "status", "text": status_text, "tts": clean_status}
+                    )
+                elif ev_type == "text":
+                    delta = ev_data
+                    full_reply_parts.append(delta)
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "text_delta", "delta": delta}
+                    )
+                    sentences = extractor.feed(delta)
+                    for sent in sentences:
+                        seq = sentence_seq
+                        sentence_seq += 1
+                        loop.call_soon_threadsafe(
+                            event_queue.put_nowait,
+                            {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                        )
+                        loop.call_soon_threadsafe(
+                            tts_queue.put_nowait,
+                            (seq, sent)
+                        )
+
+            was_cancelled = cancel_event.is_set() or bool(turn_result.get("cancelled"))
+            if was_cancelled:
+                loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                print(f"[voice_chat_stream] 🛑 本次語音請求已中途取消，略過後續 TTS 與 Telegram 推播: {user_query[:30]}")
+                return
+
+            # Flush 剩餘未結尾句子
+            for sent in extractor.flush():
+                seq = sentence_seq
+                sentence_seq += 1
+                loop.call_soon_threadsafe(
+                    event_queue.put_nowait,
+                    {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                )
+                loop.call_soon_threadsafe(
+                    tts_queue.put_nowait,
+                    (seq, sent)
+                )
+
+            # 通知 tts_queue 已送完所有句子，並等待 TTS 合成排隊完成
+            loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+            try:
+                fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
+                fut.result(timeout=15.0)
+            except Exception as e:
+                print(f"[voice_chat_stream] TTS wait timeout: {e}")
+
+            if cancel_event.is_set():
+                print(f"[voice_chat_stream] 🛑 TTS 期間收到取消訊號，略過 Telegram 推播")
+                return
+
+            total_latency = round(time.perf_counter() - start_ts, 3)
+            full_reply = "".join(full_reply_parts) or turn_result.get("response", "") or turn_result.get("clean_reply", "")
+            clean_reply = full_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
+
+            new_reports = [
+                f for f in settings.REPORTS_DIR.glob("*.html")
+                if f.name not in existing_reports or f.stat().st_mtime > existing_reports.get(f.name, 0)
+            ]
+            report_url = ""
+            report_link_html = ""
+            if new_reports:
+                latest_report = max(new_reports, key=lambda f: f.stat().st_mtime)
+                report_url = settings.get_report_url(latest_report.name)
+                portal_url = f"http://{settings.TAILSCALE_DOMAIN}:{settings.PORT}/reports"
+                report_link_html = f"\n\n🌐 <b>線上報告已生成</b>：\n👉 <a href=\"{report_url}\">點此開啟報告</a> ｜ 📂 <a href=\"{portal_url}\">報告總覽中心</a>"
+
+            quick_replies = turn_result.get("quick_replies") or []
+            done_payload = {
+                "type": "done",
+                "full_reply": clean_reply,
+                "latency": total_latency,
+                "thinking_level": level or "med",
+                "report_url": report_url,
+                "quick_replies": quick_replies
+            }
+            loop.call_soon_threadsafe(event_queue.put_nowait, done_payload)
+
+            # 串流結束後，同步至 Telegram
+            try:
+                send_formatted_telegram_reply(
+                    reply=clean_reply,
+                    user_query=user_query,
+                    latency=total_latency,
+                    actions=actions,
+                    report_link_html=report_link_html,
+                    thinking_level=turn_result.get("thinking_level", level),
+                    thought_text=turn_result.get("thought"),
+                    quick_replies=quick_replies
+                )
+            except Exception as tg_e:
+                print(f"[voice_chat_stream] Telegram sync error: {tg_e}")
+
+        except Exception as e:
+            print(f"[voice_chat_stream] Worker exception: {e}")
+            loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "error": str(e)})
+        finally:
+            worker_finished.set()
+            with _VOICE_CANCEL_LOCK:
+                _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
+            loop.call_soon_threadsafe(event_queue.put_nowait, None)
+
+    threading.Thread(target=stream_worker, daemon=True).start()
+
+    async def event_generator():
+        try:
+            while True:
+                item = await event_queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        finally:
+            if not worker_finished.is_set() and not cancel_event.is_set():
+                cancel_event.set()
+                agy_singleton.cancel_active_turns(level=level)
+                print(f"[voice_chat_stream] 🔌 SSE 客戶端中斷連線，已自動觸發 ACP session/cancel")
+            with _VOICE_CANCEL_LOCK:
+                _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
 def _save_and_archive_upload(file: UploadFile) -> str:
     """上傳檔存暫存＋留底最後 20 個到 data/uploads/（真實錄音調參/診斷用）"""
     import os
@@ -426,7 +859,7 @@ async def voice_pipeline(
 
 @app.get("/api/memory")
 def get_memory(module: Optional[str] = None):
-    """查看當前記憶內容 (可傳入 ?module=profile|preferences|projects|notes 查閱特定模組)"""
+    """查看當前記憶內容 (可傳入 ?module=profile|preferences|homeassistant|projects|notes 查閱特定模組)"""
     if module:
         content = memory_manager.read_module(module)
         if content is None:
@@ -477,17 +910,25 @@ async def trigger_memory_sync():
 @app.get("/api/status")
 @app.get("/api/usage")
 @app.get("/api/quota")
-def get_usage():
-    """查看 Gemini 5h / 7days 與 3P 模型的即時額度配額"""
+def get_usage(refresh: bool = False):
+    """查看 Gemini 5h / 7days 與 3P 模型的即時額度配額 (預設使用 30s 快取，傳入 ?refresh=true 強制即時重抓)"""
     from quota_service import quota_service
-    if settings.AGENT_ENGINE == "claude":
-        from claude_singleton import claude_singleton
-        stat = claude_singleton.get_status()
-    else:
-        stat = agy_singleton.get_status()
+    stat = agy_singleton.get_status()
     return {
         "status": "ok",
-        "quota": quota_service.get_quota_summary(force_refresh=True),
+        "quota": quota_service.get_quota_summary(force_refresh=refresh),
+        "context": stat
+    }
+
+
+@app.post("/api/quota/compact")
+def compact_context(_authorized: bool = Depends(verify_token)):
+    """觸發 ACP 原生 `/compact` 無損壓縮對話記憶，釋放 Context Window 空間"""
+    res = agy_singleton.compact_session()
+    stat = agy_singleton.get_status()
+    return {
+        "status": "ok" if res.get("success") else "error",
+        "compact": res,
         "context": stat
     }
 

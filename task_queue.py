@@ -131,7 +131,9 @@ class TaskQueue:
                 else:
                     ev_type, ev_data = "text", item
 
-                if ev_type == "status":
+                if ev_type == "thought":
+                    card.on_thought(str(ev_data))
+                elif ev_type == "status":
                     card.on_status(str(ev_data))
                 elif ev_type == "tool_done":
                     card.on_tool_done(str(ev_data))
@@ -152,9 +154,21 @@ class TaskQueue:
         finished_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         latency = round(end_ts - start_ts, 3)
 
-        final_result_text = turn_result.get("result") or turn_result.get("clean_reply")
-        raw_reply = final_result_text.strip() if final_result_text else "".join(card.collected_text).strip()
+        raw_reply = "".join(card.collected_text).strip() or turn_result.get("clean_reply", "")
         clean_reply = raw_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
+
+        if turn_result.get("cancelled"):
+            self._mark_result(
+                task_id,
+                status="cancelled",
+                reply=clean_reply or "已中止本次回應",
+                actions=["cancelled"],
+                finished_at=finished_at,
+                latency_seconds=latency,
+            )
+            card.mark_cancelled(user_query=user_query, latency=latency)
+            print(f"[TaskQueue] 🛑 非同步任務 ({client_source}) 已由主人中途停止 (耗時: {latency:.2f}s)")
+            return
 
         thinking_level = turn_result.get("thinking_level", "low")
         actions = [
@@ -194,7 +208,9 @@ class TaskQueue:
             actions=actions,
             report_link_html=report_link_html,
             thinking_level=thinking_level,
-            msg_id=msg_id
+            msg_id=msg_id,
+            thought_text=turn_result.get("thought"),
+            quick_replies=turn_result.get("quick_replies")
         )
 
         print(

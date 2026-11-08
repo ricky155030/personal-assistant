@@ -19,13 +19,6 @@ from quota_service import quota_service
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
-def get_active_brain():
-    """動態取得當前啟用的常駐大腦 (agy 或 claude)"""
-    if getattr(settings, "AGENT_ENGINE", "agy").lower() == "claude":
-        from claude_singleton import claude_singleton
-        return claude_singleton
-    return agy_singleton
-
 def infer_skill(query: str, reply: str, actions: Optional[List[str]] = None) -> str:
     """推斷本次對話使用的主要技能或資料來源"""
     act_str = " ".join(actions or []).lower()
@@ -42,21 +35,15 @@ def infer_skill(query: str, reply: str, actions: Optional[List[str]] = None) -> 
                         return f"👁️ 視覺辨識 ({num}張圖)"
         return "👁️ 視覺辨識"
     if "fast-path" in act_str:
-        return "⚡ 極速回應"
-    if "sheets_tool" in act_str or any(k in q_lower for k in ["試算表", "表格", "sheets", "待買"]):
-        return "📊 雲端試算表"
-    if "calendar_tool" in act_str or any(k in q_lower for k in ["行事曆", "待辦", "日程", "繳費", "行程", "提醒"]):
+        return "💡 家電直連"
+    if "sheets_tool" in act_str or any(k in q_lower for k in ["奶瓶", "奶嘴", "備品", "待產", "包屁衣", "試算表", "嬰兒"]):
+        return "📊 備品試算表"
+    if "calendar_tool" in act_str or any(k in q_lower for k in ["行事曆", "待辦", "日程", "繳費", "門診", "mri", "行程", "提醒"]):
         return "📅 待辦行事曆"
     if "search_web" in act_str or any(k in q_lower for k in ["天氣", "搜尋", "查一下", "最新", "股價", "新聞", "匯率"]):
         return "🌐 即時連網"
-    if "homeassistant" in act_str or "home-assistant" in act_str or "ha_tool" in act_str:
+    if "homeassistant" in act_str or "home-assistant" in act_str:
         return "💡 智慧家電"
-    if "location" in act_str or "current-location" in act_str or "get_location" in act_str:
-        return "📍 即時定位"
-    if "bill-auditor" in act_str or "bill_auditor" in act_str or "auditor" in act_str:
-        return "💳 帳單審計"
-    if "personal-briefing" in act_str or "briefing" in act_str:
-        return "📰 個人簡報"
     if "fb_group_monitor" in act_str or "fb-group-monitor" in act_str or any(k in q_lower for k in ["社團", "fb社團", "貼文監控"]):
         return "📡 社團雷達"
     return "🤖 核心大腦"
@@ -377,24 +364,21 @@ def build_info_line(
 ) -> str:
     """
     依照當前啟動之大腦引擎動態產生 Telegram 置底卡片之指標列：
-    - agy (Gemini): ⏱️ 耗時 ｜ 🛠️ 技能 ｜ ⚡ 7d: 週配額% (Level) ｜ 🧠 Context: X%
-    - claude / 其他: ⏱️ 耗時 ｜ 🛠️ 技能 (Level) ｜ 🧠 Context: X% (不放 Gemini 7d 週配額)
+    - agy (Gemini): ⏱️ 耗時 ｜ 🛠️ 技能 ｜ ⚡ 7d: 週配額% (Level)
+    - 非 agy (如 claude): ⏱️ 耗時 ｜ 🛠️ 技能 (Level) (不放 Gemini 7d 週配額)
     """
-    # 1. 耗時格式化 (極速家電通道以兩位小數呈現，一般查詢以一位小數呈現)
     if latency < 0.1:
         latency_str = f"⚡ {latency:.2f}s"
     else:
         latency_str = f"⏱️ {latency:.1f}s"
 
-    # 2. 技能推斷
     skill = infer_skill(user_query, reply, actions)
 
-    # 3. 解析思考等級 (thinking_level: low/med/high)
     level_candidate = thinking_level
     if not level_candidate and actions:
         for a in actions:
             a_lower = a.lower()
-            if any(k in a_lower for k in ["thinking:", "level:", "(low)", "(med)", "(high)", "(medium)"]):
+            if "thinking:" in a_lower or "level:" in a_lower or "(low)" in a_lower or "(med)" in a_lower or "(high)" in a_lower or "(medium)" in a_lower:
                 if "low" in a_lower:
                     level_candidate = "low"
                 elif "high" in a_lower:
@@ -405,44 +389,14 @@ def build_info_line(
 
     lvl_name = ""
     level_tag = ""
-    ctx_pct = None
-
     if level_candidate:
         lvl_map = {"low": "Low", "medium": "Med", "med": "Med", "high": "High"}
         lvl_name = lvl_map.get(level_candidate.lower(), level_candidate.capitalize())
         level_tag = f" ({lvl_name})"
 
-        # 讀取當前大腦的 Context 用量百分比
-        try:
-            lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
-            brain_key = f"{lvl_norm}_brain"
-            stat = get_active_brain().get_status()
-            target_brain = stat.get(brain_key, {})
-            ctx_pct = target_brain.get("percent")
-            if ctx_pct is None or ctx_pct == 0:
-                import urllib.request, json
-                req = urllib.request.Request(f"http://127.0.0.1:{settings.PORT}/api/quota")
-                with urllib.request.urlopen(req, timeout=0.5) as resp:
-                    api_data = json.loads(resp.read().decode("utf-8"))
-                    ctx_pct = api_data.get("context", {}).get(brain_key, {}).get("percent", 0.0)
-        except Exception:
-            pass
-    else:
-        # 若無指定等級，嘗試讀取整體 Context 用量
-        try:
-            stat = get_active_brain().get_status()
-            ctx_pct = stat.get("med_brain", {}).get("percent", stat.get("percent"))
-        except Exception:
-            pass
-
-    # 4. 判斷當前大腦引擎 (agy / claude / etc.)
-    engine = ""
-    try:
-        engine = (get_active_brain().get_status().get("engine") or getattr(settings, "AGENT_ENGINE", "agy")).lower()
-    except Exception:
-        engine = getattr(settings, "AGENT_ENGINE", "agy").lower()
-
+    engine = getattr(settings, "AGENT_ENGINE", "agy").lower()
     parts = [latency_str]
+
     if engine == "agy":
         try:
             q_summary = quota_service.get_quota_summary()
@@ -453,12 +407,8 @@ def build_info_line(
         parts.append(skill)
         parts.append(quota_str)
     else:
-        # 非 agy 引擎 (如 claude): 依主人指示不顯示 Gemini 7d 週配額，若有等級則標註於技能旁
         skill_display = f"{skill} ({lvl_name})" if lvl_name else skill
         parts.append(skill_display)
-
-    if ctx_pct is not None:
-        parts.append(f"🧠 Context: {ctx_pct:.1f}%")
 
     return " ｜ ".join(parts)
 
@@ -473,9 +423,10 @@ def format_telegram_response(
     """
     依照方案 1（置底一體化 Quote）格式化 Telegram 訊息：
     第一行：使用者問題
-    第二行：依大腦動態格式化指標列 (agy 顯示 7d 週配額，claude 顯示模型等級與 Context)
+    第二行：依大腦動態格式化指標列
     """
     info_line = build_info_line(user_query, reply, latency, actions, thinking_level)
+
     clean_reply = markdown_to_telegram_html(reply.strip())
     safe_user_query = html.escape(user_query)
     return f"🤖 {clean_reply}{report_link_html}\n\n<blockquote>👤 <i>{safe_user_query}</i>\n{info_line}</blockquote>"
@@ -545,7 +496,9 @@ def send_formatted_telegram_reply(
     thinking_level: Optional[str] = None,
     msg_id: Optional[int] = None,
     chat_id: Optional[str] = None,
-    delete_progress_card: bool = True
+    delete_progress_card: bool = True,
+    thought_text: Optional[str] = None,
+    quick_replies: Optional[List[str]] = None
 ) -> bool:
     """
     發送 Telegram 回覆，完整支援：
@@ -555,12 +508,89 @@ def send_formatted_telegram_reply(
     4. 末段附帶置底 Quote 效能卡片與報告連結
     5. 各段落獨立 Markdown->Telegram HTML 渲染與 Fallback 標籤淨化
     """
-    info_line = build_info_line(user_query, reply, latency, actions, thinking_level)
+    try:
+        q_summary = quota_service.get_quota_summary()
+        g_w_pct = q_summary.get("gemini", {}).get("weekly_7d", {}).get("remaining_pct", 100.0)
+    except Exception:
+        g_w_pct = 100.0
+
+    latency_str = f"⚡ {latency:.2f}s" if latency < 0.1 else f"⏱️ {latency:.1f}s"
+    skill = infer_skill(user_query, reply, actions)
+
+    level_candidate = thinking_level
+    if not level_candidate and actions:
+        for a in actions:
+            a_lower = a.lower()
+            if any(k in a_lower for k in ["thinking:", "level:", "(low)", "(med)", "(high)", "(medium)"]):
+                if "low" in a_lower:
+                    level_candidate = "low"
+                elif "high" in a_lower:
+                    level_candidate = "high"
+                elif "med" in a_lower or "medium" in a_lower:
+                    level_candidate = "med"
+                break
+
+    level_tag = ""
+    ctx_str = ""
+    if level_candidate:
+        lvl_map = {"low": "Low", "medium": "Med", "med": "Med", "high": "High"}
+        lvl_name = lvl_map.get(level_candidate.lower(), level_candidate.capitalize())
+        level_tag = f" ({lvl_name})"
+        
+        # 讀取當前大腦的 Context 用量百分比
+        try:
+            lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
+            brain_key = f"{lvl_norm}_brain"
+            stat = agy_singleton.get_status()
+            target_brain = stat.get(brain_key, {})
+            ctx_pct = target_brain.get("percent")
+            if ctx_pct is None or ctx_pct == 0:
+                # 若當前進程池未記錄，向本機 API 服務查詢即時狀態
+                import urllib.request, json
+                req = urllib.request.Request(f"http://127.0.0.1:{settings.PORT}/api/quota")
+                with urllib.request.urlopen(req, timeout=0.5) as resp:
+                    api_data = json.loads(resp.read().decode("utf-8"))
+                    ctx_pct = api_data.get("context", {}).get(brain_key, {}).get("percent", 0.0)
+            if ctx_pct is not None:
+                ctx_str = f" ｜ 🧠 Context: {ctx_pct:.1f}%"
+        except Exception:
+            pass
+
+    quota_str = f"⚡ 7d: {g_w_pct:.1f}%{level_tag}"
+    info_line = f"{latency_str} ｜ {skill} ｜ {quota_str}{ctx_str}"
     safe_user_query = html.escape(user_query)
-    quote_card = f"\n\n<blockquote>👤 <i>{safe_user_query}</i>\n{info_line}</blockquote>"
+    thought_html = ""
+    if thought_text and thought_text.strip():
+        trimmed_thought = thought_text.strip()
+        if len(trimmed_thought) > 900:
+            trimmed_thought = trimmed_thought[:900] + "..."
+        thought_html = f"\n\n<blockquote expandable>💭 <b>大腦思考過程</b>\n{html.escape(trimmed_thought)}</blockquote>"
+    quote_card = f"{thought_html}\n\n<blockquote>👤 <i>{safe_user_query}</i>\n{info_line}</blockquote>"
 
     chunks = split_markdown_into_chunks(reply.strip(), max_chunk_len=3000)
     total_chunks = len(chunks)
+
+    # 若助理反問確認，自動生成一鍵快速回覆 Inline Buttons (每列最多 2 個按鈕)
+    qr_markup = None
+    if quick_replies:
+        rows = []
+        current_row = []
+        for opt in quick_replies[:4]:
+            clean_opt = str(opt).strip()
+            if not clean_opt:
+                continue
+            cb_val = f"qr:{clean_opt}"
+            while len(cb_val.encode("utf-8")) > 60:
+                clean_opt = clean_opt[:-1]
+                cb_val = f"qr:{clean_opt}"
+            current_row.append({"text": f"💬 {opt}", "callback_data": cb_val})
+            if len(current_row) == 2:
+                rows.append(current_row)
+                current_row = []
+        if current_row:
+            rows.append(current_row)
+        if rows:
+            qr_markup = {"inline_keyboard": rows}
 
     all_ok = True
     for idx, chunk in enumerate(chunks):
@@ -577,7 +607,12 @@ def send_formatted_telegram_reply(
         if is_last:
             msg_body += f"{report_link_html}{quote_card}"
 
-        ok = send_telegram_sync(msg_body, chat_id=chat_id, parse_mode="HTML")
+        ok = send_telegram_sync(
+            msg_body,
+            chat_id=chat_id,
+            parse_mode="HTML",
+            reply_markup=qr_markup if is_last else None
+        )
         all_ok = all_ok and ok
 
     # 任務完成新訊息已發送後，自動刪除舊有的臨時進度卡片，還原乾淨聊天室
@@ -590,7 +625,8 @@ def send_telegram_sync(
     text: str, 
     chat_id: Optional[str] = None, 
     parse_mode: str = "HTML",
-    disable_notification: bool = False
+    disable_notification: bool = False,
+    reply_markup: Optional[dict] = None
 ) -> bool:
     """同步發送 Telegram 訊息 (可用於非同步/同步場景)"""
     token = settings.TELEGRAM_BOT_TOKEN
@@ -606,6 +642,8 @@ def send_telegram_sync(
     }
     if disable_notification:
         payload["disable_notification"] = True
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(url, json=payload)
@@ -619,6 +657,8 @@ def send_telegram_sync(
             fallback_payload = {"chat_id": target_chat, "text": fallback_text}
             if disable_notification:
                 fallback_payload["disable_notification"] = True
+            if reply_markup is not None:
+                fallback_payload["reply_markup"] = reply_markup
             fallback_resp = client.post(url, json=fallback_payload)
             return fallback_resp.status_code == 200
     except Exception as e:
@@ -629,7 +669,8 @@ def send_telegram_message_return_id(
     text: str, 
     chat_id: Optional[str] = None, 
     parse_mode: Optional[str] = None,
-    disable_notification: bool = False
+    disable_notification: bool = False,
+    reply_markup: Optional[dict] = None
 ) -> Optional[int]:
     """同步發送 Telegram 訊息並回傳 message_id，供後續串流打字機編輯"""
     token = settings.TELEGRAM_BOT_TOKEN
@@ -642,6 +683,8 @@ def send_telegram_message_return_id(
         payload["parse_mode"] = parse_mode
     if disable_notification:
         payload["disable_notification"] = True
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(url, json=payload)
@@ -673,7 +716,13 @@ def delete_telegram_message_sync(message_id: int, chat_id: Optional[str] = None)
         print(f"[TelegramService] ❌ deleteMessage 例外: {e}")
     return False
 
-def edit_telegram_message_sync(message_id: int, text: str, chat_id: Optional[str] = None, parse_mode: Optional[str] = None) -> bool:
+def edit_telegram_message_sync(
+    message_id: int,
+    text: str,
+    chat_id: Optional[str] = None,
+    parse_mode: Optional[str] = None,
+    reply_markup: Optional[dict] = None
+) -> bool:
     """同步編輯 Telegram 訊息 (打字機串流效果)"""
     token = settings.TELEGRAM_BOT_TOKEN
     target_chat = chat_id or settings.TELEGRAM_CHAT_ID
@@ -683,6 +732,8 @@ def edit_telegram_message_sync(message_id: int, text: str, chat_id: Optional[str
     payload = {"chat_id": target_chat, "message_id": message_id, "text": text}
     if parse_mode:
         payload["parse_mode"] = parse_mode
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(url, json=payload)
@@ -706,15 +757,23 @@ class TelegramLiveCard:
     """
     Telegram 原地動態進度卡片控制器 (Option 1: Ephemeral Live Progress Card)
     - 啟動瞬間 (<0.5s) 建立 Telegram 靜音訊息 (disable_notification=True)，杜絕初期惱人干擾
+    - 附帶 Inline Button [⏹️ 停止回應]，主人點一下即可透過 ACP session/cancel 毫秒級中止思考或工具執行
     - 步驟與打字機動態更新，末尾標註「🕒 最後更新：HH:MM:SS」，讓主人掌握最新進度時間
     - 嚴格落實 Telegram editMessageText 節流防護 (>= 1.2s)，杜絕 429 Too Many Requests
     - 任務完成後由 send_formatted_telegram_reply 發送帶響鈴之全新訊息，並自動刪除本卡片清理聊天室
     """
 
+    STOP_MARKUP = {
+        "inline_keyboard": [
+            [{"text": "⏹️ 停止回應", "callback_data": "cancel_active_turn"}]
+        ]
+    }
+
     def __init__(self, chat_id: Optional[str] = None, initial_step: str = "⏳ 正在分析需求..."):
         self.chat_id = chat_id
         self.msg_id: Optional[int] = None
         self.collected_text: List[str] = []
+        self.collected_thought: List[str] = []
         self.status_steps: List[str] = [initial_step]
         self.last_updated_time = datetime.now().strftime("%H:%M:%S")
         self.last_edit_time = time.perf_counter()
@@ -726,7 +785,8 @@ class TelegramLiveCard:
         self.msg_id = send_telegram_message_return_id(
             content, 
             chat_id=self.chat_id, 
-            disable_notification=True
+            disable_notification=True,
+            reply_markup=self.STOP_MARKUP
         )
         self.last_card_content = content
         self.last_edit_time = time.perf_counter()
@@ -740,7 +800,7 @@ class TelegramLiveCard:
             preview = full_text if len(full_text) <= 3800 else full_text[:3800] + "...\n\n⏳ [內容長篇深研中...] ▍"
             return f"🤖 {preview} ▍\n\n{time_tag}"
 
-        # 2. 若尚未產生文字（執行工具中），展示結構化即時步驟卡片
+        # 2. 若尚未產生文字（思考或執行工具中），展示結構化即時步驟與大腦思考片段
         steps_display = []
         if self.status_steps:
             for s in self.status_steps[:-1]:
@@ -751,7 +811,21 @@ class TelegramLiveCard:
         else:
             steps_display.append("⏳ 正在分析需求... ▍")
 
-        return "🤖 正在處理中...\n\n" + "\n".join(steps_display) + f"\n\n{time_tag}"
+        thought_block = ""
+        if self.collected_thought:
+            raw_thought = "".join(self.collected_thought).strip()
+            tail_thought = raw_thought[-220:] if len(raw_thought) > 220 else raw_thought
+            if len(raw_thought) > 220:
+                tail_thought = "..." + tail_thought
+            thought_block = f"\n\n🧠 思考過程：\n💭 {tail_thought} ▍"
+
+        return "🤖 正在處理中...\n\n" + "\n".join(steps_display) + thought_block + f"\n\n{time_tag}"
+
+    def on_thought(self, delta: str):
+        """當收到大腦內部思考 agent_thought_chunk 時即時更新進度卡片"""
+        self.last_updated_time = datetime.now().strftime("%H:%M:%S")
+        self.collected_thought.append(delta)
+        self._maybe_edit()
 
     def on_status(self, status_text: str):
         """當新工具調用啟動時記錄步驟"""
@@ -784,14 +858,43 @@ class TelegramLiveCard:
             self.msg_id = send_telegram_message_return_id(
                 content, 
                 chat_id=self.chat_id, 
-                disable_notification=True
+                disable_notification=True,
+                reply_markup=self.STOP_MARKUP
             )
             self.last_edit_time = now
             self.last_card_content = content
         elif (now - self.last_edit_time >= 1.2) and (content != self.last_card_content):
-            edit_telegram_message_sync(self.msg_id, content, chat_id=self.chat_id)
+            edit_telegram_message_sync(
+                self.msg_id,
+                content,
+                chat_id=self.chat_id,
+                reply_markup=self.STOP_MARKUP
+            )
             self.last_edit_time = now
             self.last_card_content = content
+
+    def mark_cancelled(self, user_query: str, latency: float):
+        """當主人中途停止回應時，原地將進度卡片更新為已中止狀態並移除按鈕"""
+        partial = "".join(self.collected_text).strip()
+        safe_q = html.escape(user_query)
+        quote = f"\n\n<blockquote>👤 <i>{safe_q}</i>\n🛑 已中途停止回應 ｜ ⏱️ {latency:.1f}s</blockquote>"
+        if partial:
+            body_html = markdown_to_telegram_html(partial)
+            final_text = f"🤖 {body_html}\n\n⏹️ <i>[已中止回應]</i>{quote}"
+        else:
+            final_text = f"🛑 <b>已中止本次回應</b>{quote}"
+
+        empty_markup = {"inline_keyboard": []}
+        if self.msg_id:
+            edit_telegram_message_sync(
+                self.msg_id,
+                final_text,
+                chat_id=self.chat_id,
+                parse_mode="HTML",
+                reply_markup=empty_markup
+            )
+        else:
+            send_telegram_sync(final_text, chat_id=self.chat_id, parse_mode="HTML", disable_notification=True)
 
     def cleanup(self):
         """手動主動清除進度卡片"""
@@ -1150,7 +1253,7 @@ async def process_telegram_request(
         card = TelegramLiveCard(chat_id=chat_id)
         turn_result = {}
         try:
-            stream_gen = get_active_brain().send_query_stream(effective_query, media=media_list if media_list else None)
+            stream_gen = agy_singleton.send_query_stream(effective_query, media=media_list if media_list else None)
             while True:
                 item = next(stream_gen)
                 if isinstance(item, tuple) and len(item) == 2:
@@ -1158,7 +1261,9 @@ async def process_telegram_request(
                 else:
                     ev_type, ev_data = "text", item
 
-                if ev_type == "status":
+                if ev_type == "thought":
+                    card.on_thought(str(ev_data))
+                elif ev_type == "status":
                     card.on_status(str(ev_data))
                 elif ev_type == "tool_done":
                     card.on_tool_done(str(ev_data))
@@ -1172,17 +1277,25 @@ async def process_telegram_request(
             raise e
 
         card.finalize()
-        final_result_text = turn_result.get("result") or turn_result.get("clean_reply")
-        clean_out = final_result_text.strip() if final_result_text else "".join(card.collected_text).strip()
-        return clean_out, turn_result, card.msg_id
+        clean_out = "".join(card.collected_text).strip() or turn_result.get("clean_reply", "")
+        return clean_out, turn_result, card
 
     try:
-        reply, turn_result, msg_id = await loop.run_in_executor(None, _stream_runner)
+        reply, turn_result, card = await loop.run_in_executor(None, _stream_runner)
     except Exception as e:
         print(f"[TelegramService] ❌ 串流處理異常: {e}")
         await send_telegram_message(f"⚠️ 處理訊息時發生錯誤：{e}", chat_id=chat_id)
         return
+    msg_id = card.msg_id
     total_lat = turn_result.get("total_latency", (datetime.now() - start_t).total_seconds())
+    display_query = user_text if user_text else (f"傳送了 {len(media_list)} 張圖片" if len(media_list) > 1 else "請幫我分析這張圖片")
+
+    # 若主人點擊了 [⏹️ 停止回應] 或發送 /stop 中途取消，原地更新進度卡片為已中止並結束
+    if turn_result.get("cancelled"):
+        print(f"[TelegramService] 🛑 Telegram 請求已由主人中途停止 (耗時: {total_lat:.2f}s)")
+        await loop.run_in_executor(None, card.mark_cancelled, display_query, total_lat)
+        return
+
     ttft = turn_result.get("time_to_first_token", 0)
     thinking_level = turn_result.get("thinking_level", "low")
     actions = [
@@ -1207,7 +1320,6 @@ async def process_telegram_request(
         report_link_html = f"\n\n🌐 <b>線上報告已生成</b>：\n👉 <a href=\"{report_url}\">點此開啟報告</a> ｜ 📂 <a href=\"{portal_url}\">報告總覽中心</a>"
 
     # 底部 Quote 顯示原始使用者輸入或圖片說明，調用支援長篇切分之發送引擎
-    display_query = user_text if user_text else (f"傳送了 {len(media_list)} 張圖片" if len(media_list) > 1 else "請幫我分析這張圖片")
     if not reply or not reply.strip():
         reply = "⚠️ 抱歉主人，剛才處理此請求時底層程序超時或遇到中斷。請直接再試一次，或告知我為您處理！"
     send_formatted_telegram_reply(
@@ -1218,7 +1330,9 @@ async def process_telegram_request(
         report_link_html=report_link_html,
         thinking_level=thinking_level,
         msg_id=msg_id,
-        chat_id=chat_id
+        chat_id=chat_id,
+        thought_text=turn_result.get("thought"),
+        quick_replies=turn_result.get("quick_replies")
     )
 
 async def start_telegram_bot():
@@ -1240,6 +1354,8 @@ async def start_telegram_bot():
 
             # 自動向 Telegram 伺服器同步註冊快捷指令選單
             commands = [
+                {"command": "stop", "description": "立即中止目前正在思考或執行中的回應"},
+                {"command": "compact", "description": "無損壓縮對話記憶 (/compact)，釋放 Context 空間"},
                 {"command": "status", "description": "查看系統狀態、上下文用量與 AI 配額"},
                 {"command": "perf", "description": "審查近期慢問答並產出優化改進提案"},
                 {"command": "tasks", "description": "查看目前背景運行的監控與長任務"},
@@ -1249,7 +1365,7 @@ async def start_telegram_bot():
             ]
             cmd_resp = await client.post(f"{TELEGRAM_API_BASE}/bot{token}/setMyCommands", json={"commands": commands})
             if cmd_resp.status_code == 200 and cmd_resp.json().get("ok"):
-                print("[TelegramService] ✅ Telegram 快捷指令選單已自動同步註冊 (status, tasks, memory, sync_memory, restart)")
+                print("[TelegramService] ✅ Telegram 快捷指令選單已自動同步註冊 (stop, compact, status, tasks, memory, sync_memory, restart)")
             else:
                 print(f"[TelegramService] ⚠️ 快捷指令選單註冊異常: {cmd_resp.text}")
         except Exception as e:
@@ -1274,6 +1390,58 @@ async def start_telegram_bot():
                 updates = data.get("result", [])
                 for update in updates:
                     offset = max(offset, update["update_id"] + 1)
+
+                    # 處理 Inline Button 點擊事件 (停止回應 / 快速回覆膠囊)
+                    callback_query = update.get("callback_query")
+                    if callback_query:
+                        cb_id = callback_query.get("id")
+                        cb_data = callback_query.get("data", "")
+                        cb_msg = callback_query.get("message", {})
+                        cb_msg_id = cb_msg.get("message_id")
+                        cb_chat_id = str(cb_msg.get("chat", {}).get("id", ""))
+                        cb_from_user = callback_query.get("from", {}).get("username", "unknown")
+                        if allowed_chat_id and cb_chat_id != allowed_chat_id:
+                            continue
+
+                        if cb_data == "cancel_active_turn":
+                            res = agy_singleton.cancel_active_turns()
+                            toast_text = "🛑 已中止回應" if res.get("cancelled") else "ℹ️ 當前無進行中的回應"
+                            try:
+                                await client.post(
+                                    f"{TELEGRAM_API_BASE}/bot{token}/answerCallbackQuery",
+                                    json={"callback_query_id": cb_id, "text": toast_text}
+                                )
+                            except Exception:
+                                pass
+
+                        elif cb_data.startswith("qr:"):
+                            chosen_opt = cb_data[3:].strip()
+                            try:
+                                await client.post(
+                                    f"{TELEGRAM_API_BASE}/bot{token}/answerCallbackQuery",
+                                    json={"callback_query_id": cb_id, "text": f"💬 已選擇：{chosen_opt}"}
+                                )
+                                # 移除原訊息上的快速回覆按鈕，避免重複誤觸
+                                if cb_msg_id:
+                                    await client.post(
+                                        f"{TELEGRAM_API_BASE}/bot{token}/editMessageReplyMarkup",
+                                        json={
+                                            "chat_id": cb_chat_id,
+                                            "message_id": cb_msg_id,
+                                            "reply_markup": {"inline_keyboard": []}
+                                        }
+                                    )
+                            except Exception:
+                                pass
+                            if chosen_opt:
+                                asyncio.create_task(process_telegram_request(
+                                    chat_id=cb_chat_id,
+                                    user_text=chosen_opt,
+                                    media_list=[],
+                                    from_user=cb_from_user
+                                ))
+                        continue
+
                     message = update.get("message")
                     if not message:
                         continue
@@ -1362,13 +1530,35 @@ async def start_telegram_bot():
 
                     # 系統狀態與配額整合指令：/status, /usage, /quota, /context, 狀態, 用量, 額度, 配額
                     if user_text.lower() in ("/status", "/usage", "/quota", "/context", "狀態", "用量", "額度", "配額"):
-                        stat = get_active_brain().get_status()
+                        stat = agy_singleton.get_status()
                         status_msg = quota_service.format_telegram_message(context_status=stat)
                         await send_telegram_message(status_msg, chat_id=chat_id)
                         continue
 
                     if user_text.lower() in ("/restart", "/reset", "重啟", "重置"):
-                        get_active_brain().trigger_restart_with_notification("主人手動指令觸發")
+                        agy_singleton.trigger_restart_with_notification("主人手動指令觸發")
+                        continue
+
+                    if user_text.lower() in ("/compact", "壓縮記憶", "壓縮上下文", "精簡記憶"):
+                        await send_telegram_message("🧹 正在執行 ACP 原生 <code>/compact</code> 無損壓縮對話記憶...", chat_id=chat_id)
+                        loop = asyncio.get_running_loop()
+                        res = await loop.run_in_executor(None, agy_singleton.compact_session)
+                        if res.get("success"):
+                            b_tok = res.get("before_tokens", 0)
+                            a_tok = res.get("after_tokens", 0)
+                            el = res.get("elapsed_sec", 0)
+                            limit = settings.CONTEXT_WINDOW_LIMIT or 1000000
+                            pct = round(a_tok / limit * 100, 1)
+                            msg = (
+                                f"✅ <b>【ACP 對話記憶無損壓縮完成】</b>\n\n"
+                                f"• <b>Session ID</b>：<code>{(res.get('session_id') or '')[:8]}</code> (不中斷對話)\n"
+                                f"• <b>壓縮前 Tokens</b>：<code>{b_tok:,}</code>\n"
+                                f"• <b>壓縮後 Tokens</b>：<code>{a_tok:,}</code> ({pct}%)\n"
+                                f"• <b>處理耗時</b>：{el} 秒"
+                            )
+                            await send_telegram_message(msg, chat_id=chat_id)
+                        else:
+                            await send_telegram_message(f"⚠️ 壓縮失敗：{res.get('error', '未知錯誤')}", chat_id=chat_id)
                         continue
 
                     if user_text.lower() in ("/memory", "記憶", "記憶庫"):
@@ -1377,6 +1567,7 @@ async def start_telegram_bot():
                             f"📁 <b>模組化結構 (<code>memory/</code>)</b>：\n"
                             f"• <code>profile.md</code>：身分定位與溝通模式分流\n"
                             f"• <code>preferences.md</code>：生活與系統工具偏好\n"
+                            f"• <code>homeassistant.md</code>：智慧家電實體對照表\n"
                             f"• <code>projects.md</code>：核心專案目標與排程原則\n"
                             f"• <code>notes.md</code>：重要里程碑與備忘\n\n"
                             f"📅 <b>排程管理</b>：所有待辦日程一律委派至 Google Calendar「待辦事項」\n"
@@ -1449,6 +1640,23 @@ async def start_telegram_bot():
                                     f"   • 停止指令: <code>/kill {t['task_id']}</code>\n"
                                 )
                             await send_telegram_message("\n".join(lines), chat_id=chat_id)
+                        continue
+
+                    if user_text.lower() in ("/cancel", "/stop", "停", "停止", "取消", "不用了", "等一下"):
+                        res = agy_singleton.cancel_active_turns()
+                        if res.get("cancelled"):
+                            print(f"[TelegramService] 🛑 已透過文字指令 '{user_text}' 中止進行中的 Turn: {res}")
+                        else:
+                            if user_text.lower() in ("/cancel", "/stop"):
+                                await send_telegram_message("ℹ️ 目前沒有正在思考或執行中的對話回應。\n（若要終止背景監控腳本，請使用 <code>/kill task_xxx</code>）", chat_id=chat_id)
+                            else:
+                                # 若當前沒有進行中的 Turn，一般短語仍交由大腦正常回應
+                                asyncio.create_task(process_telegram_request(
+                                    chat_id=chat_id,
+                                    user_text=user_text,
+                                    media_list=[],
+                                    from_user=from_user
+                                ))
                         continue
 
                     if user_text.startswith("/kill") or user_text.startswith("/stop"):

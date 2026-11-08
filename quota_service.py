@@ -139,7 +139,15 @@ class QuotaService:
         # 常駐進程與 Context 上下文狀態 (若提供)
         if context_status:
             status_dot = "🟢 就緒" if context_status.get("is_ready", True) else "🔴 未就緒"
-            if "low_brain" in context_status and "med_brain" in context_status and "high_brain" in context_status:
+            if context_status.get("unified_mode"):
+                sid = (context_status.get("conversation_id") or "N/A")[:8]
+                cur_model = context_status.get("current_model") or "gemini-3.8-flash-low"
+                resumed_tag = "♻️ 已無損接續記憶" if context_status.get("resumed_from_disk") else "✨ 全新對話"
+                title_str = f" ｜ 💬 {context_status['session_title']}" if context_status.get("session_title") else ""
+                lines.append(f"🤖 <b>ACP 統一共享大腦</b>：{status_dot}")
+                lines.append(f"• 🔗 <b>共享 Session</b>：<code>{sid}</code> ({resumed_tag}{title_str})")
+                lines.append(f"• 🔀 <b>當前模型</b>：<code>{cur_model}</code> (支援 Low / Med / High 同 Session 無損秒切)")
+            elif "low_brain" in context_status and "med_brain" in context_status and "high_brain" in context_status:
                 lines.append(f"🤖 <b>三大腦進程池</b>：{status_dot}")
                 lb = context_status["low_brain"]
                 mb = context_status["med_brain"]
@@ -196,11 +204,11 @@ class QuotaService:
                 lines.append(f"  ⏳ 刷新倒數：<code>{g_w['refreshes_in']}</code>{reset_hint}")
             lines.append(f"  {_bar(g_w['remaining_pct'])}\n")
 
-            # 第三方模型
-            if p3_5h.get("remaining_pct") is not None or p3_w.get("remaining_pct") is not None:
-                lines.append("🟣 <b>第三方模型 (Claude / GPT 3P)</b>")
-                lines.append(f"• 5 小時區間：<b>{p3_5h['remaining_pct']}%</b> 剩餘 ({p3_5h.get('refreshes_in', '')})")
-                lines.append(f"• 7 天週區間：<b>{p3_w['remaining_pct']}%</b> 剩餘 ({p3_w.get('refreshes_in', '')})\n")
+        # 第三方模型
+        if p3_5h.get("remaining_pct") is not None or p3_w.get("remaining_pct") is not None:
+            lines.append("🟣 <b>第三方模型 (Claude / GPT 3P)</b>")
+            lines.append(f"• 5 小時區間：<b>{p3_5h['remaining_pct']}%</b> 剩餘 ({p3_5h.get('refreshes_in', '')})")
+            lines.append(f"• 7 天週區間：<b>{p3_w['remaining_pct']}%</b> 剩餘 ({p3_w.get('refreshes_in', '')})\n")
 
         return "\n".join(lines)
 
