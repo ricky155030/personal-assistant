@@ -359,47 +359,12 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
     else:
         print("   ⚠️ 酷澎未登入或 Session 已失效，暫停更新購物車基準，避免誤判。")
 
-    # 軌道二：搜尋頁 (若有指定特定監控門檻商品，執行全網比價)
-    search_queries = set(state.get("thresholds", {}).keys())
-    raw_search = []
-    if search_queries:
-        print("🌐 [軌道 2: 搜尋全網比價] 正在巡檢特價...")
-        for q in search_queries:
-            res = tracker.search_products(q)
-            raw_search.extend(res)
-
-        if raw_search:
-            print(f"   搜尋頁抓取到 {len(raw_search)} 筆商品：")
-            for it in raw_search:
-                print(f"   • {it.get('model')} | {it.get('color', '')} | {it.get('capacity', '')} -> ${it.get('sale_price', 0):,}")
-
-        # 比對搜尋結果是否低於目標價
-        for it in raw_search:
-            m = it.get("model", "")
-            p = it.get("sale_price")
-            if p is None:
-                continue
-            for th_k, th_val in state.get("thresholds", {}).items():
-                tokens = [t.lower() for t in th_k.split() if len(t) > 1]
-                if th_k.lower() in m.lower() or (tokens and all(t in m.lower() for t in tokens)):
-                    if should_notify(th_k, p, th_val, state):
-                        tag = f"{it.get('color', '')} {it.get('capacity', '')}".strip() or "特惠版"
-                        dispatch_alerts(th_k, tag, p, th_val, it.get("url") or "https://tw.coupang.com")
-                        state.setdefault("last_notified", {})[th_k] = {"price": p, "timestamp": time.time(), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
-
-    # 記錄快照
+    # 記錄快照（專注購物車項目巡檢）
     snapshot = {
         "check_num": current_check,
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "cart": {f"{ci['title']} {ci.get('option', '')}".strip()[:60]: ci["sale_price"] for ci in cart_items},
-        "search_bests": {}
+        "cart": {f"{ci['title']} {ci.get('option', '')}".strip()[:60]: ci["sale_price"] for ci in cart_items}
     }
-    for it in raw_search:
-        m = it.get("model")
-        p = it.get("sale_price")
-        if m and p:
-            if m not in snapshot["search_bests"] or p < snapshot["search_bests"][m]:
-                snapshot["search_bests"][m] = p
 
     state.setdefault("recent_snapshots", []).append(snapshot)
     if len(state["recent_snapshots"]) > 100:

@@ -46,8 +46,8 @@ HISTORY_FILE = DATA_DIR / "coupang_price_history.json"
 
 def send_telegram_alert(message: str) -> bool:
     """發送 Telegram 即時通知至主人手機與手錶"""
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    bot_token = os.getenv("COUPANG_TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("COUPANG_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
     if not bot_token or not chat_id:
         print("⚠️ 未配置 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID，略過推播", file=sys.stderr)
         return False
@@ -308,6 +308,13 @@ class CoupangPriceTracker:
 
         if not is_logged_in:
             print("⚠️ [酷澎購物車] 偵測到登入已過期或處於訪客模式，無法同步個人購物車商品。", file=sys.stderr)
+
+        # 巡檢完成後，精準關閉購物車分頁，釋放記憶體與視窗（與 FB 巡檢保持一致）
+        try:
+            self.client.cleanup_domain_targets(("cart.tw.coupang.com", "coupang.com"))
+            self.client.gc_tabs(max_tabs=8)
+        except Exception as e:
+            print(f"⚠️ [酷澎購物車] 關閉分頁警告: {e}", file=sys.stderr)
 
         return parsed_cart, is_logged_in
 
