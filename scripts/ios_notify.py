@@ -36,7 +36,7 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 HASS_URL = os.getenv("HASS_URL", "").rstrip("/")
 HASS_TOKEN = os.getenv("HASS_TOKEN", "")

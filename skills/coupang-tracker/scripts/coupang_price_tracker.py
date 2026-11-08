@@ -30,7 +30,7 @@ from common.venv_guard import ensure_venv
 ensure_venv()
 
 from dotenv import load_dotenv
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 import importlib.util
 BR_PATH = BASE_DIR / "skills" / "browser-relay" / "scripts" / "browser_relay.py"
@@ -64,6 +64,18 @@ def send_telegram_alert(message: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10.0) as resp:
             return resp.status == 200
+    except urllib.error.HTTPError as e:
+        # 降級容錯：若因 Markdown 特殊字元 (如底線) 造成 400，轉以純文字重試
+        try:
+            payload.pop("parse_mode", None)
+            retry_data = json.dumps(payload).encode("utf-8")
+            retry_req = urllib.request.Request(url, data=retry_data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(retry_req, timeout=10.0) as retry_resp:
+                return retry_resp.status == 200
+        except Exception:
+            pass
+        print(f"❌ Telegram 發送失敗: {e}", file=sys.stderr)
+        return False
     except Exception as e:
         print(f"❌ Telegram 發送失敗: {e}", file=sys.stderr)
         return False
