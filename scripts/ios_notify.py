@@ -82,7 +82,8 @@ class IOSNotifier:
         url: Optional[str] = None,
         volume: float = 0.0,
         device: Optional[str] = None,
-        tag: Optional[str] = None
+        tag: Optional[str] = None,
+        **kwargs
     ) -> bool:
         """
         發送 iOS Critical Alert (重要置頂通知)：
@@ -92,6 +93,11 @@ class IOSNotifier:
         - 支援 tag 標籤，日後可透過 clear(tag) 遠端撤回消除
         - 不受 Apple Live Activity 的 Push-to-Start 配額限制
         """
+        if "click_url" in kwargs and not url:
+            url = kwargs["click_url"]
+        if "target_device" in kwargs and not device:
+            device = kwargs["target_device"]
+
         device = device or self.default_device
         nested_data: Dict[str, Any] = {
             "push": {
@@ -216,6 +222,8 @@ class IOSNotifier:
         full_text = f"【{title}】\n{message}" if title else message
         try:
             imsg_script = BASE_DIR / ".agents" / "skills" / "imessage" / "scripts"
+            if not imsg_script.exists():
+                imsg_script = BASE_DIR / "skills" / "imessage" / "scripts"
             if str(imsg_script) not in sys.path:
                 sys.path.insert(0, str(imsg_script))
             from send_imessage import send_imessage as _raw_send_imsg

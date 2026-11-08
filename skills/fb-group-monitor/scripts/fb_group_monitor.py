@@ -366,6 +366,10 @@ def send_live_activity_alert(
         if send_critical_alert:
             notify_devices_str = os.getenv("HA_NOTIFY_DEVICES", "")
             target_devices = [d.strip() for d in notify_devices_str.split(",") if d.strip()]
+            if not target_devices:
+                default_dev = os.getenv("HA_NOTIFY_DEVICE", "")
+                if default_dev:
+                    target_devices = [default_dev]
             for dev in target_devices:
                 try:
                     send_critical_alert(
@@ -387,11 +391,17 @@ def send_live_activity_alert(
                 f"🚀 發送時間：{sent_str}（時差：{diff_str}）"
             )
 
-            recipients_str = os.getenv("IMESSAGE_NOTIFY_RECIPIENTS", "me")
+            recipients_str = os.getenv("IMESSAGE_NOTIFY_RECIPIENTS", "")
             recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
+            if not recipients:
+                recipients = ["老婆", os.getenv("ASSISTANT_OWNER", "me")]
+
             for to_user in recipients:
                 try:
-                    imsg_body = f"FB 社團【{group_title}】命中通知：\n\n📌 {summary}\n👤 發布者：{author}\n{timing_block}\n\n🔗 貼文網址：\n{target_url}"
+                    if to_user in ("老婆", "太太"):
+                        imsg_body = f"老婆～FB 社團【{group_title}】有新的好物/贈物貼文：\n\n📌 {summary}\n👤 發布者：{author}\n{timing_block}\n\n🔗 貼文網址：\n{target_url}"
+                    else:
+                        imsg_body = f"FB 社團【{group_title}】命中通知：\n\n📌 {summary}\n👤 發布者：{author}\n{timing_block}\n\n🔗 貼文網址：\n{target_url}"
                     imsg_ok = send_imessage(
                         message=imsg_body,
                         to=to_user,
