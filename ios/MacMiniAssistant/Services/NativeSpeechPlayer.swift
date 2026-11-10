@@ -19,6 +19,8 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
     private var isGenerating = false
     private var isPlaying = false
     private var hasReceivedAudioChunks = false
+    private var currentlyPlayingItem: AudioChunkItem?
+    private var waitFallbackWorkItem: DispatchWorkItem?
 
     public var speechRate: Float = AVSpeechUtteranceDefaultSpeechRate * 1.05
     public var speechPitch: Float = 1.0
@@ -92,6 +94,7 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         stopImmediately()
         sentenceQueue.removeAll()
         audioQueue.removeAll()
+        currentlyPlayingItem = nil
         hasReceivedAudioChunks = false
         isGenerating = true
         isPlaying = false
@@ -103,6 +106,7 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.cancelAudioWaitFallback()
             self.hasReceivedAudioChunks = true
             self.audioQueue.append(AudioChunkItem(seq: seq, sentence: sentence, audioData: audioData))
             self.audioQueue.sort { $0.seq < $1.seq }
@@ -131,9 +135,10 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.isGenerating = false
+            self.cancelAudioWaitFallback()
 
-            // 若後端完全沒回傳音訊，且非本地模式， fallback 執行剩餘本地句子
-            if !self.hasReceivedAudioChunks && !self.isLocalMode && !self.sentenceQueue.isEmpty && !self.isPlaying {
+            // 若後端串流已結束，但還有剩餘文字句子未朗讀（例如分片未生成或遺漏），立即本地備援播放
+            if !self.isPlaying && (!self.audioQueue.isEmpty || !self.sentenceQueue.isEmpty) {
                 self.playNext()
                 return
             }
@@ -144,14 +149,96 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         }
     }
 
+    /// 當 Edge-TTS 串流或網路請求斷線/中斷時，觸發本地備援機制無縫朗讀剩餘文字
+    public func handleStreamInterruption(currentText: String = "") {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            print("[NativeSpeechPlayer] ⚠️ 收到串流中斷訊號，啟動本地 AVSpeechSynthesizer 備援")
+            self.isGenerating = false
+            self.cancelAudioWaitFallback()
+
+            // 確保 currentText 中尚未切出 ttsSentence 的剩餘未朗讀文字也被納入佇列
+            let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                let queuedText = self.sentenceQueue.joined()
+                if !queuedText.contains(trimmed) && trimmed.count > queuedText.count {
+                    let trailing = String(trimmed.suffix(trimmed.count - queuedText.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trailing.isEmpty && !self.sentenceQueue.contains(trailing) {
+                        self.sentenceQueue.append(trailing)
+                    }
+                }
+            }
+
+            if !self.isPlaying {
+                self.playNext()
+            }
+        }
+    }
+
+    private func removeSentenceFromQueue(_ sentence: String) {
+        if let idx = sentenceQueue.firstIndex(of: sentence) {
+            sentenceQueue.remove(at: idx)
+            return
+        }
+        let clean = sentence.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let idx = sentenceQueue.firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == clean }) {
+            sentenceQueue.remove(at: idx)
+        }
+    }
+
+    private func scheduleAudioWaitFallback() {
+        waitFallbackWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            guard !self.isPlaying && self.audioQueue.isEmpty && !self.sentenceQueue.isEmpty else { return }
+            print("[NativeSpeechPlayer] ⏱️ 等待音訊分片逾時，自動切換本地 TTS 備援")
+            let sentence = self.sentenceQueue.removeFirst()
+            self.fallbackSpeakSentence(sentence)
+        }
+        waitFallbackWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: item)
+    }
+
+    private func cancelAudioWaitFallback() {
+        waitFallbackWorkItem?.cancel()
+        waitFallbackWorkItem = nil
+    }
+
+    public static func ensureOptimalAudioRoute() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
+            )
+            let hasExternalRoute = session.currentRoute.outputs.contains { desc in
+                let port = desc.portType
+                return port == .bluetoothHFP || port == .bluetoothA2DP || port == .bluetoothLE
+                    || port == .headphones || port == .airPlay || port == .carAudio
+            }
+            if hasExternalRoute {
+                try? session.overrideOutputAudioPort(.none)
+            } else {
+                try? session.overrideOutputAudioPort(.speaker)
+            }
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("[NativeSpeechPlayer] ensureOptimalAudioRoute error: \(error)")
+        }
+    }
+
     private func playNext() {
-        // 優先播放後端類神經 MP3 音訊片段
+        Self.ensureOptimalAudioRoute()
+
+        // 1. 優先播放來自後端的高品質 Edge-TTS MP3 音訊片段
         if !audioQueue.isEmpty {
             let item = audioQueue.removeFirst()
+            removeSentenceFromQueue(item.sentence)
+            currentlyPlayingItem = item
             isPlaying = true
 
             do {
-                // 切勿在背景播放途中重設 setCategory，避免 iOS 重置音訊路由導致背景 Socket 斷線 (Connection was lost)
                 currentAudioPlayer = try AVAudioPlayer(data: item.audioData)
                 currentAudioPlayer?.delegate = self
                 currentAudioPlayer?.prepareToPlay()
@@ -164,14 +251,29 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
             return
         }
 
-        // 次之：本地 AVSpeechSynthesizer 播放（本地模式或備援）
-        if (isLocalMode || !hasReceivedAudioChunks) && !sentenceQueue.isEmpty {
+        // 2. 次之：若為強制本地離線模式，依序朗讀本地句子佇列
+        if isLocalMode && !sentenceQueue.isEmpty {
             let sentence = sentenceQueue.removeFirst()
             fallbackSpeakSentence(sentence)
             return
         }
 
-        // 佇列全空
+        // 3. 備援機制：後端串流已結束/中斷，或無音訊分片，但還有剩餘文字句子尚未朗讀
+        if (!isGenerating || !hasReceivedAudioChunks) && !sentenceQueue.isEmpty {
+            let sentence = sentenceQueue.removeFirst()
+            print("[NativeSpeechPlayer] 🛡️ 串流中斷或分片缺失，無縫切換本地 TTS 備援朗讀: \(sentence.prefix(20))...")
+            fallbackSpeakSentence(sentence)
+            return
+        }
+
+        // 4. 若後端仍在生成中 (isGenerating == true)，但音訊佇列暫時空了且還有未播文字句子：
+        // 守候 1.2 秒，若逾時新分片未送達則自動本地備援朗讀，確保語音絕對不腰斬
+        if isGenerating && !sentenceQueue.isEmpty {
+            scheduleAudioWaitFallback()
+            return
+        }
+
+        // 5. 佇列全空
         isPlaying = false
         if !isGenerating {
             onQueueFinished?()
@@ -179,6 +281,7 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
     }
 
     private func fallbackSpeakSentence(_ sentence: String) {
+        Self.ensureOptimalAudioRoute()
         isPlaying = true
         let utterance = AVSpeechUtterance(string: sentence)
         utterance.rate = speechRate
@@ -238,6 +341,8 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
     }
 
     public func stopImmediately() {
+        cancelAudioWaitFallback()
+        currentlyPlayingItem = nil
         audioQueue.removeAll()
         sentenceQueue.removeAll()
 
@@ -352,7 +457,13 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
 
     public func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         DispatchQueue.main.async { [weak self] in
-            self?.playNext()
+            guard let self = self else { return }
+            if let item = self.currentlyPlayingItem {
+                print("[NativeSpeechPlayer] Decode error on item, fallback to local: \(item.sentence)")
+                self.fallbackSpeakSentence(item.sentence)
+            } else {
+                self.playNext()
+            }
         }
     }
 

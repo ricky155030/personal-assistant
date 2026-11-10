@@ -79,7 +79,14 @@ public final class MacMiniAPIClient {
             let gemini = quota["gemini"] as? [String: Any] ?? [:]
             let weekly = gemini["weekly_7d"] as? [String: Any] ?? [:]
             let rolling5h = gemini["rolling_5h"] as? [String: Any] ?? [:]
+            let argon = (quota["argon"] as? [String: Any]) ?? (quota["gemini_argon"] as? [String: Any]) ?? [:]
+            let thirdParty = quota["third_party"] as? [String: Any] ?? [:]
+            let p3Weekly = thirdParty["weekly_7d"] as? [String: Any] ?? [:]
+            let credits = quota["credits"] as? [String: Any] ?? [:]
+            let bgTasks = (root["background_tasks"] as? [String: Any]) ?? (quota["background_tasks"] as? [String: Any]) ?? [:]
             let context = root["context"] as? [String: Any] ?? [:]
+
+            let activeNames = (bgTasks["active_names"] as? [String]) ?? []
 
             return QuotaSnapshot(
                 weeklyRemainingPct: (weekly["remaining_pct"] as? NSNumber)?.doubleValue ?? 100.0,
@@ -93,7 +100,18 @@ public final class MacMiniAPIClient {
                 contextLimit: (context["limit"] as? NSNumber)?.intValue ?? 1_000_000,
                 currentModel: (context["current_model"] as? String) ?? "gemini-3.8-flash-medium",
                 sessionId: (context["conversation_id"] as? String) ?? "N/A",
-                planTier: (quota["plan_tier"] as? String) ?? "Google AI Pro"
+                planTier: (quota["plan_tier"] as? String) ?? "Google AI Pro",
+                argonRemainingPct: (argon["remaining_pct"] as? NSNumber)?.doubleValue ?? 100.0,
+                argonRefreshesIn: (argon["refreshes_in"] as? String) ?? "--",
+                argonResetTimeTaipei: (argon["reset_time_taipei"] as? String) ?? "",
+                promptCredits: (credits["available_prompt_credits"] as? NSNumber)?.intValue ?? 0,
+                flowCredits: (credits["available_flow_credits"] as? NSNumber)?.intValue ?? 0,
+                monthlyPromptCredits: (credits["monthly_prompt_credits"] as? NSNumber)?.intValue ?? 0,
+                monthlyFlowCredits: (credits["monthly_flow_credits"] as? NSNumber)?.intValue ?? 0,
+                thirdPartyRemainingPct: (p3Weekly["remaining_pct"] as? NSNumber)?.doubleValue ?? 100.0,
+                thirdPartyRefreshesIn: (p3Weekly["refreshes_in"] as? String) ?? "--",
+                activeTaskCount: (bgTasks["running_count"] as? NSNumber)?.intValue ?? activeNames.count,
+                activeTaskNames: activeNames
             )
         } catch {
             return nil
@@ -212,6 +230,45 @@ public final class MacMiniAPIClient {
         }
     }
 
+    /// 取得單句 Edge-TTS 語音分片音訊（自動重試 2 次）
+    public func fetchTTSAudioChunk(text: String, voice: String? = nil, rate: String? = nil) async throws -> Data {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var components = URLComponents(string: "\(cleanBase)/api/voice-chat/tts")
+        let v = voice ?? UserDefaults.standard.string(forKey: "macmini_edge_tts_voice") ?? "zh-TW-HsiaoChenNeural"
+        components?.queryItems = [
+            URLQueryItem(name: "text", value: text),
+            URLQueryItem(name: "voice", value: v)
+        ]
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        request.setValue("close", forHTTPHeaderField: "Connection")
+
+        var lastError: Error?
+        for attempt in 0...2 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(200_000_000 * attempt))
+            }
+            do {
+                let (data, resp) = try await session.data(for: request)
+                if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode == 200, !data.isEmpty {
+                    return data
+                } else {
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    throw NSError(domain: "Server", code: code, userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? URLError(.cannotConnectToHost)
+    }
+
     public func streamVoiceChat(
         query: String,
         client: String = "ios-voice",
@@ -254,18 +311,31 @@ public final class MacMiniAPIClient {
                 request.httpBody = body
 
                 do {
-                    var asyncBytes: URLSession.AsyncBytes
-                    var response: URLResponse
-                    do {
-                        (asyncBytes, response) = try await self.session.bytes(for: request)
-                    } catch let urlErr as URLError where urlErr.code == .networkConnectionLost {
-                        // 若因切換背景或 Keep-Alive Socket 重用觸發 -1005，自動重試一次
-                        try await Task.sleep(nanoseconds: 250_000_000)
-                        (asyncBytes, response) = try await self.session.bytes(for: request)
+                    var asyncBytes: URLSession.AsyncBytes?
+                    var streamConnectError: Error?
+
+                    // 自動重試最多 2 次（共 3 次嘗試），帶微小延遲重試
+                    for attempt in 0...2 {
+                        if attempt > 0 {
+                            try? await Task.sleep(nanoseconds: UInt64(250_000_000 * attempt))
+                        }
+                        do {
+                            let (bytes, resp) = try await self.session.bytes(for: request)
+                            if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode == 200 {
+                                asyncBytes = bytes
+                                streamConnectError = nil
+                                break
+                            } else {
+                                let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                                throw NSError(domain: "Server", code: code, userInfo: [NSLocalizedDescriptionKey: "HTTP \(code)"])
+                            }
+                        } catch {
+                            streamConnectError = error
+                        }
                     }
 
-                    guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                        continuation.finish(throwing: URLError(.badServerResponse))
+                    guard let asyncBytes = asyncBytes else {
+                        continuation.finish(throwing: streamConnectError ?? URLError(.badServerResponse))
                         return
                     }
 

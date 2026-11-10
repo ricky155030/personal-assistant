@@ -931,7 +931,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                         self.syncCurrentSessionToHistory()
                         self.refreshQuotaStatus(force: false)
                         if speakThisTurn {
-                            self.speechPlayer.markGenerationFinished()
+                            self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
                         } else {
                             self.handleQueueFinished()
                         }
@@ -946,7 +946,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     self.messages[idx].status = .error
                 }
                 if speakThisTurn {
-                    self.speechPlayer.markGenerationFinished()
+                    self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
                 } else {
                     self.handleQueueFinished()
                 }
