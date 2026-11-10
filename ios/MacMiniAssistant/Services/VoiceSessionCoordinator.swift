@@ -2,12 +2,47 @@ import Foundation
 import SwiftUI
 import Combine
 import AVFoundation
+import WidgetKit
 
 @MainActor
 public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var state: SessionState = .idle
     @Published public var voiceInputMode: VoiceInputMode = .none
+    @Published public var selectedModelFamily: ModelFamily = {
+        let saved = UserDefaults.standard.string(forKey: "macmini_model_family") ?? "flash"
+        return ModelFamily(rawValue: saved) ?? .flash
+    }() {
+        didSet {
+            UserDefaults.standard.set(selectedModelFamily.rawValue, forKey: "macmini_model_family")
+        }
+    }
     @Published public var thinkingLevel: ThinkingLevel = .med
+
+    // 車載藍牙 / 手機揚聲器 / 聽筒音訊路由狀態
+    @Published public var currentAudioRouteName: String = "手機揚聲器"
+    @Published public var currentAudioRouteIcon: String = "speaker.wave.3.fill"
+    @Published public var isBluetoothOrCarConnected: Bool = false
+    @Published public var isForcedSpeaker: Bool = true
+
+    public var effectiveLevel: String {
+        switch selectedModelFamily {
+        case .flash:
+            return thinkingLevel.rawValue
+        case .argon:
+            return "argon"
+        case .claude:
+            return "claude"
+        }
+    }
+    @Published public var sttMode: STTRecognitionMode = {
+        let saved = UserDefaults.standard.string(forKey: "macmini_stt_mode") ?? "hybrid"
+        return STTRecognitionMode(rawValue: saved) ?? .hybrid
+    }() {
+        didSet {
+            UserDefaults.standard.set(sttMode.rawValue, forKey: "macmini_stt_mode")
+            vad.sttMode = sttMode
+        }
+    }
     @Published public var currentDb: Float = -60.0
     @Published public var silenceProgress: Float = 0.0
     @Published public var silenceElapsed: TimeInterval = 0.0
@@ -85,6 +120,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     public init() {
         vad.silenceDuration = TimeInterval(pauseSeconds)
+        vad.sttMode = sttMode
         speechPlayer.speechRate = AVSpeechUtteranceDefaultSpeechRate * ttsSpeed.localRateMultiplier
         loadSessionHistory()
         setupCallbacks()
@@ -129,11 +165,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                self.updateCurrentAudioRoute()
                 if reason == .oldDeviceUnavailable {
                     self.speechPlayer.stopImmediately()
                 }
             }
         }
+        updateCurrentAudioRoute()
 
         NotificationCenter.default.addObserver(
             forName: UIApplication.willEnterForegroundNotification,
@@ -176,7 +214,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.activeStreamTask?.cancel()
             self.activeStreamTask = nil
 
-            let lvl = self.thinkingLevel.rawValue
+            let lvl = self.effectiveLevel
             Task {
                 await self.apiClient.cancelVoiceChat(level: lvl)
             }
@@ -293,6 +331,14 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     self.quotaSnapshot = snap
                 }
             }
+            AppGroupStore.shared.updateSnapshot(
+                isReachable: ok,
+                latency: ms,
+                message: self.serverStatusText,
+                flashPercent: self.quotaSnapshot?.rolling5hRemainingPct,
+                proPercent: self.quotaSnapshot?.weeklyRemainingPct
+            )
+            WidgetCenter.shared.reloadAllTimelines()
         }
     }
 
@@ -303,6 +349,14 @@ public final class VoiceSessionCoordinator: ObservableObject {
             defer { self.isRefreshingQuota = false }
             if let snap = await apiClient.fetchQuotaStatus(forceRefresh: force) {
                 self.quotaSnapshot = snap
+                AppGroupStore.shared.updateSnapshot(
+                    isReachable: self.isServerReachable,
+                    latency: 0,
+                    message: self.serverStatusText,
+                    flashPercent: snap.rolling5hRemainingPct,
+                    proPercent: snap.weeklyRemainingPct
+                )
+                WidgetCenter.shared.reloadAllTimelines()
             }
         }
     }
@@ -401,7 +455,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         activeStreamTask = nil
         speechPlayer.stopImmediately()
 
-        let lvl = thinkingLevel.rawValue
+        let lvl = effectiveLevel
         Task {
             await apiClient.cancelVoiceChat(level: lvl)
         }
@@ -802,7 +856,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             let stream = apiClient.streamVoiceChat(
                 query: fullQuery,
                 client: clientTag,
-                level: thinkingLevel.rawValue,
+                level: effectiveLevel,
                 imageBase64: imageBase64
             )
 
@@ -950,6 +1004,89 @@ public final class VoiceSessionCoordinator: ObservableObject {
     public func handleLongPressEnd() {
         if case .listening = state {
             vad.forceFinishSpeech()
+        }
+    }
+
+    // MARK: - 音訊輸出路由控制 (車載藍牙 / 揚聲器 / 聽筒)
+    public func updateCurrentAudioRoute() {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs
+        if let output = outputs.first {
+            switch output.portType {
+            case .bluetoothHFP, .bluetoothA2DP, .bluetoothLE:
+                currentAudioRouteName = output.portName.isEmpty ? "藍牙音訊" : output.portName
+                currentAudioRouteIcon = "beats.headphones"
+                isBluetoothOrCarConnected = true
+                isForcedSpeaker = false
+            case .carAudio:
+                currentAudioRouteName = output.portName.isEmpty ? "車載音訊" : output.portName
+                currentAudioRouteIcon = "car.fill"
+                isBluetoothOrCarConnected = true
+                isForcedSpeaker = false
+            case .airPlay:
+                currentAudioRouteName = output.portName.isEmpty ? "AirPlay" : output.portName
+                currentAudioRouteIcon = "airplayaudio"
+                isBluetoothOrCarConnected = true
+                isForcedSpeaker = false
+            case .builtInSpeaker:
+                currentAudioRouteName = "手機揚聲器"
+                currentAudioRouteIcon = "speaker.wave.3.fill"
+                isBluetoothOrCarConnected = false
+                isForcedSpeaker = true
+            case .builtInReceiver:
+                currentAudioRouteName = "手機聽筒"
+                currentAudioRouteIcon = "ear"
+                isBluetoothOrCarConnected = false
+                isForcedSpeaker = false
+            case .headphones:
+                currentAudioRouteName = "有線耳機"
+                currentAudioRouteIcon = "headphones"
+                isBluetoothOrCarConnected = true
+                isForcedSpeaker = false
+            default:
+                currentAudioRouteName = output.portName
+                currentAudioRouteIcon = "speaker.wave.2"
+                isBluetoothOrCarConnected = false
+            }
+        }
+    }
+
+    public func setAudioRoute(forceSpeaker: Bool) {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
+            )
+            if forceSpeaker {
+                try session.overrideOutputAudioPort(.speaker)
+                isForcedSpeaker = true
+            } else {
+                try session.overrideOutputAudioPort(.none)
+                isForcedSpeaker = false
+            }
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            updateCurrentAudioRoute()
+        } catch {
+            print("[VoiceSessionCoordinator] setAudioRoute error: \(error)")
+        }
+    }
+
+    public func setAudioRouteToReceiver() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(
+                .playAndRecord,
+                mode: .voiceChat,
+                options: [.allowBluetoothHFP, .allowBluetoothA2DP]
+            )
+            try session.overrideOutputAudioPort(.none)
+            isForcedSpeaker = false
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            updateCurrentAudioRoute()
+        } catch {
+            print("[VoiceSessionCoordinator] setAudioRouteToReceiver error: \(error)")
         }
     }
 }

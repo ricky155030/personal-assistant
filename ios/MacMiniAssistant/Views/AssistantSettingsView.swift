@@ -141,6 +141,34 @@ struct AssistantSettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Section("語音辨識模式 (STT Recognition)") {
+                    ForEach(STTRecognitionMode.allCases) { mode in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: mode.icon)
+                                        .foregroundColor(.blue)
+                                        .font(.system(size: 14))
+                                    Text(mode.title)
+                                        .font(.body)
+                                }
+                                Text(mode.subtitle)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            if coordinator.sttMode == mode {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            coordinator.sttMode = mode
+                        }
+                    }
+                }
+
                 Section("語音斷句與免持設定") {
                     Picker("助理朗讀語速", selection: $coordinator.ttsSpeed) {
                         ForEach(TTSSpeedOption.allCases) { spd in

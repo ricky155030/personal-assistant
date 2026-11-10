@@ -13,6 +13,9 @@ public final class AudioRecorderVAD: NSObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var recognitionStreamStartTime: Date = Date()
+    private var activeStreamSessionId: Int = 0
+    private let recognizerLock = NSLock()
+    private var isRecognitionRequestActive: Bool = false
 
     // 專屬中英技術與生活熱詞注入
     private let contextualVocabulary: [String] = [
@@ -56,6 +59,8 @@ public final class AudioRecorderVAD: NSObject {
     private var hasFinishedCurrentTurn = false
     /// 是否保持引擎常駐（Live 連續模式下為 true，確保鎖屏/背景切換時 iOS 不會凍結音訊 Session）
     public var keepEngineAliveInBackground: Bool = false
+    /// 語音辨識模式：hybrid (智慧雙軌 - 預設), localOnly (純本機零延遲), remoteOnly (純後端 Whisper 精準)
+    public var sttMode: STTRecognitionMode = .hybrid
 
     // Callbacks
     public var onDbUpdate: ((Float) -> Void)?
@@ -137,6 +142,16 @@ public final class AudioRecorderVAD: NSObject {
             mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
         )
+        let hasExternalRoute = audioSession.currentRoute.outputs.contains { desc in
+            let port = desc.portType
+            return port == .bluetoothHFP || port == .bluetoothA2DP || port == .bluetoothLE
+                || port == .headphones || port == .airPlay || port == .carAudio
+        }
+        if hasExternalRoute {
+            try? audioSession.overrideOutputAudioPort(.none)
+        } else {
+            try? audioSession.overrideOutputAudioPort(.speaker)
+        }
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
         let inputNode = audioEngine.inputNode
@@ -172,7 +187,7 @@ public final class AudioRecorderVAD: NSObject {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
             if !self.isWaitingForAssistant {
-                self.recognitionRequest?.append(buffer)
+                self.appendAudioBufferToRecognizer(buffer)
             }
             self.processAudioBuffer(buffer: buffer)
         }
@@ -225,24 +240,46 @@ public final class AudioRecorderVAD: NSObject {
         }
     }
 
+    private func appendAudioBufferToRecognizer(_ buffer: AVAudioPCMBuffer) {
+        recognizerLock.lock()
+        defer { recognizerLock.unlock() }
+        guard isRecognitionRequestActive, let req = recognitionRequest else { return }
+        req.append(buffer)
+    }
+
     private func startSpeechRecognitionStream() {
-        recognitionRequest?.endAudio()
+        recognizerLock.lock()
+        isRecognitionRequestActive = false
+        let oldRequest = recognitionRequest
         recognitionRequest = nil
-        recognitionTask?.cancel()
+        let oldTask = recognitionTask
         recognitionTask = nil
+        recognizerLock.unlock()
+
+        oldRequest?.endAudio()
+        oldTask?.cancel()
 
         guard let recognizer = speechRecognizer, recognizer.isAvailable,
               SFSpeechRecognizer.authorizationStatus() == .authorized else {
             return
         }
 
+        activeStreamSessionId += 1
+        let currentSessionId = activeStreamSessionId
+
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.taskHint = .dictation
         if #available(iOS 16.0, *) {
             request.addsPunctuation = true
         }
         request.contextualStrings = contextualVocabulary
+
+        recognizerLock.lock()
         self.recognitionRequest = request
+        self.isRecognitionRequestActive = true
+        recognizerLock.unlock()
+
         self.recognitionStreamStartTime = Date()
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -252,6 +289,7 @@ public final class AudioRecorderVAD: NSObject {
                 let text = result.bestTranscription.formattedString.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty {
                     self.queue.async {
+                        guard currentSessionId == self.activeStreamSessionId else { return }
                         guard self.isRecording, !self.hasFinishedCurrentTurn, !self.isWaitingForAssistant else { return }
                         let now = Date()
 
@@ -288,7 +326,7 @@ public final class AudioRecorderVAD: NSObject {
                             return
                         }
 
-                        // 一般聆聽階段
+                        // 一般聆聽階段：一旦檢測到文字立即確認開口說話
                         if !self.isSpeaking {
                             self.isSpeaking = true
                             self.recordingStartTime = now
@@ -297,10 +335,10 @@ public final class AudioRecorderVAD: NSObject {
                             }
                         }
 
+                        self.lastSpeechTime = now
                         if text != self.currentTranscript {
                             self.currentTranscript = text
                             self.lastTranscriptChangeTime = now
-                            self.lastSpeechTime = now
                             DispatchQueue.main.async {
                                 self.onPartialTranscript?(text)
                             }
@@ -315,11 +353,15 @@ public final class AudioRecorderVAD: NSObject {
 
             if error != nil && self.isRecording {
                 self.queue.async {
+                    guard currentSessionId == self.activeStreamSessionId else { return }
                     guard !self.isWaitingForAssistant else { return }
+
                     if !self.currentTranscript.isEmpty && !self.hasFinishedCurrentTurn && !self.isBargeInMonitoring {
                         self.finishCurrentRecording()
-                    } else if !self.isSpeaking {
-                        // 自動續約 SFSpeechRecognizer (突破 Apple 單次 60 秒限制，確保背景長時待機不掉線)
+                    } else {
+                        // 自動續約 SFSpeechRecognizer (突破 Apple 單次 60 秒限制，或遇暫態網路/任務異常時自動平滑無縫重啟)
+                        self.isSpeaking = false
+                        self.consecutiveSpeechFrames = 0
                         self.startSpeechRecognitionStream()
                     }
                 }
@@ -343,8 +385,8 @@ public final class AudioRecorderVAD: NSObject {
         let now = Date()
 
         // 背景長時待機自動續約：Apple 限制單一 SFSpeechRecognitionTask 最長 60 秒
-        // 當未在說話且已持續超過 45 秒時，無縫重建 RecognitionRequest
-        if !isSpeaking && now.timeIntervalSince(recognitionStreamStartTime) >= 45.0 {
+        // 當未在說話且已持續超過 40 秒時，無縫重建 RecognitionRequest
+        if !isSpeaking && now.timeIntervalSince(recognitionStreamStartTime) >= 40.0 {
             startSpeechRecognitionStream()
             return
         }
@@ -386,10 +428,16 @@ public final class AudioRecorderVAD: NSObject {
         endpointTimer?.cancel()
         endpointTimer = nil
 
-        recognitionRequest?.endAudio()
+        recognizerLock.lock()
+        isRecognitionRequestActive = false
+        let oldReq = recognitionRequest
         recognitionRequest = nil
-        recognitionTask?.cancel()
+        let oldTask = recognitionTask
         recognitionTask = nil
+        recognizerLock.unlock()
+
+        oldReq?.endAudio()
+        oldTask?.cancel()
 
         if audioEngine.isRunning {
             audioEngine.stop()
@@ -519,37 +567,121 @@ public final class AudioRecorderVAD: NSObject {
         guard !hasFinishedCurrentTurn else { return }
         hasFinishedCurrentTurn = true
 
-        let finalTranscript = currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        recognizerLock.lock()
+        isRecognitionRequestActive = false
+        let req = recognitionRequest
+        recognizerLock.unlock()
+        req?.endAudio()
+
         let url = currentRecordingURL
         currentRecordingURL = nil
         audioFile = nil
+
+        let capturedTranscript = currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if keepEngineAliveInBackground {
             // Live 連續對談模式：保持 AVAudioEngine 持續運轉（防止鎖屏或切換到背景 App 時被 iOS 系統中斷音訊權限）
             isWaitingForAssistant = true
             isSpeaking = false
-            recognitionRequest?.endAudio()
-            recognitionRequest = nil
-            recognitionTask?.cancel()
-            recognitionTask = nil
         } else {
             stopListening()
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.onSilenceProgress?(0.0, 0.0)
-
-            if !finalTranscript.isEmpty {
+        // 模式分流處理：
+        if sttMode == .localOnly {
+            // 純本機即時模式：絕不上傳後端 Whisper，0 延遲回傳文字
+            if !capturedTranscript.isEmpty {
                 if let fileURL = url {
                     try? FileManager.default.removeItem(at: fileURL)
                 }
-                self.onTranscriptFinished?(finalTranscript)
+                DispatchQueue.main.async { [weak self] in
+                    self?.onSilenceProgress?(0.0, 0.0)
+                    self?.onTranscriptFinished?(capturedTranscript)
+                }
                 return
             }
 
+            queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self = self else { return }
+                let delayedText = self.currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let fileURL = url {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+                DispatchQueue.main.async {
+                    self.onSilenceProgress?(0.0, 0.0)
+                    if !delayedText.isEmpty {
+                        self.onTranscriptFinished?(delayedText)
+                    }
+                }
+            }
+            return
+        }
+
+        if sttMode == .remoteOnly {
+            // 純後端伺服器模式：講完直接將音檔上傳至 Mac mini Whisper 進行高精準度轉錄
             if let fileURL = url {
-                self.onSpeechFinished?(fileURL)
+                let asset = AVURLAsset(url: fileURL)
+                let duration = CMTimeGetSeconds(asset.duration)
+                if duration >= 0.5 {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onSilenceProgress?(0.0, 0.0)
+                        self?.onSpeechFinished?(fileURL)
+                    }
+                    return
+                } else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onSilenceProgress?(0.0, 0.0)
+            }
+            return
+        }
+
+        // 智慧雙軌模式 (Hybrid - 預設)：優先本機秒級出字；若無字則自動退回後端 Whisper 補正
+        if !capturedTranscript.isEmpty {
+            if let fileURL = url {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.onSilenceProgress?(0.0, 0.0)
+                self?.onTranscriptFinished?(capturedTranscript)
+            }
+            return
+        }
+
+        // 寬限期：若尚未拿到字（Apple 正在對最後緩衝區收尾），給予 250ms 寬限期等待 endAudio() 觸發的 partial/final
+        queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            let delayedText = self.currentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !delayedText.isEmpty {
+                if let fileURL = url {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+                DispatchQueue.main.async {
+                    self.onSilenceProgress?(0.0, 0.0)
+                    self.onTranscriptFinished?(delayedText)
+                }
+                return
+            }
+
+            // 備援通道：若確實無即時文字，且音檔長度 >= 0.6 秒才上傳後端 Whisper，避免微小雜音引發漫長轉圈
+            if let fileURL = url {
+                let asset = AVURLAsset(url: fileURL)
+                let duration = CMTimeGetSeconds(asset.duration)
+                if duration >= 0.6 {
+                    DispatchQueue.main.async {
+                        self.onSilenceProgress?(0.0, 0.0)
+                        self.onSpeechFinished?(fileURL)
+                    }
+                    return
+                } else {
+                    try? FileManager.default.removeItem(at: fileURL)
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.onSilenceProgress?(0.0, 0.0)
             }
         }
     }

@@ -40,3 +40,6 @@ agent.md*
 *.mp3
 *.wav
 *.png
+*.ipa
+ios/build/
+static/

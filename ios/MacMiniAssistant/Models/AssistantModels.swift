@@ -6,6 +6,79 @@ public enum VoiceInputMode: String, Equatable {
     case liveContinuous // ((|)) Gemini Live 即時連續語音對談（講完自動送出 -> 語音回答 -> 自動重開麥克風）
 }
 
+public enum ModelFamily: String, CaseIterable, Identifiable {
+    case flash = "flash"
+    case argon = "argon"
+    case claude = "claude"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .flash: return "Flash"
+        case .argon: return "Argon"
+        case .claude: return "Claude"
+        }
+    }
+
+    public var fullName: String {
+        switch self {
+        case .flash: return "Gemini 3.8 Flash"
+        case .argon: return "Gemini 4 Argon"
+        case .claude: return "Claude 3.5 / 5.5"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .flash: return "bolt.fill"
+        case .argon: return "atom"
+        case .claude: return "sparkles"
+        }
+    }
+}
+
+public enum STTRecognitionMode: String, CaseIterable, Identifiable {
+    case hybrid = "hybrid"
+    case localOnly = "localOnly"
+    case remoteOnly = "remoteOnly"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .hybrid:
+            return "智慧雙軌 (推薦 · 預設)"
+        case .localOnly:
+            return "本機即時辨識 (Apple Speech 零延遲)"
+        case .remoteOnly:
+            return "後端伺服器辨識 (Whisper 高精確度)"
+        }
+    }
+
+    public var subtitle: String {
+        switch self {
+        case .hybrid:
+            return "邊講邊跳字預覽；若本機無字自動交由後端 Whisper 補正"
+        case .localOnly:
+            return "純本機離線極速處理，講完 0 延遲直接送出文字"
+        case .remoteOnly:
+            return "講完將完整音檔傳送至 Mac mini Whisper 深度轉錄"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .hybrid:
+            return "arrow.triangle.swap"
+        case .localOnly:
+            return "iphone.gen3"
+        case .remoteOnly:
+            return "server.rack"
+        }
+    }
+}
+
 public enum ThinkingLevel: String, CaseIterable, Identifiable {
     case low = "low"
     case med = "med"
@@ -191,6 +264,25 @@ public struct QuotaSnapshot: Equatable {
     public var sessionId: String
     public var planTier: String
 
+    // Gemini 4 Argon
+    public var argonRemainingPct: Double
+    public var argonRefreshesIn: String
+    public var argonResetTimeTaipei: String
+
+    // Prompt Credits / Flow Credits
+    public var promptCredits: Int
+    public var flowCredits: Int
+    public var monthlyPromptCredits: Int
+    public var monthlyFlowCredits: Int
+
+    // Third Party (Claude / GPT 3P)
+    public var thirdPartyRemainingPct: Double
+    public var thirdPartyRefreshesIn: String
+
+    // 背景子代理 / 常駐任務
+    public var activeTaskCount: Int
+    public var activeTaskNames: [String]
+
     public init(
         weeklyRemainingPct: Double = 100.0,
         weeklyRefreshesIn: String = "--",
@@ -203,7 +295,18 @@ public struct QuotaSnapshot: Equatable {
         contextLimit: Int = 1_000_000,
         currentModel: String = "gemini-3.8-flash-medium",
         sessionId: String = "N/A",
-        planTier: String = "Google AI Pro"
+        planTier: String = "Google AI Pro",
+        argonRemainingPct: Double = 100.0,
+        argonRefreshesIn: String = "--",
+        argonResetTimeTaipei: String = "",
+        promptCredits: Int = 0,
+        flowCredits: Int = 0,
+        monthlyPromptCredits: Int = 0,
+        monthlyFlowCredits: Int = 0,
+        thirdPartyRemainingPct: Double = 100.0,
+        thirdPartyRefreshesIn: String = "--",
+        activeTaskCount: Int = 0,
+        activeTaskNames: [String] = []
     ) {
         self.weeklyRemainingPct = weeklyRemainingPct
         self.weeklyRefreshesIn = weeklyRefreshesIn
@@ -217,6 +320,17 @@ public struct QuotaSnapshot: Equatable {
         self.currentModel = currentModel
         self.sessionId = sessionId
         self.planTier = planTier
+        self.argonRemainingPct = argonRemainingPct
+        self.argonRefreshesIn = argonRefreshesIn
+        self.argonResetTimeTaipei = argonResetTimeTaipei
+        self.promptCredits = promptCredits
+        self.flowCredits = flowCredits
+        self.monthlyPromptCredits = monthlyPromptCredits
+        self.monthlyFlowCredits = monthlyFlowCredits
+        self.thirdPartyRemainingPct = thirdPartyRemainingPct
+        self.thirdPartyRefreshesIn = thirdPartyRefreshesIn
+        self.activeTaskCount = activeTaskCount
+        self.activeTaskNames = activeTaskNames
     }
 }
 

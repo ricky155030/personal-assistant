@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import AVKit
 
 // MARK: - Gemini 標誌性四色四角星芒 Shape
 struct GeminiSparkleShape: Shape {
@@ -214,8 +215,24 @@ struct HandsFreeMainView: View {
                 }
             }
 
-            // 「Flash 中等 ⌄」模型與思考深度選單 + 語速倍速切換
+            // 模型選擇、思考層級、語音辨識與語音設定選單
             Menu {
+                Section("AI 模型選擇 (Model Family)") {
+                    ForEach(ModelFamily.allCases) { fam in
+                        Button(action: {
+                            haptic.impactOccurred()
+                            coordinator.selectedModelFamily = fam
+                        }) {
+                            HStack {
+                                Label(fam.fullName, systemImage: fam.icon)
+                                if coordinator.selectedModelFamily == fam {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Section("思考深度 (Thinking Level)") {
                     ForEach(ThinkingLevel.allCases) { level in
                         Button(action: {
@@ -224,6 +241,22 @@ struct HandsFreeMainView: View {
                             HStack {
                                 Text("\(level.headerTitle) — \(level.menuSubtitle)")
                                 if coordinator.thinkingLevel == level {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("語音辨識模式 (STT Mode)") {
+                    ForEach(STTRecognitionMode.allCases) { mode in
+                        Button(action: {
+                            haptic.impactOccurred()
+                            coordinator.sttMode = mode
+                        }) {
+                            HStack {
+                                Label(mode.title, systemImage: mode.icon)
+                                if coordinator.sttMode == mode {
                                     Image(systemName: "checkmark")
                                 }
                             }
@@ -246,43 +279,46 @@ struct HandsFreeMainView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Text(coordinator.thinkingLevel == .high ? "Pro" : "Flash")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Text(coordinator.selectedModelFamily.displayName)
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(.white)
 
-                    Text(thinkingLevelSubLabel)
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundColor(Color(white: 0.58))
-
-                    if coordinator.ttsSpeed != .normal {
-                        Text(coordinator.ttsSpeed.title.components(separatedBy: " ").first ?? "")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.cyan)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.cyan.opacity(0.15))
-                            .clipShape(Capsule())
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color(white: 0.65))
                     }
 
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color(white: 0.65))
-                        .padding(.leading, 2)
+                    HStack(spacing: 4) {
+                        Text(coordinator.thinkingLevel.headerTitle.replacingOccurrences(of: "Flash ", with: "").replacingOccurrences(of: "Pro ", with: ""))
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(Color(white: 0.65))
+
+                        Text("·")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(white: 0.45))
+
+                        Text(coordinator.ttsSpeed.title.components(separatedBy: " ").first ?? "1.0x")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(.cyan)
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
             }
 
             Spacer()
 
-            // 右上 1：AGY Weekly Quota 週配額與重置倒數膠囊（取代原開新對話畫筆按鈕，點擊可看完整配額與 Context 詳情）
+            // 音訊輸出切換器 (支援車載藍牙、揚聲器擴音、聽筒切換)
+            audioRoutePickerButton
+
+            // 右上 1：AI 配額膠囊（動態連動選取的模型 Family：Flash / Argon / Claude）
             Button(action: {
                 haptic.impactOccurred()
                 coordinator.refreshQuotaStatus(force: false)
                 showQuotaSheet = true
             }) {
-                let pct = coordinator.quotaSnapshot?.weeklyRemainingPct ?? 100.0
-                let resetIn = coordinator.quotaSnapshot?.weeklyRefreshesIn ?? "--"
-                let tint: Color = pct >= 50 ? .green : (pct >= 20 ? .orange : .red)
+                let info = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
 
                 HStack(spacing: 7) {
                     ZStack {
@@ -290,20 +326,20 @@ struct HandsFreeMainView: View {
                             .stroke(Color.white.opacity(0.12), lineWidth: 2.5)
                             .frame(width: 22, height: 22)
                         Circle()
-                            .trim(from: 0, to: CGFloat(max(0.03, min(1.0, pct / 100.0))))
-                            .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .trim(from: 0, to: CGFloat(max(0.03, min(1.0, info.pct / 100.0))))
+                            .stroke(info.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                             .frame(width: 22, height: 22)
                             .rotationEffect(.degrees(-90))
-                        Image(systemName: "bolt.fill")
+                        Image(systemName: info.icon)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(tint)
+                            .foregroundColor(info.tint)
                     }
 
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(coordinator.quotaSnapshot != nil ? String(format: "%.1f%%", pct) : "--%")
+                        Text(coordinator.quotaSnapshot != nil ? String(format: "%.1f%%", info.pct) : "--%")
                             .font(.system(size: 12.5, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
-                        Text("⏳ \(resetIn)")
+                        Text("⏳ \(info.resetIn)")
                             .font(.system(size: 10, weight: .medium, design: .rounded))
                             .foregroundColor(Color(white: 0.68))
                             .lineLimit(1)
@@ -316,7 +352,7 @@ struct HandsFreeMainView: View {
                         .fill(Color(white: 0.13))
                         .overlay(
                             Capsule()
-                                .stroke(tint.opacity(0.28), lineWidth: 1)
+                                .stroke(info.tint.opacity(0.28), lineWidth: 1)
                         )
                 )
             }
@@ -346,6 +382,69 @@ struct HandsFreeMainView: View {
                         .foregroundColor(.white)
                 }
             }
+        }
+    }
+
+    // MARK: - 音訊輸出路由切換按鈕 (車機藍牙 / 揚聲器 / 聽筒一鍵切換)
+    private var audioRoutePickerButton: some View {
+        Menu {
+            Section("當前音訊：\(coordinator.currentAudioRouteName)") {
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.setAudioRoute(forceSpeaker: true)
+                }) {
+                    Label("手機底部揚聲器 (強制擴音)", systemImage: "speaker.wave.3.fill")
+                }
+
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.setAudioRoute(forceSpeaker: false)
+                }) {
+                    Label("車機 / 藍牙設備優先", systemImage: "car.fill")
+                }
+
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.setAudioRouteToReceiver()
+                }) {
+                    Label("手機頂部聽筒 (話筒私密)", systemImage: "ear")
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: coordinator.currentAudioRouteIcon)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(coordinator.isBluetoothOrCarConnected ? .cyan : (coordinator.isForcedSpeaker ? .green : .white))
+            }
+            .frame(width: 38, height: 38)
+            .background(
+                Circle()
+                    .fill(Color(white: 0.14))
+                    .overlay(
+                        Circle()
+                            .stroke(coordinator.isBluetoothOrCarConnected ? Color.cyan.opacity(0.4) : (coordinator.isForcedSpeaker ? Color.green.opacity(0.4) : Color.white.opacity(0.12)), lineWidth: 1)
+                    )
+            )
+        }
+    }
+
+    private func dynamicQuotaInfo(for family: ModelFamily) -> (pct: Double, resetIn: String, tint: Color, icon: String) {
+        guard let snap = coordinator.quotaSnapshot else {
+            return (100.0, "--", .green, "bolt.fill")
+        }
+        switch family {
+        case .flash:
+            let pct = snap.weeklyRemainingPct
+            let tint: Color = pct >= 50 ? .green : (pct >= 20 ? .orange : .red)
+            return (pct, snap.weeklyRefreshesIn, tint, "bolt.fill")
+        case .argon:
+            let pct = snap.argonRemainingPct
+            let tint: Color = pct >= 50 ? Color(red: 0.45, green: 0.65, blue: 1.0) : (pct >= 20 ? .orange : .red)
+            return (pct, snap.argonRefreshesIn, tint, "atom")
+        case .claude:
+            let pct = snap.thirdPartyRemainingPct
+            let tint: Color = pct >= 50 ? .purple : (pct >= 20 ? .orange : .red)
+            return (pct, snap.thirdPartyRefreshesIn, tint, "sparkles")
         }
     }
 
@@ -1235,118 +1334,57 @@ struct QuotaDetailSheetView: View {
             ZStack {
                 Color(red: 0.06, green: 0.07, blue: 0.10).ignoresSafeArea()
 
-                VStack(spacing: 16) {
-                    // 1. 7 天週配額 (Weekly 7d)
-                    quotaRowCard(
-                        icon: "calendar.badge.clock",
-                        title: "AGY 7 天週配額 (Weekly)",
-                        percent: snap.weeklyRemainingPct,
-                        subtitle: "距離重置：\(snap.weeklyRefreshesIn)" + (snap.weeklyResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.weeklyResetTimeTaipei)）"),
-                        color: snap.weeklyRemainingPct >= 50 ? .green : (snap.weeklyRemainingPct >= 20 ? .orange : .red)
-                    )
+                ScrollView {
+                    VStack(spacing: 14) {
+                        // 1. 7 天週配額 (Weekly 7d)
+                        quotaRowCard(
+                            icon: "calendar.badge.clock",
+                            title: "AGY 7 天週配額 (Weekly)",
+                            percent: snap.weeklyRemainingPct,
+                            subtitle: "距離重置：\(snap.weeklyRefreshesIn)" + (snap.weeklyResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.weeklyResetTimeTaipei)）"),
+                            color: snap.weeklyRemainingPct >= 50 ? .green : (snap.weeklyRemainingPct >= 20 ? .orange : .red)
+                        )
 
-                    // 2. 5 小時區間配額 (Rolling 5h)
-                    quotaRowCard(
-                        icon: "bolt.circle.fill",
-                        title: "5 小時滾動配額 (Rolling 5h)",
-                        percent: snap.rolling5hRemainingPct,
-                        subtitle: "距離重置：\(snap.rolling5hRefreshesIn)" + (snap.rolling5hResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.rolling5hResetTimeTaipei)）"),
-                        color: .cyan
-                    )
+                        // 2. 5 小時區間配額 (Rolling 5h)
+                        quotaRowCard(
+                            icon: "bolt.circle.fill",
+                            title: "5 小時滾動配額 (Rolling 5h)",
+                            percent: snap.rolling5hRemainingPct,
+                            subtitle: "距離重置：\(snap.rolling5hRefreshesIn)" + (snap.rolling5hResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.rolling5hResetTimeTaipei)）"),
+                            color: .cyan
+                        )
 
-                    // 3. ACP 統一大腦 Context 記憶容量
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Label("ACP 統一大腦 Context 用量", systemImage: "brain.head.profile")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white)
-                            Spacer()
-                            Text(String(format: "%.1f%%", snap.contextPercent))
-                                .font(.system(size: 15, weight: .bold, design: .rounded))
-                                .foregroundColor(.purple)
-                        }
+                        // 3. Gemini 4 Argon (Pro 深度推理)
+                        quotaRowCard(
+                            icon: "atom",
+                            title: "Gemini 4 Argon (Pro 深度推理)",
+                            percent: snap.argonRemainingPct,
+                            subtitle: "距離重置：\(snap.argonRefreshesIn)" + (snap.argonResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.argonResetTimeTaipei)）"),
+                            color: snap.argonRemainingPct >= 50 ? Color(red: 0.45, green: 0.65, blue: 1.0) : (snap.argonRemainingPct >= 20 ? .orange : .red)
+                        )
 
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.white.opacity(0.1))
-                                    .frame(height: 7)
-                                Capsule()
-                                    .fill(Color.purple)
-                                    .frame(width: max(6, geo.size.width * CGFloat(min(1.0, snap.contextPercent / 100.0))), height: 7)
-                            }
-                        }
-                        .frame(height: 7)
+                        // 4. 第三方模型 (Claude / GPT 3P)
+                        quotaRowCard(
+                            icon: "sparkles",
+                            title: "Claude / GPT (第三方 3P)",
+                            percent: snap.thirdPartyRemainingPct,
+                            subtitle: "距離重置：\(snap.thirdPartyRefreshesIn)",
+                            color: .purple
+                        )
 
-                        HStack {
-                            Text("\(snap.contextTokens.formatted()) / \(snap.contextLimit.formatted()) tokens")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text("Session: \(String(snap.sessionId.prefix(8)))")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
+                        // 5. Prompt / Flow Credits 配額卡片
+                        creditsCard
 
-                        Divider()
-                            .background(Color.white.opacity(0.1))
-                            .padding(.vertical, 2)
+                        // 6. 子代理 / 背景常駐任務狀態提示
+                        backgroundTasksCard
 
-                        HStack(spacing: 10) {
-                            Button(action: {
-                                coordinator.compactBrainContext()
-                            }) {
-                                HStack(spacing: 6) {
-                                    if coordinator.isCompactingContext {
-                                        ProgressView()
-                                            .scaleEffect(0.75)
-                                    } else {
-                                        Image(systemName: "wand.and.stars")
-                                            .font(.system(size: 12, weight: .bold))
-                                    }
-                                    Text(coordinator.isCompactingContext ? "正在無損壓縮記憶..." : "壓縮記憶 (/compact)")
-                                        .font(.system(size: 13, weight: .semibold))
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.purple.opacity(0.28))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(Color.purple.opacity(0.55), lineWidth: 1)
-                                        )
-                                )
-                            }
-                            .disabled(coordinator.isCompactingContext || coordinator.isProcessingOrSpeaking)
-
-                            Spacer()
-
-                            if let statusMsg = coordinator.compactStatusMessage {
-                                Text(statusMsg)
-                                    .font(.caption2)
-                                    .foregroundColor(.cyan)
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.trailing)
-                            } else {
-                                Text("不中斷對話釋放空間")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+                        // 7. ACP 統一大腦 Context 記憶容量
+                        contextMemoryCard
                     }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color.white.opacity(0.05))
-                    )
-
-                    Spacer(minLength: 0)
+                    .padding(16)
                 }
-                .padding(16)
             }
-            .navigationTitle("AI 配額與重置倒數")
+            .navigationTitle("AI 配額與系統狀態")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -1376,6 +1414,208 @@ struct QuotaDetailSheetView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var creditsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Prompt / Flow Credits", systemImage: "creditcard.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(snap.planTier)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.2))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(6)
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Available Prompt")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("\(snap.promptCredits.formatted())")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        if snap.monthlyPromptCredits > 0 {
+                            Text("/ \(snap.monthlyPromptCredits.formatted())")
+                                .font(.caption2)
+                                .foregroundColor(Color(white: 0.6))
+                        }
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("Available Flow")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("\(snap.flowCredits.formatted())")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        if snap.monthlyFlowCredits > 0 {
+                            Text("/ \(snap.monthlyFlowCredits.formatted())")
+                                .font(.caption2)
+                                .foregroundColor(Color(white: 0.6))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+    }
+
+    private var backgroundTasksCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("子代理 / 背景常駐任務", systemImage: "gearshape.2.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(snap.activeTaskCount > 0 ? Color.green : Color.gray)
+                        .frame(width: 8, height: 8)
+                    Text("\(snap.activeTaskCount) 個執行中")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(snap.activeTaskCount > 0 ? .green : .secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(snap.activeTaskCount > 0 ? Color.green.opacity(0.15) : Color.white.opacity(0.05))
+                .cornerRadius(6)
+            }
+
+            if !snap.activeTaskNames.isEmpty {
+                Divider()
+                    .background(Color.white.opacity(0.08))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(snap.activeTaskNames, id: \.self) { name in
+                        HStack(spacing: 7) {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 6))
+                                .foregroundColor(.green)
+                            Text(name)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(Color(white: 0.88))
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            } else {
+                Text("目前無背景監控或長任務運行中")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+    }
+
+    private var contextMemoryCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("ACP 統一大腦 Context 用量", systemImage: "brain.head.profile")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(String(format: "%.1f%%", snap.contextPercent))
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.purple)
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                        .frame(height: 7)
+                    Capsule()
+                        .fill(Color.purple)
+                        .frame(width: max(6, geo.size.width * CGFloat(min(1.0, snap.contextPercent / 100.0))), height: 7)
+                }
+            }
+            .frame(height: 7)
+
+            HStack {
+                Text("\(snap.contextTokens.formatted()) / \(snap.contextLimit.formatted()) tokens")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("Session: \(String(snap.sessionId.prefix(8)))")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.1))
+                .padding(.vertical, 2)
+
+            HStack(spacing: 10) {
+                Button(action: {
+                    coordinator.compactBrainContext()
+                }) {
+                    HStack(spacing: 6) {
+                        if coordinator.isCompactingContext {
+                            ProgressView()
+                                .scaleEffect(0.75)
+                        } else {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 12, weight: .bold))
+                        }
+                        Text(coordinator.isCompactingContext ? "正在無損壓縮記憶..." : "壓縮記憶 (/compact)")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(Color.purple.opacity(0.28))
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.purple.opacity(0.55), lineWidth: 1)
+                            )
+                    )
+                }
+                .disabled(coordinator.isCompactingContext || coordinator.isProcessingOrSpeaking)
+
+                Spacer()
+
+                if let statusMsg = coordinator.compactStatusMessage {
+                    Text(statusMsg)
+                        .font(.caption2)
+                        .foregroundColor(.cyan)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                } else {
+                    Text("不中斷對話釋放空間")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
     }
 
     private func quotaRowCard(
@@ -1418,4 +1658,17 @@ struct QuotaDetailSheetView: View {
                 .fill(Color.white.opacity(0.05))
         )
     }
+}
+
+// MARK: - 原生 AirPlay / 藍牙音訊路由選擇視圖封裝
+struct AudioRoutePickerViewWrapper: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.activeTintColor = .systemCyan
+        picker.tintColor = .white
+        picker.prioritizesVideoDevices = false
+        return picker
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }

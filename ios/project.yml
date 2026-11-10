@@ -17,10 +17,17 @@ targets:
     platform: iOS
     sources:
       - path: MacMiniAssistant
+    dependencies:
+      - target: MacMiniAssistantWidget
     info:
       path: MacMiniAssistant/Info.plist
       properties:
         CFBundleDisplayName: MacMiniAssistant
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.personalassistant.MacMiniAssistant
+            CFBundleURLSchemes:
+              - macminiassistant
         NSMicrophoneUsageDescription: "用於與 Mac mini 個人助理進行免持連續語音對話與 Vibe Coding"
         NSSpeechRecognitionUsageDescription: "用於即時將您的語音轉換為文字並自動偵測斷句送出"
         NSCameraUsageDescription: "用於拍攝商品、帳單或畫面並交由 Mac mini 助理辨識處理"
@@ -38,3 +45,25 @@ targets:
         INFOPLIST_FILE: MacMiniAssistant/Info.plist
         GENERATE_INFOPLIST_FILE: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  MacMiniAssistantWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MacMiniAssistantWidget
+      - path: MacMiniAssistant/Models/AppGroupStore.swift
+    info:
+      path: MacMiniAssistantWidget/Info.plist
+      properties:
+        CFBundleDisplayName: "MacMini 助理"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_NAME: MacMiniAssistantWidget
+        PRODUCT_BUNDLE_IDENTIFIER: com.personalassistant.MacMiniAssistant.Widget
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        INFOPLIST_FILE: MacMiniAssistantWidget/Info.plist
+        GENERATE_INFOPLIST_FILE: false
