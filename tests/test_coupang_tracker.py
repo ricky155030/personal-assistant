@@ -68,3 +68,44 @@ def test_cmd_status_json(capsys, monkeypatch):
     assert "Item Active" in res["cart_active_items"]
     assert "Item Stale" in res["cart_stale_items"]
     assert "Item Stale" not in res["cart_active_items"]
+
+
+def test_defense_in_depth_abnormal_price_drop(monkeypatch):
+    """測試價格異常暴跌（如 99 折被誤判為 $99）時觸發防禦隔離，不發送通知且不破壞基準價"""
+    fake_state = {
+        "cart_baselines": {
+            "Apple iPhone 18 Pro Max (銀色, 512GB)": {
+                "title": "Apple iPhone 18 Pro Max",
+                "option": "銀色, 512GB",
+                "baseline_price": 55600,
+                "original_price": 56900,
+                "last_price": 55900,
+                "last_seen": "2026-11-09 10:00:00"
+            }
+        },
+        "thresholds": {},
+        "last_notified": {},
+        "recent_snapshots": []
+    }
+
+    alerts_dispatched = []
+    monkeypatch.setattr(ct, "dispatch_cart_drop_alert", lambda *args: alerts_dispatched.append(args))
+    monkeypatch.setattr(ct, "save_state", lambda s: None)
+
+    fake_tracker = ct.CoupangPriceTracker()
+    monkeypatch.setattr(fake_tracker, "fetch_cart_items", lambda: ([{
+        "title": "Apple iPhone 18 Pro Max",
+        "option": "銀色, 512GB",
+        "sale_price": 99,  # 誤判為 99
+        "original_price": 56900,
+        "url": "https://cart.tw.coupang.com/cart"
+    }], True))
+    monkeypatch.setattr(fake_tracker, "search_products", lambda q: [])
+
+    # 執行巡檢
+    ct.perform_check(fake_tracker, fake_state)
+
+    # 驗證：未發送通報，且 baseline_price 依然維持 55600，未被污染為 99
+    assert len(alerts_dispatched) == 0
+    assert fake_state["cart_baselines"]["Apple iPhone 18 Pro Max (銀色, 512GB)"]["baseline_price"] == 55600
+

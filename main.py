@@ -914,10 +914,12 @@ def get_usage(refresh: bool = False):
     """查看 Gemini 5h / 7days 與 3P 模型的即時額度配額 (預設使用 30s 快取，傳入 ?refresh=true 強制即時重抓)"""
     from quota_service import quota_service
     stat = agy_singleton.get_status()
+    quota_data = quota_service.get_quota_summary(force_refresh=refresh)
     return {
         "status": "ok",
-        "quota": quota_service.get_quota_summary(force_refresh=refresh),
-        "context": stat
+        "quota": quota_data,
+        "context": stat,
+        "background_tasks": quota_data.get("background_tasks", {})
     }
 
 

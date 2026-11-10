@@ -186,28 +186,48 @@ class CoupangPriceTracker:
                                 if (!isNaN(num) && num > 10) originalPrice = num;
                             }
 
-                            // 實付售價：抓取主金額，排除「已套用$xx優惠券」、「滿$xx再省$xx」等折價標籤
-                            const boldSpans = priceArea.querySelectorAll("span[class*='font-bold'], span[class*='text-[20px]']");
-                            for (const s of boldSpans) {
-                                const parentText = s.parentElement ? s.parentElement.innerText : "";
-                                if (parentText.includes("已套用") || parentText.includes("再省") || parentText.includes("滿")) {
-                                    continue;
-                                }
-                                if (s.closest("[class*='line-through']")) {
-                                    continue;
-                                }
-                                const num = parseInt(s.innerText.replace(/[^0-9]/g, ""), 10);
+                            // 1. 優先精準抓取大字體主售價標籤 (text-[20px])
+                            const priceSpans = priceArea.querySelectorAll("span[class*='text-[20px]']");
+                            for (const s of priceSpans) {
+                                if (s.closest("[class*='line-through']")) continue;
+                                if (s.closest("button") || s.closest("[data-component-id='best-ccid-nudge']")) continue;
+                                const sText = s.innerText || "";
+                                if (sText.includes("折") || sText.includes("%")) continue;
+                                const num = parseInt(sText.replace(/[^0-9]/g, ""), 10);
                                 if (!isNaN(num) && num > 10) {
                                     salePrice = num;
                                     break;
                                 }
                             }
 
+                            // 2. 備援一：尋找包含 $ 的 translate='no' 價格區塊
                             if (!salePrice) {
                                 const priceBlocks = priceArea.querySelectorAll("div[translate='no']");
                                 for (const pb of priceBlocks) {
-                                    if (pb.querySelector("[class*='line-through']")) continue;
-                                    const num = parseInt(pb.innerText.replace(/[^0-9]/g, ""), 10);
+                                    if (pb.closest("[class*='line-through']") || pb.querySelector("[class*='line-through']")) continue;
+                                    if (pb.closest("button") || pb.closest("[data-component-id='best-ccid-nudge']")) continue;
+                                    const pbText = pb.innerText || "";
+                                    if (pbText.includes("折") || pbText.includes("%") || pbText.includes("/")) continue;
+                                    const num = parseInt(pbText.replace(/[^0-9]/g, ""), 10);
+                                    if (!isNaN(num) && num > 10) {
+                                        salePrice = num;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // 3. 備援二：尋找 font-bold，但嚴格排除所有折數與行銷標籤 (折、%、已套用、再省、滿、券)
+                            if (!salePrice) {
+                                const boldSpans = priceArea.querySelectorAll("span[class*='font-bold']");
+                                for (const s of boldSpans) {
+                                    if (s.closest("[class*='line-through']")) continue;
+                                    if (s.closest("button") || s.closest("[data-component-id='best-ccid-nudge']")) continue;
+                                    const sText = s.innerText || "";
+                                    const pText = s.parentElement ? s.parentElement.innerText : "";
+                                    if (sText.includes("折") || sText.includes("%") || pText.includes("折") || pText.includes("%") || pText.includes("已套用") || pText.includes("再省") || pText.includes("滿")) {
+                                        continue;
+                                    }
+                                    const num = parseInt(sText.replace(/[^0-9]/g, ""), 10);
                                     if (!isNaN(num) && num > 10) {
                                         salePrice = num;
                                         break;
@@ -290,7 +310,7 @@ class CoupangPriceTracker:
                         cur_line = lines[j]
                         if any(kw in prev_line for kw in ["比加入購物車時", "加入購物車後", "再省", "滿", "已套用"]):
                             continue
-                        if any(kw in cur_line for kw in ["已套用", "再省", "滿", "比加入購物車"]):
+                        if any(kw in cur_line for kw in ["已套用", "再省", "滿", "比加入購物車", "折"]):
                             continue
 
                         if cur_line == "$" and j + 1 < len(lines):

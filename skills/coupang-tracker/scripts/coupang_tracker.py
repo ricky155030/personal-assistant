@@ -310,6 +310,11 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
 
                 # 若現價低於初始基準價，立即推播通報！
                 if current_p < base_p:
+                    # 異常價格防禦：若暴跌超過 80% (例如 $55,900 跌至 $99)，高機率為 DOM 折數標籤誤解析，隔離保護
+                    if base_p >= 500 and current_p < base_p * 0.2:
+                        print(f"⚠️ [異常價格保護] {item_key}: 現價 ${current_p:,} 較基準價 ${base_p:,} 暴跌逾 80%，疑似折數標籤誤判，暫停更新基準與通報。", file=sys.stderr)
+                        continue
+
                     drop_amount = base_p - current_p
                     notify_key = f"cart_drop:{item_key}"
                     if should_notify(notify_key, current_p, base_p, state):

@@ -931,6 +931,41 @@ def format_match_notification(
 # 6. CLI 指令實作 (login / scan / watch / alias)
 # ============================================================================
 
+def auto_login_fb() -> bool:
+    """自動從 .env 讀取 FB_USERNAME 與 FB_PASSWORD 嘗試自動補登"""
+    fb_user = os.getenv("FB_USERNAME", "").strip()
+    fb_pass = os.getenv("FB_PASSWORD", "").strip()
+    if not fb_user or not fb_pass:
+        return False
+    try:
+        client = ChromeAssistantClient()
+        client.ensure_chrome(headless=False)
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(client.cdp_url)
+            context = browser.contexts[0] if browser.contexts else browser.new_context()
+            target_page = None
+            for page in context.pages:
+                if "facebook.com" in (page.url or ""):
+                    target_page = page
+                    break
+            if not target_page:
+                return False
+
+            email_input = target_page.locator('input[name="email"], input[placeholder*="電子郵件"], input[placeholder*="Email"]').first
+            pass_input = target_page.locator('input[name="pass"], input[type="password"], input[placeholder*="密碼"]').first
+            if email_input.is_visible(timeout=3000):
+                email_input.fill(fb_user)
+                time.sleep(0.3)
+                pass_input.fill(fb_pass)
+                time.sleep(0.3)
+                pass_input.press("Enter")
+                time.sleep(3.0)
+                return True
+    except Exception as e:
+        print(f"[FBMonitor] ⚠️ 自動登入嘗試失敗: {e}", file=sys.stderr)
+    return False
+
+
 def cmd_login(target_url: Optional[str] = None) -> int:
     url = target_url or "https://www.facebook.com/"
     client = ChromeAssistantClient()
@@ -1073,11 +1108,19 @@ def cmd_watch(
             status = data.get("status")
             if status == "NOT_LOGGED_IN":
                 if not login_alert_sent:
-                    send_telegram_alert(
-                        "⚠️ <b>【FB 社團監控提醒】</b>\n"
-                        "偵測到 <code>Chrome-Assistant</code> 尚未登入 Facebook 或 Session 已過期。\n"
-                        "請在 Mac mini 的 Chrome-Assistant 視窗登入一次，監控將自動恢復運作！"
-                    )
+                    attempted = auto_login_fb()
+                    if attempted:
+                        send_telegram_alert(
+                            "🔐 <b>【FB 社團監控】自動登入已觸發</b>\n"
+                            "偵測到 Facebook 登入過期，系統已自動從 .env 填入帳號密碼並送出！\n"
+                            "若您的 Facebook 有啟用雙重驗證 (2FA)，請在手機或 Mac 上點選<b>「核可登入」</b>即可恢復巡檢。"
+                        )
+                    else:
+                        send_telegram_alert(
+                            "⚠️ <b>【FB 社團監控提醒】</b>\n"
+                            "偵測到 <code>Chrome-Assistant</code> 尚未登入 Facebook 或 Session 已過期。\n"
+                            "請在 Mac mini 的 Chrome-Assistant 視窗登入一次，監控將自動恢復運作！"
+                        )
                     login_alert_sent = True
             else:
                 login_alert_sent = False

@@ -80,6 +80,64 @@ class QuotaService:
         g_w_reset = g_w.get("reset_time")
         g_w_in = g_w.get("refreshes_in", "")
 
+        # Gemini 4 Argon
+        argon_model = (
+            models.get("gemini4argonmedium")
+            or models.get("gemini4argonhigh")
+            or models.get("gemini4argonlow")
+            or next((v for k, v in models.items() if "argon" in k.lower()), {})
+        )
+        argon_weekly = (
+            weekly.get("gemini-argon-wtu")
+            or weekly.get("gemini4argonmedium")
+            or next((v for k, v in weekly.items() if "argon" in k.lower()), {})
+        )
+
+        argon_pct = round(argon_model.get("remaining_percentage", argon_weekly.get("remaining_percentage", 100.0)), 1)
+        argon_reset = argon_model.get("reset_time") or argon_weekly.get("reset_time")
+        argon_in = argon_model.get("refreshes_in") or argon_weekly.get("refreshes_in", "")
+
+        argon_w_pct = round(argon_weekly.get("remaining_percentage", 100.0), 1) if argon_weekly else argon_pct
+        argon_w_reset = argon_weekly.get("reset_time") or argon_reset
+        argon_w_in = argon_weekly.get("refreshes_in") or argon_in
+
+        # Credits
+        plan_status = raw.get("planStatus", {})
+        plan_info = plan_status.get("planInfo", {})
+        credits_data = {
+            "available_prompt_credits": plan_status.get("availablePromptCredits", 0),
+            "available_flow_credits": plan_status.get("availableFlowCredits", 0),
+            "monthly_prompt_credits": plan_info.get("monthlyPromptCredits", 0),
+            "monthly_flow_credits": plan_info.get("monthlyFlowCredits", 0),
+            "plan_name": plan_info.get("planName", raw.get("planTier", "Pro")),
+        }
+
+        # Background tasks / Subagents
+        tasks_data = {
+            "running_count": 0,
+            "tasks": [],
+            "active_names": []
+        }
+        try:
+            from task_manager import task_manager
+            running_list = task_manager.list_tasks(include_finished=False)
+            tasks_data = {
+                "running_count": len(running_list),
+                "tasks": [
+                    {
+                        "task_id": t.get("task_id"),
+                        "name": t.get("name"),
+                        "started_at": t.get("started_at"),
+                        "pid": t.get("pid"),
+                        "status": t.get("status", "RUNNING")
+                    }
+                    for t in running_list
+                ],
+                "active_names": [t.get("name") for t in running_list if t.get("name")]
+            }
+        except Exception:
+            pass
+
         # 3P (Claude / GPT) 5h
         p3_5h = models.get("3p", {})
         p3_5h_pct = round(p3_5h.get("remaining_percentage", 100.0), 1)
@@ -89,6 +147,17 @@ class QuotaService:
         p3_w = weekly.get("3p", {})
         p3_w_pct = round(p3_w.get("remaining_percentage", 100.0), 1)
         p3_w_in = p3_w.get("refreshes_in", "")
+
+        argon_dict = {
+            "remaining_pct": argon_pct,
+            "reset_time": argon_reset,
+            "reset_time_taipei": _format_taipei_time(argon_reset),
+            "refreshes_in": argon_in,
+            "weekly_remaining_pct": argon_w_pct,
+            "weekly_reset_time": argon_w_reset,
+            "weekly_reset_time_taipei": _format_taipei_time(argon_w_reset),
+            "weekly_refreshes_in": argon_w_in,
+        }
 
         return {
             "email": raw.get("email", ""),
@@ -108,6 +177,11 @@ class QuotaService:
                     "refreshes_in": g_w_in
                 }
             },
+            "argon": argon_dict,
+            "gemini_argon": argon_dict,
+            "credits": credits_data,
+            "background_tasks": tasks_data,
+            "subagents": tasks_data,
             "third_party": {
                 "rolling_5h": {
                     "remaining_pct": p3_5h_pct,
@@ -203,6 +277,31 @@ class QuotaService:
                 reset_hint = f" (約台北時間 {g_w['reset_time_taipei']})" if g_w.get("reset_time_taipei") else ""
                 lines.append(f"  ⏳ 刷新倒數：<code>{g_w['refreshes_in']}</code>{reset_hint}")
             lines.append(f"  {_bar(g_w['remaining_pct'])}\n")
+
+            # Gemini 4 Argon
+            argon = summary.get("argon", {})
+            if argon.get("remaining_pct") is not None:
+                lines.append("🧪 <b>Gemini 4 Argon (Pro 推理)</b>")
+                lines.append(f"• <b>剩餘配額</b>：<b>{argon['remaining_pct']}%</b>")
+                if argon.get("refreshes_in"):
+                    reset_hint = f" (約台北時間 {argon['reset_time_taipei']})" if argon.get("reset_time_taipei") else ""
+                    lines.append(f"  ⏳ 刷新倒數：<code>{argon['refreshes_in']}</code>{reset_hint}")
+                lines.append(f"  {_bar(argon['remaining_pct'])}\n")
+
+            # Prompt / Flow Credits
+            credits = summary.get("credits", {})
+            if credits.get("available_prompt_credits") or credits.get("available_flow_credits"):
+                lines.append("💳 <b>Prompt / Flow Credits</b>")
+                lines.append(f"• Prompt Credits：<b>{credits.get('available_prompt_credits', 0):,}</b> / {credits.get('monthly_prompt_credits', 0):,}")
+                lines.append(f"• Flow Credits：<b>{credits.get('available_flow_credits', 0):,}</b> / {credits.get('monthly_flow_credits', 0):,}\n")
+
+            # 背景常駐 / 子代理任務
+            bg_tasks = summary.get("background_tasks", {})
+            if bg_tasks.get("running_count", 0) > 0:
+                lines.append(f"⚙️ <b>背景子代理 / 常駐任務 ({bg_tasks['running_count']} 個進行中)</b>")
+                for t in bg_tasks.get("tasks", []):
+                    lines.append(f"• 🟢 <code>{t.get('name', '未命名')}</code> (PID: {t.get('pid', 'N/A')}, 啟動: {t.get('started_at', '')})")
+                lines.append("")
 
         # 第三方模型
         if p3_5h.get("remaining_pct") is not None or p3_w.get("remaining_pct") is not None:
