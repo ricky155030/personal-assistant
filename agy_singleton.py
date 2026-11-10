@@ -278,6 +278,52 @@ class AgyWorker:
         except Exception:
             pass
 
+    def _get_actual_context_tokens(self, tool_calls_count: int = 0) -> int:
+        """
+        獲取當前 Session 的真實 Context Window 佔用大小（Token 數）。
+        優先讀取 Antigravity 本地 transcript.jsonl 最後一筆 PLANNER_RESPONSE 的快取與輸入總和；
+        若無法讀取則依據工具調用次數平攤累計重複計算的 Prompt Cache。
+        """
+        sid = self.session_id or self.conversation_id
+        if sid:
+            path = Path.home() / ".gemini" / "antigravity-cli" / "brain" / sid / ".system_generated" / "logs" / "transcript.jsonl"
+            if path.is_file():
+                try:
+                    with open(path, "rb") as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                        seek_size = min(size, 16384)
+                        f.seek(size - seek_size)
+                        chunk = f.read(seek_size).decode("utf-8", errors="ignore")
+                    lines = [line.strip() for line in chunk.split("\n") if line.strip()]
+                    for line in reversed(lines):
+                        try:
+                            data = json.loads(line)
+                            if data.get("source") == "MODEL" and data.get("type") == "PLANNER_RESPONSE":
+                                c_read = data.get("cache_read_tokens", 0)
+                                inp = data.get("input_tokens", 0)
+                                out = data.get("output_tokens", 0)
+                                total = c_read + inp + out
+                                if total > 0:
+                                    return total
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+        # Fallback: 根據 ACP usage 與 tool calls 次數平攤快取重複累計
+        if self.last_usage:
+            raw_cached = self.last_usage.get("cached_read_tokens", 0)
+            raw_input = self.last_usage.get("input_tokens", 0)
+            raw_output = self.last_usage.get("output_tokens", 0)
+            if tool_calls_count > 0 and raw_cached > 0:
+                est_cached = raw_cached // (tool_calls_count + 1)
+                return est_cached + raw_input + raw_output
+            raw_total = self.last_usage.get("total_tokens", 0)
+            if raw_total > 0:
+                return raw_total
+        return self.last_tokens or 0
+
     def _next_rpc_id(self) -> int:
         with self._rpc_id_lock:
             self._rpc_seq += 1
@@ -593,9 +639,11 @@ class AgyWorker:
                         "total_tokens": raw_usage.get("totalTokens", 0),
                     }
                     self.last_usage = mapped_usage
-                    new_tokens = mapped_usage.get("total_tokens") or mapped_usage.get("input_tokens") or 0
+                    actual_ctx = self._get_actual_context_tokens(tool_calls_count=0)
+                    new_tokens = actual_ctx if actual_ctx > 0 else (mapped_usage.get("total_tokens") or mapped_usage.get("input_tokens") or 0)
                     if new_tokens > 0:
                         self.last_tokens = new_tokens
+                    self.last_usage["context_tokens"] = self.last_tokens
                 self.pending_handoff = False
                 self._save_session_state()
                 after_tokens = self.last_tokens
@@ -943,6 +991,7 @@ class AgyWorker:
             turn_result = {}
             last_data_time = time.perf_counter()
             active_tools = 0
+            total_tool_calls = 0
             was_cancelled = False
 
             try:
@@ -996,6 +1045,7 @@ class AgyWorker:
                             t_status = update.get("status", "in_progress")
                             if t_status == "in_progress":
                                 active_tools += 1
+                                total_tool_calls += 1
                                 status_text = format_tool_status(tool_name, {"parameters": tool_args})
                                 yield ("status", status_text)
 
@@ -1053,11 +1103,16 @@ class AgyWorker:
             turn_result["time_to_first_token"] = first_token_time or total_latency
             turn_result["total_latency"] = total_latency
 
-            # 更新與持久化 Context 用量
+            # 更新與持久化 Context 用量（精確反映 Session 記憶長度，排除多步工具重複累計）
             usage = turn_result.get("usage", {})
             if usage:
                 self.last_usage = usage
-                self.last_tokens = usage.get("total_tokens") or usage.get("input_tokens") or self.last_tokens
+                actual_ctx = self._get_actual_context_tokens(tool_calls_count=total_tool_calls)
+                if actual_ctx > 0:
+                    self.last_tokens = actual_ctx
+                else:
+                    self.last_tokens = usage.get("total_tokens") or usage.get("input_tokens") or self.last_tokens
+                self.last_usage["context_tokens"] = self.last_tokens
 
             self._save_session_state()
 
@@ -1200,7 +1255,11 @@ class AgyBrainPool:
         chosen_level = "med" if raw_level == "medium" else raw_level.lower()
         clean_q = clean_query_prefix(query)
 
-        if chosen_level == "low":
+        if "argon" in chosen_level:
+            target_model = getattr(settings, "AGY_MODEL_ARGON", "gemini-argon-wtu")
+        elif "claude" in chosen_level:
+            target_model = getattr(settings, "AGY_MODEL_CLAUDE", "claude-sonnet-5.5")
+        elif chosen_level == "low":
             target_model = self.low_model
         elif chosen_level == "high":
             target_model = self.high_model
