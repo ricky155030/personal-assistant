@@ -75,6 +75,7 @@ struct HandsFreeMainView: View {
     @State private var showHistoryDrawer: Bool = false
     @State private var showQuotaSheet: Bool = false
     @State private var showSettings: Bool = false
+    @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
@@ -129,6 +130,9 @@ struct HandsFreeMainView: View {
         }
         .sheet(isPresented: $showSettings) {
             AssistantSettingsView(coordinator: coordinator)
+        }
+        .fullScreenCover(isPresented: $showVisionCamera) {
+            VisionCameraView(coordinator: coordinator)
         }
         .fullScreenCover(isPresented: $showCameraPicker) {
             CameraImagePicker { image in
@@ -248,6 +252,22 @@ struct HandsFreeMainView: View {
                     }
                 }
 
+                Section("回覆長度 (Response Length)") {
+                    ForEach(ResponseLengthOption.allCases) { opt in
+                        Button(action: {
+                            haptic.impactOccurred()
+                            coordinator.responseLength = opt
+                        }) {
+                            HStack {
+                                Label(opt.title, systemImage: opt.icon)
+                                if coordinator.responseLength == opt {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Section("語音辨識模式 (STT Mode)") {
                     ForEach(STTRecognitionMode.allCases) { mode in
                         Button(action: {
@@ -302,6 +322,14 @@ struct HandsFreeMainView: View {
                         Text(coordinator.ttsSpeed.title.components(separatedBy: " ").first ?? "1.0x")
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
                             .foregroundColor(.cyan)
+
+                        Text("·")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(Color(white: 0.45))
+
+                        Text(coordinator.responseLength.shortTag)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(.yellow.opacity(0.9))
                     }
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -670,13 +698,13 @@ struct HandsFreeMainView: View {
 
             // Gemini 標誌性深色膠囊輸入列
             HStack(alignment: .bottom, spacing: 8) {
-                // 左側 [ + ] 相機拍照 / 相簿傳圖按鈕
+                // 左側 [ + ] 隨身眼睛拍照 / 相簿傳圖按鈕
                 Menu {
                     Button(action: {
                         isInputFocused = false
-                        showCameraPicker = true
+                        showVisionCamera = true
                     }) {
-                        Label("相機拍照", systemImage: "camera.fill")
+                        Label("隨身眼睛拍照", systemImage: "camera.fill")
                     }
 
                     Button(action: {
@@ -714,8 +742,20 @@ struct HandsFreeMainView: View {
                 }
                 .padding(.vertical, 8)
 
-                // 右側按鈕區：🎙️ 語音轉文字填入框 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
-                HStack(spacing: 8) {
+                // 右側按鈕區：📷 隨身眼睛 + 🎙️ 語音轉文字填入框 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
+                HStack(spacing: 6) {
+                    // 📷 隨身眼睛快拍按鈕（位於麥克風圓形大按鈕旁）
+                    Button(action: {
+                        haptic.impactOccurred()
+                        isInputFocused = false
+                        showVisionCamera = true
+                    }) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundColor(.white.opacity(0.88))
+                            .frame(width: 36, height: 44)
+                    }
+
                     // 按鈕 1：🎙️ 語音轉文字 (STT 直接放進對話框，不自動送出)
                     Button(action: {
                         haptic.impactOccurred()
@@ -1023,7 +1063,7 @@ struct HandsFreeMainView: View {
     }
 
     // 圖片壓縮輔助（限制最長邊 1280px，JPEG 0.78 品質，兼顧清晰度與秒傳速度）
-    private static func compressImage(_ image: UIImage) -> Data? {
+    static func compressImage(_ image: UIImage) -> Data? {
         let maxDim: CGFloat = 1280
         let size = image.size
         let ratio = min(maxDim / max(size.width, 1), maxDim / max(size.height, 1), 1.0)
@@ -1123,7 +1163,22 @@ struct GeminiMessageRow: View {
             HStack {
                 Spacer(minLength: 52)
                 VStack(alignment: .trailing, spacing: 8) {
-                    if let imgData = message.attachedImageData, let uiImg = UIImage(data: imgData) {
+                    if let multi = message.attachedImagesData, multi.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(multi.indices, id: \.self) { idx in
+                                    if let uiImg = UIImage(data: multi[idx]) {
+                                        Image(uiImage: uiImg)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 110, height: 110)
+                                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: 240)
+                    } else if let imgData = message.attachedImageData, let uiImg = UIImage(data: imgData) {
                         Image(uiImage: uiImg)
                             .resizable()
                             .scaledToFill()

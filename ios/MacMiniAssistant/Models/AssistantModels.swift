@@ -4,6 +4,7 @@ public enum VoiceInputMode: String, Equatable {
     case none           // 待命 / 純文字輸入模式
     case singleTurn     // 🎙️ 單次語音輸入（講完自動送出，助理回覆後不自動重開麥克風）
     case liveContinuous // ((|)) Gemini Live 即時連續語音對談（講完自動送出 -> 語音回答 -> 自動重開麥克風）
+    case cameraFollowUp // 📷 隨身眼睛補充語音（專供相機拍完後聽寫，不走常規發送管線）
 }
 
 public enum ModelFamily: String, CaseIterable, Identifiable {
@@ -109,6 +110,49 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
     }
 }
 
+public enum ResponseLengthOption: String, CaseIterable, Identifiable, Codable {
+    case concise = "concise"    // ⚡ 極簡俐落 (30~60字)
+    case balanced = "balanced"  // ⚖️ 標準均衡 (80~150字，預設)
+    case detailed = "detailed"  // 📚 完整詳解 (無字數限制)
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .concise: return "⚡ 極簡俐落 (30~60字)"
+        case .balanced: return "⚖️ 標準均衡 (80~150字)"
+        case .detailed: return "📚 完整詳解 (深度完整)"
+        }
+    }
+
+    public var shortTag: String {
+        switch self {
+        case .concise: return "極簡"
+        case .balanced: return "標準"
+        case .detailed: return "詳解"
+        }
+    }
+
+    public var icon: String {
+        switch self {
+        case .concise: return "bolt.fill"
+        case .balanced: return "scalemass.fill"
+        case .detailed: return "book.fill"
+        }
+    }
+
+    public var promptInstruction: String {
+        switch self {
+        case .concise:
+            return "【回覆長度約束：極簡模式】嚴格控制在 50 字以內，直奔核心結論，禁止多餘寒暄與鋪陳。"
+        case .balanced:
+            return "【回覆長度約束：標準模式】以結構化條理分明方式回覆，嚴格控制在 120 字以內，重點突出，適合語音聆聽。"
+        case .detailed:
+            return "【回覆長度約束：深度模式】解除字數限制，提供深入、完整、條理分明的詳細解答與具體步驟。"
+        }
+    }
+}
+
 public enum SessionState: Equatable {
     case idle
     case listening(isSpeaking: Bool, currentDb: Float)
@@ -177,6 +221,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public var quickReplies: [String]
     public var reportUrl: String?
     public var attachedImageData: Data?
+    public var attachedImagesData: [Data]?
 
     public init(
         id: UUID = UUID(),
@@ -188,7 +233,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         thoughtProcess: String = "",
         quickReplies: [String] = [],
         reportUrl: String? = nil,
-        attachedImageData: Data? = nil
+        attachedImageData: Data? = nil,
+        attachedImagesData: [Data]? = nil
     ) {
         self.id = id
         self.role = role
@@ -199,11 +245,12 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.thoughtProcess = thoughtProcess
         self.quickReplies = quickReplies
         self.reportUrl = reportUrl
-        self.attachedImageData = attachedImageData
+        self.attachedImageData = attachedImageData ?? attachedImagesData?.first
+        self.attachedImagesData = attachedImagesData ?? (attachedImageData != nil ? [attachedImageData!] : nil)
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData
+        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData
     }
 
     public init(from decoder: Decoder) throws {
@@ -218,6 +265,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.quickReplies = try container.decodeIfPresent([String].self, forKey: .quickReplies) ?? []
         self.reportUrl = try container.decodeIfPresent(String.self, forKey: .reportUrl)
         self.attachedImageData = try container.decodeIfPresent(Data.self, forKey: .attachedImageData)
+        self.attachedImagesData = try container.decodeIfPresent([Data].self, forKey: .attachedImagesData)
     }
 }
 
@@ -379,6 +427,83 @@ public enum TTSSpeedOption: String, CaseIterable, Identifiable {
         case .brisk:  return 1.15
         case .fast:   return 1.25
         case .turbo:  return 1.40
+        }
+    }
+}
+
+// MARK: - 隨身眼睛視覺動作預設集 (Vision Action Presets)
+public struct VisionActionPreset: Identifiable, Codable, Equatable {
+    public var id: String
+    public var title: String
+    public var icon: String
+    public var prompt: String
+    public var isBuiltIn: Bool
+
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        icon: String,
+        prompt: String,
+        isBuiltIn: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.icon = icon
+        self.prompt = prompt
+        self.isBuiltIn = isBuiltIn
+    }
+
+    public static let defaultPresets: [VisionActionPreset] = [
+        VisionActionPreset(
+            id: "builtin_general",
+            title: "萬物百科",
+            icon: "sparkles",
+            prompt: "請詳細說明眼前這張照片的物品名稱、規格、主要特徵、成分或重要資訊，並條理分明地說明用途與注意事項。",
+            isBuiltIn: true
+        ),
+        VisionActionPreset(
+            id: "builtin_shopee",
+            title: "蝦皮上架",
+            icon: "bag.fill",
+            prompt: "請使用 skill shopee-seller 解析這張商品照片，自動匹配台灣蝦皮官方分類、撰寫 SEO 標題與規格並準備上架。",
+            isBuiltIn: true
+        ),
+        VisionActionPreset(
+            id: "builtin_baby",
+            title: "嬰幼兒備品",
+            icon: "heart.fill",
+            prompt: "請詳細解析眼前這項嬰幼兒用品/備品的品名、適用年齡與月齡、材質安全性、使用方式與清潔消毒注意事項，並評估是否適合作為待產與新生兒備品。",
+            isBuiltIn: true
+        )
+    ]
+}
+
+public final class VisionPresetStore {
+    private static let userDefaultsKey = "macmini_vision_action_presets"
+    public static let voiceFollowUpKey = "macmini_vision_voice_followup_enabled"
+
+    public static func loadPresets() -> [VisionActionPreset] {
+        if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+           let list = try? JSONDecoder().decode([VisionActionPreset].self, from: data),
+           !list.isEmpty {
+            return list
+        }
+        return VisionActionPreset.defaultPresets
+    }
+
+    public static func savePresets(_ presets: [VisionActionPreset]) {
+        if let data = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+        }
+    }
+
+    public static var isVoiceFollowUpEnabled: Bool {
+        get {
+            // 預設為 false (極速模式，拍完立即發送)
+            UserDefaults.standard.bool(forKey: voiceFollowUpKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: voiceFollowUpKey)
         }
     }
 }

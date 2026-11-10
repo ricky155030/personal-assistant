@@ -66,13 +66,25 @@ date_str = os.environ.get("DATE_STR", "")
 changelog = os.environ.get("CHANGELOG", "")
 file_size = int(os.environ.get("FILE_SIZE", 0))
 
+# 動態從本機 .env 讀取 Tailscale 域名或伺服器基底
+env_path = os.path.join(dir_path, ".env")
+tailscale_domain = ""
+if os.path.exists(env_path):
+    with open(env_path, "r", encoding="utf-8") as ef:
+        for line in ef:
+            if line.startswith("TAILSCALE_DOMAIN="):
+                tailscale_domain = line.split("=", 1)[1].strip().strip('"').strip("'")
+
+default_server_base = f"http://{tailscale_domain}:8899" if tailscale_domain else "http://127.0.0.1:8899"
+base_server_url = os.environ.get("BASE_SERVER_URL", default_server_base)
+
 app_entry = {
     "name": "MacMiniAssistant",
-    "bundleIdentifier": os.environ.get("BUNDLE_IDENTIFIER", "com.personalassistant.MacMiniAssistant"),
+    "bundleIdentifier": os.environ.get("BUNDLE_IDENTIFIER", "com.hungwei.MacMiniAssistant"),
     "developerName": os.environ.get("DEVELOPER_NAME", "Personal Assistant"),
     "subtitle": "散步/開車免持連續語音對話與口語 Vibe Coding 隨身助理",
     "localizedDescription": "專為邊走路散步、邊開車時免持連續語音聊天與口語 Vibe Coding 打造的 iOS 原生 SwiftUI 客戶端。0.05s 零延遲首句朗讀、智慧靜音 VAD 斷句與工具狀態播報。",
-    "iconURL": f"{os.environ.get('BASE_SERVER_URL', 'http://127.0.0.1:8899')}/static/icon.png",
+    "iconURL": f"{base_server_url}/static/icon.png",
     "tintColor": "007AFF",
     "versions": [
         {
@@ -80,7 +92,7 @@ app_entry = {
             "buildVersion": str(next_build),
             "date": date_str,
             "localizedDescription": changelog,
-            "downloadURL": f"{os.environ.get('BASE_SERVER_URL', 'http://127.0.0.1:8899')}/static/MacMiniAssistant.ipa",
+            "downloadURL": f"{base_server_url}/static/MacMiniAssistant.ipa",
             "size": file_size,
             "minOSVersion": "17.0"
         }
@@ -89,8 +101,8 @@ app_entry = {
 
 data = {
     "name": "Personal Assistant Repo",
-    "identifier": os.environ.get("REPO_IDENTIFIER", "com.personalassistant.altstore.repo"),
-    "sourceURL": f"{os.environ.get('BASE_SERVER_URL', 'http://127.0.0.1:8899')}/static/apps.json",
+    "identifier": os.environ.get("REPO_IDENTIFIER", "com.hungwei.altstore.repo"),
+    "sourceURL": f"{base_server_url}/static/apps.json",
     "apps": [app_entry]
 }
 
@@ -112,10 +124,21 @@ if market_repo_path and os.path.exists(market_repo_path):
         target_dir = os.path.dirname(market_repo_path)
         shutil.copyfile(os.path.join(dir_path, "static", "MacMiniAssistant.ipa"), os.path.join(target_dir, "MacMiniAssistant.ipa"))
 
-        # 檢查是否已存在 MacMiniAssistant
+        # 檢查是否已存在 MacMiniAssistant 並清理舊 bundle id 重複項
         apps_list = mdata.get("apps", [])
         bundle_id = app_entry.get("bundleIdentifier")
-        market_base_url = os.environ.get("MARKET_BASE_URL", "http://127.0.0.1:8765")
+        source_url = mdata.get("sourceURL", "")
+        if source_url and "/" in source_url:
+            inferred_base = "/".join(source_url.split("/")[:3])
+        elif tailscale_domain:
+            inferred_base = f"http://{tailscale_domain}:8765"
+        else:
+            inferred_base = "http://127.0.0.1:8765"
+        market_base_url = os.environ.get("MARKET_BASE_URL", inferred_base)
+
+        # 清除名稱相同但 bundle ID 不符的舊項目以防 SideStore 混亂
+        apps_list = [a for a in apps_list if not (a.get("name") == "MacMiniAssistant" and a.get("bundleIdentifier") != bundle_id)]
+        
         found = False
         for app in apps_list:
             if app.get("bundleIdentifier") == bundle_id:
@@ -136,7 +159,7 @@ if market_repo_path and os.path.exists(market_repo_path):
             market_app_entry["iconURL"] = f"{market_base_url}/static/assistant_icon.png"
             market_app_entry["versions"][0]["downloadURL"] = f"{market_base_url}/static/MacMiniAssistant.ipa"
             apps_list.append(market_app_entry)
-            mdata["apps"] = apps_list
+        mdata["apps"] = apps_list
 
         with open(market_repo_path, "w", encoding="utf-8") as mf:
             json.dump(mdata, mf, ensure_ascii=False, indent=2)

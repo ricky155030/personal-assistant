@@ -15,8 +15,8 @@ class Settings(BaseModel):
     HOST: str = os.getenv("ASSISTANT_HOST", "0.0.0.0")
     PORT: int = int(os.getenv("ASSISTANT_PORT", os.getenv("PORT", "8899")))
     
-    # 捷徑對接安全性密鑰 (建議在 .env 中自訂)
-    API_KEY: str = os.getenv("ASSISTANT_API_KEY", "your-watch-secret")
+    # 捷徑對接安全性密鑰 (Tailscale 私網環境下留空即可免金鑰直通)
+    API_KEY: str = os.getenv("ASSISTANT_API_KEY", "")
     
     # Tailscale 資訊
     TAILSCALE_DOMAIN: str = os.getenv("TAILSCALE_DOMAIN", "your-mac-mini.ts.net")

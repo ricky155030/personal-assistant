@@ -1,6 +1,6 @@
 name: MacMiniAssistant
 options:
-  bundleIdPrefix: com.personalassistant
+  bundleIdPrefix: com.hungwei
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "16.0"
@@ -9,7 +9,7 @@ settings:
   base:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "T25G5Y2426"
 
 targets:
   MacMiniAssistant:
@@ -25,7 +25,7 @@ targets:
         CFBundleDisplayName: MacMiniAssistant
         CFBundleURLTypes:
           - CFBundleTypeRole: Editor
-            CFBundleURLName: com.personalassistant.MacMiniAssistant
+            CFBundleURLName: com.hungwei.MacMiniAssistant
             CFBundleURLSchemes:
               - macminiassistant
         NSMicrophoneUsageDescription: "用於與 Mac mini 個人助理進行免持連續語音對話與 Vibe Coding"
@@ -39,7 +39,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: MacMiniAssistant
-        PRODUCT_BUNDLE_IDENTIFIER: com.personalassistant.MacMiniAssistant
+        PRODUCT_BUNDLE_IDENTIFIER: com.hungwei.MacMiniAssistant
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: MacMiniAssistant/Info.plist
@@ -61,7 +61,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: MacMiniAssistantWidget
-        PRODUCT_BUNDLE_IDENTIFIER: com.personalassistant.MacMiniAssistant.Widget
+        PRODUCT_BUNDLE_IDENTIFIER: com.hungwei.MacMiniAssistant.Widget
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CODE_SIGN_STYLE: Automatic

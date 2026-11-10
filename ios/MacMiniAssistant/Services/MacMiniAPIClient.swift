@@ -49,12 +49,23 @@ public final class MacMiniAPIClient {
         do {
             let (_, response) = try await session.data(for: request)
             let ms = Int(Date().timeIntervalSince(start) * 1000)
-            if let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 {
-                return (true, ms, "連線正常 (\(ms)ms)")
-            } else {
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 return (false, ms, "HTTP \(code)")
             }
+
+            // 進一步驗證 API Key 是否正確（避免健康檢查成功但發送時 401 Unauthorized）
+            if let authUrl = URL(string: "\(cleanBase)/api/history?limit=1") {
+                var authReq = URLRequest(url: authUrl)
+                authReq.timeoutInterval = 3.0
+                authReq.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+                if let (_, authResp) = try? await session.data(for: authReq),
+                   let authHttp = authResp as? HTTPURLResponse, authHttp.statusCode == 401 {
+                    return (false, ms, "端點通，但 API Key 未填或錯誤 (401)")
+                }
+            }
+
+            return (true, ms, "連線與金鑰驗證正常 (\(ms)ms)")
         } catch {
             return (false, 0, "無法連線 (請確認 Tailscale VPN)")
         }
@@ -273,7 +284,8 @@ public final class MacMiniAPIClient {
         query: String,
         client: String = "ios-voice",
         level: String? = nil,
-        imageBase64: String? = nil
+        imageBase64: String? = nil,
+        imagesBase64: [String]? = nil
     ) -> AsyncThrowingStream<SSEEvent, Error> {
         return AsyncThrowingStream { continuation in
             Task {
@@ -300,8 +312,15 @@ public final class MacMiniAPIClient {
                 if let lvl = level {
                     payload["level"] = lvl
                 }
-                if let imgB64 = imageBase64, !imgB64.isEmpty {
+                if let multi = imagesBase64, !multi.isEmpty {
+                    let mediaArray = multi.map { ["data_base64": $0, "mime_type": "image/jpeg"] }
+                    payload["media"] = mediaArray
+                    if let first = multi.first {
+                        payload["image_base64"] = first
+                    }
+                } else if let imgB64 = imageBase64, !imgB64.isEmpty {
                     payload["image_base64"] = imgB64
+                    payload["media"] = [["data_base64": imgB64, "mime_type": "image/jpeg"]]
                 }
 
                 guard let body = try? JSONSerialization.data(withJSONObject: payload) else {

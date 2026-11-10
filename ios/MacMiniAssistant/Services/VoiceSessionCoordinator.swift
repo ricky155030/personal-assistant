@@ -16,7 +16,23 @@ public final class VoiceSessionCoordinator: ObservableObject {
             UserDefaults.standard.set(selectedModelFamily.rawValue, forKey: "macmini_model_family")
         }
     }
-    @Published public var thinkingLevel: ThinkingLevel = .med
+    @Published public var thinkingLevel: ThinkingLevel = {
+        let saved = UserDefaults.standard.string(forKey: "macmini_thinking_level") ?? "med"
+        return ThinkingLevel(rawValue: saved) ?? .med
+    }() {
+        didSet {
+            UserDefaults.standard.set(thinkingLevel.rawValue, forKey: "macmini_thinking_level")
+        }
+    }
+
+    @Published public var responseLength: ResponseLengthOption = {
+        let saved = UserDefaults.standard.string(forKey: "macmini_response_length") ?? "balanced"
+        return ResponseLengthOption(rawValue: saved) ?? .balanced
+    }() {
+        didSet {
+            UserDefaults.standard.set(responseLength.rawValue, forKey: "macmini_response_length")
+        }
+    }
 
     // 車載藍牙 / 手機揚聲器 / 聽筒音訊路由狀態
     @Published public var currentAudioRouteName: String = "手機揚聲器"
@@ -74,7 +90,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
             UserDefaults.standard.set(earconSoundEnabled, forKey: "macmini_earcon_enabled")
         }
     }
+    public var onVisionVoiceFollowUpFinished: ((String) -> Void)? = nil
+    public var onVisionVoicePartialTranscript: ((String) -> Void)? = nil
     @Published public var pendingImageData: Data? = nil
+    @Published public var pendingImagesData: [Data] = []
     @Published public var messages: [ChatMessage] = []
     @Published public var sessionHistory: [ChatSession] = []
     @Published public var currentSessionId: UUID = UUID()
@@ -246,6 +265,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
             if self.voiceInputMode == .singleTurn {
                 self.textInput = self.dictationBaseText.isEmpty ? text : "\(self.dictationBaseText) \(text)"
             }
+            if self.voiceInputMode == .cameraFollowUp {
+                self.onVisionVoicePartialTranscript?(text)
+            }
             if case .listening(let isSpeaking, _) = self.state, !isSpeaking {
                 self.state = .listening(isSpeaking: true, currentDb: self.currentDb)
             }
@@ -267,17 +289,32 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.silenceProgress = 0.0
             self.silenceElapsed = 0.0
             self.silenceWarned = false
+            let clean = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             self.liveTranscript = ""
             self.notifyHaptic.notificationOccurred(.success)
 
+            // 📷 相機補充語音模式：將文字交給相機回呼組合為單一 Prompt，絕不觸發常規發送！
+            if self.voiceInputMode == .cameraFollowUp {
+                self.voiceInputMode = .none
+                self.state = .idle
+                let cb = self.onVisionVoiceFollowUpFinished
+                self.onVisionVoiceFollowUpFinished = nil
+                cb?(clean)
+                return
+            }
+
             if self.voiceInputMode == .singleTurn {
                 // 🎙️ 左側麥克風：僅將 STT 文字放入輸入框，不自動送出
-                let clean = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !clean.isEmpty {
                     self.textInput = self.dictationBaseText.isEmpty ? clean : "\(self.dictationBaseText) \(clean)"
                 }
                 self.voiceInputMode = .none
                 self.state = .idle
+                return
+            }
+
+            // 🛡️ 只有在明確處於 .liveContinuous 連續對話模式時，才自動將語音發送至大腦！
+            guard self.voiceInputMode == .liveContinuous else {
                 return
             }
 
@@ -292,6 +329,24 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.silenceWarned = false
             self.liveTranscript = ""
             self.notifyHaptic.notificationOccurred(.success)
+
+            if self.voiceInputMode == .cameraFollowUp {
+                self.voiceInputMode = .none
+                self.state = .idle
+                return
+            }
+
+            if self.voiceInputMode == .singleTurn {
+                self.voiceInputMode = .none
+                self.state = .idle
+                return
+            }
+
+            // 🛡️ 只有在明確處於 .liveContinuous 連續對話模式時，才自動送 Whisper 辨識並發送！
+            guard self.voiceInputMode == .liveContinuous else {
+                return
+            }
+
             self.handleSpeechFinished(audioURL: audioURL)
         }
 
@@ -539,6 +594,142 @@ public final class VoiceSessionCoordinator: ObservableObject {
         processTranscript(finalQuery)
     }
 
+    /// 隨身眼睛專用：將多張圖片與自訂動作 Prompt（及可選補充語音）打包送出
+    public func sendVisionRequest(
+        prompt: String,
+        imagesData: [Data],
+        extraVoiceNote: String? = nil
+    ) {
+        guard !imagesData.isEmpty else { return }
+        let fullQuery: String
+        if let extra = extraVoiceNote?.trimmingCharacters(in: .whitespacesAndNewlines), !extra.isEmpty {
+            fullQuery = "\(prompt)\n\n（主人補充語音：\(extra)）"
+        } else {
+            fullQuery = prompt
+        }
+
+        textInput = ""
+        dictationBaseText = ""
+        liveTranscript = ""
+        silenceProgress = 0.0
+        silenceElapsed = 0.0
+
+        if case .listening = state {
+            vad.stopListening()
+        }
+        speechPlayer.stopImmediately()
+        shouldSpeakCurrentTurn = true // 隨身眼睛拍完一律用語音回覆主人
+
+        let imagesBase64 = imagesData.map { $0.base64EncodedString() }
+        let userMessage = ChatMessage(
+            role: .user,
+            content: fullQuery,
+            attachedImageData: imagesData.first,
+            attachedImagesData: imagesData
+        )
+        messages.append(userMessage)
+
+        currentStreamingText = ""
+        currentToolStatus = nil
+        speechPlayer.resetForNewTurn()
+        state = .thinkingAndStreaming(toolStatus: nil)
+
+        let assistantMessageId = UUID()
+        let assistantMessage = ChatMessage(id: assistantMessageId, role: .assistant, content: "", status: .streaming)
+        messages.append(assistantMessage)
+        syncCurrentSessionToHistory()
+
+        activeStreamTask?.cancel()
+        beginBackgroundExecutionTask()
+        speechPlayer.startBackgroundKeepAlive()
+
+        activeStreamTask = Task {
+            defer {
+                Task { @MainActor in
+                    self.endBackgroundExecutionTask()
+                    if self.voiceInputMode != .liveContinuous {
+                        self.speechPlayer.stopBackgroundKeepAlive()
+                    }
+                }
+            }
+            let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
+            let stream = apiClient.streamVoiceChat(
+                query: queryWithConstraint,
+                client: "ios-voice",
+                level: effectiveLevel,
+                imageBase64: imagesBase64.first,
+                imagesBase64: imagesBase64
+            )
+
+            do {
+                for try await event in stream {
+                    guard !Task.isCancelled else { break }
+                    await MainActor.run {
+                        self.handleSSEEvent(event, assistantMessageId: assistantMessageId, speakThisTurn: true)
+                    }
+                }
+            } catch {
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.handleStreamError(error, assistantMessageId: assistantMessageId, speakThisTurn: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 隨身眼睛專用：開始監聽拍照後的補充語音（不發送一般對話，完成時回呼回傳純文字）
+    public func startVisionVoiceFollowUp(
+        onPartial: ((String) -> Void)? = nil,
+        onFinished: @escaping (String) -> Void
+    ) {
+        AudioRecorderVAD.requestPermissions { [weak self] micGranted, speechGranted in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard micGranted && speechGranted else {
+                    print("[VoiceCoordinator] ⚠️ Microphone or Speech permission denied")
+                    self.errorMessage = "請至 iPhone 設定允許麥克風與語音辨識權限"
+                    return
+                }
+                self.onVisionVoiceFollowUpFinished = onFinished
+                self.onVisionVoicePartialTranscript = onPartial
+                self.voiceInputMode = .cameraFollowUp
+                self.liveTranscript = ""
+                self.silenceProgress = 0.0
+                self.silenceElapsed = 0.0
+                self.speechPlayer.stopImmediately()
+                self.vad.keepEngineAliveInBackground = false
+                self.vad.silenceDuration = TimeInterval(self.pauseSeconds)
+                self.state = .listening(isSpeaking: false, currentDb: self.currentDb)
+                do {
+                    try self.vad.startListening()
+                    print("[VoiceCoordinator] 🎙️ startListening succeeded in cameraFollowUp mode!")
+                } catch {
+                    print("[VoiceCoordinator] ❌ startListening failed: \(error)")
+                    self.errorMessage = "收音啟動失敗: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    /// 隨身眼睛專用：停止補充語音監聽，若有尚未結算之即時聽寫文字，立即結算回傳
+    @discardableResult
+    public func stopVisionVoiceFollowUp() -> String {
+        let currentLive = liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        if self.voiceInputMode == .cameraFollowUp {
+            self.voiceInputMode = .none
+            self.state = .idle
+            self.vad.stopListening()
+            let cb = self.onVisionVoiceFollowUpFinished
+            self.onVisionVoiceFollowUpFinished = nil
+            self.onVisionVoicePartialTranscript = nil
+            if !currentLive.isEmpty {
+                cb?(currentLive)
+            }
+        }
+        return currentLive
+    }
+
     /// 開啟新對話（先保存目前對話至歷史，再清空畫面）
     public func startNewChat() {
         if !messages.isEmpty {
@@ -551,6 +742,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         currentSessionId = UUID()
         messages.removeAll()
         pendingImageData = nil
+        pendingImagesData.removeAll()
         liveTranscript = ""
         currentStreamingText = ""
         currentToolStatus = nil
@@ -812,10 +1004,24 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     private func processTranscript(_ text: String) {
         let attachedImg = pendingImageData
+        let attachedMulti = pendingImagesData
         pendingImageData = nil
-        let imageBase64 = attachedImg?.base64EncodedString()
+        pendingImagesData.removeAll()
 
-        let userMessage = ChatMessage(role: .user, content: text, attachedImageData: attachedImg)
+        var effectiveImagesData: [Data] = []
+        if !attachedMulti.isEmpty {
+            effectiveImagesData = attachedMulti
+        } else if let single = attachedImg {
+            effectiveImagesData = [single]
+        }
+        let imagesBase64 = effectiveImagesData.map { $0.base64EncodedString() }
+
+        let userMessage = ChatMessage(
+            role: .user,
+            content: text,
+            attachedImageData: effectiveImagesData.first,
+            attachedImagesData: effectiveImagesData.isEmpty ? nil : effectiveImagesData
+        )
         messages.append(userMessage)
 
         currentStreamingText = ""
@@ -853,104 +1059,124 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     }
                 }
             }
+            let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
             let stream = apiClient.streamVoiceChat(
-                query: fullQuery,
+                query: queryWithConstraint,
                 client: clientTag,
                 level: effectiveLevel,
-                imageBase64: imageBase64
+                imageBase64: imagesBase64.first,
+                imagesBase64: imagesBase64
             )
 
             do {
                 for try await event in stream {
                     guard !Task.isCancelled else { break }
-
-                    switch event {
-                    case .thoughtDelta(let delta):
-                        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                            self.messages[idx].thoughtProcess += delta
-                        }
-
-                    case .status(let statusText, let tts):
-                        self.currentToolStatus = statusText
-                        self.state = .thinkingAndStreaming(toolStatus: statusText)
-
-                        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                            self.messages[idx].toolHistory.append(statusText)
-                        }
-
-                        if speakThisTurn, self.speakToolStatusEnabled, let speakText = tts, !speakText.isEmpty {
-                            self.speechPlayer.speakStatus(speakText)
-                        }
-
-                    case .textDelta(let delta):
-                        self.currentStreamingText += delta
-                        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                            self.messages[idx].content += delta
-                        }
-
-                    case .ttsSentence(let sentence):
-                        self.currentToolStatus = nil
-                        if speakThisTurn {
-                            if case .thinkingAndStreaming = self.state {
-                                self.state = .speaking(currentSentence: sentence)
-                            }
-                            self.speechPlayer.enqueueSentence(sentence)
-                        }
-
-                    case .audioChunk(let seq, let sentence, let audioData):
-                        self.currentToolStatus = nil
-                        if speakThisTurn {
-                            if case .thinkingAndStreaming = self.state {
-                                self.state = .speaking(currentSentence: sentence)
-                            }
-                            self.speechPlayer.enqueueAudioChunk(seq: seq, sentence: sentence, audioData: audioData)
-                        }
-
-                    case .done(let fullReply, _, _, let reportUrl, let quickReplies):
-                        self.currentToolStatus = nil
-                        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                            self.messages[idx].content = fullReply.isEmpty ? self.currentStreamingText : fullReply
-                            self.messages[idx].status = .completed
-                            self.messages[idx].reportUrl = reportUrl.isEmpty ? nil : reportUrl
-                            self.messages[idx].quickReplies = quickReplies
-                        }
-                        self.syncCurrentSessionToHistory()
-                        self.refreshQuotaStatus(force: false)
-                        if speakThisTurn {
-                            self.speechPlayer.markGenerationFinished()
-                        } else {
-                            self.handleQueueFinished()
-                        }
-
-                    case .error(let msg):
-                        print("Voice stream error: \(msg)")
-                        self.errorMessage = "助理回應異常: \(msg)"
-                        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                            self.messages[idx].status = .error
-                        }
-                        self.syncCurrentSessionToHistory()
-                        self.refreshQuotaStatus(force: false)
-                        if speakThisTurn {
-                            self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
-                        } else {
-                            self.handleQueueFinished()
-                        }
+                    await MainActor.run {
+                        self.handleSSEEvent(event, assistantMessageId: assistantMessageId, speakThisTurn: speakThisTurn)
                     }
                 }
             } catch {
-                if Task.isCancelled || error is CancellationError {
-                    return
-                }
-                self.errorMessage = "串流中斷: \(error.localizedDescription)"
-                if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-                    self.messages[idx].status = .error
-                }
-                if speakThisTurn {
-                    self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
-                } else {
-                    self.handleQueueFinished()
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.handleStreamError(error, assistantMessageId: assistantMessageId, speakThisTurn: speakThisTurn)
+                    }
                 }
             }
+        }
+    }
+
+    private func handleSSEEvent(_ event: SSEEvent, assistantMessageId: UUID, speakThisTurn: Bool) {
+        switch event {
+        case .thoughtDelta(let delta):
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].thoughtProcess += delta
+            }
+
+        case .status(let statusText, let tts):
+            self.currentToolStatus = statusText
+            self.state = .thinkingAndStreaming(toolStatus: statusText)
+
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].toolHistory.append(statusText)
+            }
+
+            if speakThisTurn, self.speakToolStatusEnabled, let speakText = tts, !speakText.isEmpty {
+                self.speechPlayer.speakStatus(speakText)
+            }
+
+        case .textDelta(let delta):
+            self.currentStreamingText += delta
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].content += delta
+            }
+
+        case .ttsSentence(let sentence):
+            self.currentToolStatus = nil
+            if speakThisTurn {
+                if case .thinkingAndStreaming = self.state {
+                    self.state = .speaking(currentSentence: sentence)
+                }
+                self.speechPlayer.enqueueSentence(sentence)
+            }
+
+        case .audioChunk(let seq, let sentence, let audioData):
+            self.currentToolStatus = nil
+            if speakThisTurn {
+                if case .thinkingAndStreaming = self.state {
+                    self.state = .speaking(currentSentence: sentence)
+                }
+                self.speechPlayer.enqueueAudioChunk(seq: seq, sentence: sentence, audioData: audioData)
+            }
+
+        case .done(let fullReply, _, _, let reportUrl, let quickReplies):
+            self.currentToolStatus = nil
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].content = fullReply.isEmpty ? self.currentStreamingText : fullReply
+                self.messages[idx].status = .completed
+                self.messages[idx].reportUrl = reportUrl.isEmpty ? nil : reportUrl
+                self.messages[idx].quickReplies = quickReplies
+            }
+            self.syncCurrentSessionToHistory()
+            self.refreshQuotaStatus(force: false)
+            if speakThisTurn {
+                self.speechPlayer.markGenerationFinished()
+            } else {
+                self.handleQueueFinished()
+            }
+
+        case .error(let msg):
+            print("Voice stream error: \(msg)")
+            self.errorMessage = "助理回應異常: \(msg)"
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].status = .error
+            }
+            self.syncCurrentSessionToHistory()
+            self.refreshQuotaStatus(force: false)
+            if speakThisTurn {
+                self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
+            } else {
+                self.handleQueueFinished()
+            }
+        }
+    }
+
+    private func handleStreamError(_ error: Error, assistantMessageId: UUID, speakThisTurn: Bool) {
+        if Task.isCancelled || error is CancellationError {
+            return
+        }
+        let desc = error.localizedDescription
+        if desc.contains("401") {
+            self.errorMessage = "身份驗證失敗 (401)：請至右上角 ⚙️ 設定頁填寫正確的 API Key"
+        } else {
+            self.errorMessage = "串流中斷: \(desc)"
+        }
+        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+            self.messages[idx].status = .error
+        }
+        if speakThisTurn {
+            self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
+        } else {
+            self.handleQueueFinished()
         }
     }
 

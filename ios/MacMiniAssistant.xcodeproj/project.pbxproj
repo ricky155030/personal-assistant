@@ -14,6 +14,7 @@
 		1B05ACEF90FF751380EC9ECF /* ConversationDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C33510F6B9C0944923D2E6F /* ConversationDrawerView.swift */; };
 		2859F062EE454D94C27BE9D5 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */; };
 		28FAFDA2EBEBAF446629FFF8 /* AssistantIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B062E93276233E7C7607CC9F /* AssistantIntents.swift */; };
+		2AA208B1BFE4D49D99E44DE3 /* VisionCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */; };
 		5CF5EE3FBEB32167C82FD014 /* AssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */; };
 		6A6A8170008C85920BE624CB /* MacMiniAssistantWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */; };
 		722749E618BC2FA5FF592C90 /* MacMiniAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2D748E148C7EFD04499D0B /* MacMiniAssistantApp.swift */; };
@@ -65,6 +66,7 @@
 		B062E93276233E7C7607CC9F /* AssistantIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantIntents.swift; sourceTree = "<group>"; };
 		BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
 		C186D121BCBAC23402331AF0 /* AppGroupStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStore.swift; sourceTree = "<group>"; };
+		D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionCameraView.swift; sourceTree = "<group>"; };
 		D6B8E552E830C18B0A686BFF /* MacMiniAssistantWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MacMiniAssistantWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAssistantWidgetBundle.swift; sourceTree = "<group>"; };
 		E884E50467FF246C5E4A31BB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -103,6 +105,7 @@
 				FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */,
 				0C33510F6B9C0944923D2E6F /* ConversationDrawerView.swift */,
 				2DB522D8D90D32751E9D9DDB /* HandsFreeMainView.swift */,
+				D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -196,11 +199,11 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					DB580F5C533D6CB2AD0ABFE9 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = T25G5Y2426;
 						ProvisioningStyle = Automatic;
 					};
 					F90FB58ABF3FB31FBF8BF07A = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = T25G5Y2426;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -251,6 +254,7 @@
 				07C38680368D7C7D2E18978C /* MacMiniAPIClient.swift in Sources */,
 				722749E618BC2FA5FF592C90 /* MacMiniAssistantApp.swift in Sources */,
 				E92D5C6322450C278CB1C903 /* NativeSpeechPlayer.swift in Sources */,
+				2AA208B1BFE4D49D99E44DE3 /* VisionCameraView.swift in Sources */,
 				006F91BFA485309F3F52CB28 /* VoiceSessionCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -289,7 +293,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.personalassistant.MacMiniAssistant;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant;
 				PRODUCT_NAME = MacMiniAssistant;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -308,7 +312,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.personalassistant.MacMiniAssistant.Widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant.Widget;
 				PRODUCT_NAME = MacMiniAssistantWidget;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -327,7 +331,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.personalassistant.MacMiniAssistant.Widget;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant.Widget;
 				PRODUCT_NAME = MacMiniAssistantWidget;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -346,7 +350,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.personalassistant.MacMiniAssistant;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant;
 				PRODUCT_NAME = MacMiniAssistant;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -388,7 +392,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = T25G5Y2426;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -452,7 +456,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = T25G5Y2426;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
