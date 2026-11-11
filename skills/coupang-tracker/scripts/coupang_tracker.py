@@ -162,7 +162,7 @@ def match_item_price(name: str, snapshot: Dict[str, Any]) -> Tuple[Optional[int]
 
 
 def should_notify(model_key: str, price: int, threshold: int, state: Dict[str, Any]) -> bool:
-    """判斷是否應發送通知：價格達標且距上次通知已超過 6 小時 (或價格破更低)"""
+    """判斷是否應發送通知（手動門檻）：價格達標且距上次通知已超過 6 小時 (或價格破更低)"""
     if price >= threshold:
         return False
 
@@ -180,6 +180,93 @@ def should_notify(model_key: str, price: int, threshold: int, state: Dict[str, A
 
     # 維持門檻以下，冷卻超過 6 小時 (21600 秒) 再次溫馨提醒
     if (now_ts - last_time) > 21600:
+        return True
+
+    return False
+
+
+def update_price_history_24h(
+    history: List[Dict[str, Any]],
+    current_price: int,
+    now_ts: Optional[float] = None,
+    window_seconds: int = 86400
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    更新 24 小時滑動窗口價格歷史紀錄並計算波段最高價 (Rolling 24h High)
+    - 剔除超過 window_seconds (預設 86,400 秒) 的過期紀錄
+    - 加入當前價格與時間戳
+    - 回傳 (更新後的歷史清單, 24h波段最高價 wave_high)
+    """
+    if now_ts is None:
+        now_ts = time.time()
+
+    cutoff_ts = now_ts - window_seconds
+    valid_history: List[Dict[str, Any]] = []
+
+    for entry in history:
+        ts = entry.get("timestamp")
+        if isinstance(ts, str):
+            try:
+                ts = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                continue
+        if ts is not None and ts >= cutoff_ts:
+            valid_history.append({"timestamp": float(ts), "price": int(entry["price"])})
+
+    valid_history.append({"timestamp": float(now_ts), "price": int(current_price)})
+    wave_high = max(p["price"] for p in valid_history)
+    return valid_history, wave_high
+
+
+def should_notify_cart_drop(
+    notify_key: str,
+    current_p: int,
+    wave_high: int,
+    drop_rate: float,
+    drop_amount: int,
+    state: Dict[str, Any],
+    rebounded: bool = False,
+    now_ts: Optional[float] = None
+) -> bool:
+    """
+    判斷購物車降價是否應發送通報：
+    1. 降幅達標：drop_rate >= 0.05 (5%) 且 drop_amount >= 10 元
+    2. 通報防頻率轟炸 (Cooldown / Ratchet)：
+       - 若過去 24 小時內此波段已經通報過：
+         - 若回彈後重新下殺 (rebounded == True)，觸發新波段通報
+         - 否則只有當「現價比上次通報價更低」或「距上次通報已超過 6 小時」時才再次通報
+    """
+    if wave_high <= 0:
+        return False
+
+    if drop_rate < 0.05 or drop_amount < 10:
+        return False
+
+    if now_ts is None:
+        now_ts = time.time()
+
+    last_info = state.get("last_notified", {}).get(notify_key)
+    if not last_info:
+        return True
+
+    last_time = last_info.get("timestamp", 0)
+    last_price = last_info.get("price", 999999)
+    elapsed = now_ts - last_time
+
+    # 若回彈後再度下殺，視為新波段觸發
+    if rebounded:
+        return True
+
+    # 若超過 24 小時未通報，視為新窗口直接通報
+    if elapsed > 86400:
+        return True
+
+    # 過去 24 小時內此波段已通報過：現價破更低價 (Ratchet) 即刻通知
+    if current_p < last_price:
+        return True
+
+    # 距上次通報超過 6 小時 (21600 秒) 再次提醒
+    if elapsed > 21600:
         return True
 
     return False
@@ -222,18 +309,36 @@ def dispatch_alerts(name: str, spec_text: str, current_price: int, threshold: in
         print(f"❌ Telegram 推播異常: {e}", file=sys.stderr)
 
 
-def dispatch_cart_drop_alert(title: str, option: str, current_price: int, baseline_price: int, drop_amount: int, url: str):
+def dispatch_cart_drop_alert(
+    title: str,
+    option: str,
+    current_price: int,
+    wave_high: int,
+    drop_amount: int,
+    drop_rate_or_url: Any,
+    url: Optional[str] = None
+):
     spec_text = option or "主商品"
-    print(f"📉 【購物車自動降價警報！】{title} ({spec_text})：現價 ${current_price:,} (自基準 ${baseline_price:,} 降了 ${drop_amount:,})！")
+
+    if url is None and isinstance(drop_rate_or_url, str):
+        # 向下相容舊呼叫: (title, option, current_price, baseline_price, drop_amount, url)
+        actual_url = drop_rate_or_url
+        drop_rate = (drop_amount / wave_high) if wave_high > 0 else 0.0
+    else:
+        drop_rate = float(drop_rate_or_url) if isinstance(drop_rate_or_url, (int, float)) else ((drop_amount / wave_high) if wave_high > 0 else 0.0)
+        actual_url = url or "https://cart.tw.coupang.com/cart"
+
+    drop_pct_str = f"{drop_rate * 100:.1f}%"
+    print(f"📉 【購物車自動降價警報！】{title} ({spec_text})：現價 ${current_price:,} (自24h波段高點 ${wave_high:,} 降了 ${drop_amount:,} / -{drop_pct_str})！")
 
     # 1. iOS Critical Alert (純靜音置頂)
     ios_title = f"📉 購物車降價！{title}"
-    ios_msg = f"【{spec_text}】現正降價至 ${current_price:,} (現省 ${drop_amount:,})！點此結帳。"
+    ios_msg = f"【{spec_text}】最新特價 ${current_price:,} (波段高點 ${wave_high:,}，降幅 -${drop_amount:,} / -{drop_pct_str})！點此結帳。"
     try:
         ok_ios = send_critical_alert(
             title=ios_title,
             message=ios_msg,
-            url=url,
+            url=actual_url,
             volume=0.0,
             tag="coupang_cart_drop"
         )
@@ -249,10 +354,10 @@ def dispatch_cart_drop_alert(title: str, option: str, current_price: int, baseli
         f"📉 **【酷澎購物車降價警報】**\n",
         f"📦 **商品**：`{title}`",
         f"🎨 **規格**：`{spec_text}`",
-        f"💰 **加入時現價**：`${baseline_price:,}`",
+        f"📈 **波段高點**：`${wave_high:,}`",
         f"🔥 **最新特價**：`${current_price:,}`",
-        f"🎉 **現省金額**：`-${drop_amount:,}`\n",
-        f"🛒 [點此立即結帳]({url})"
+        f"🎉 **降幅金額與比例**：`-${drop_amount:,} (-{drop_pct_str})`\n",
+        f"🛒 [點此立即結帳]({actual_url})"
     ]
     try:
         ok_tg = send_telegram_alert("\n".join(tg_lines))
@@ -282,13 +387,14 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
         cart_baselines = state.setdefault("cart_baselines", {})
         current_item_keys = set()
 
-        # 1. 自動追蹤購物車所有品項降價 (Auto-Track)
+        # 1. 自動追蹤購物車所有品項降價 (Auto-Track: 24h 動態波段高點 + 浮動降幅 5%)
         for ci in cart_items:
             item_key = f"{ci['title']} ({ci['option']})".strip()
             current_item_keys.add(item_key)
             current_p = ci["sale_price"]
             orig_p = ci.get("original_price") or current_p
             url = ci.get("url") or "https://cart.tw.coupang.com/cart"
+            now_ts = time.time()
 
             if item_key not in cart_baselines:
                 cart_baselines[item_key] = {
@@ -298,33 +404,63 @@ def perform_check(tracker: CoupangPriceTracker, state: Dict[str, Any]):
                     "original_price": orig_p,
                     "first_seen": now_str,
                     "last_price": current_p,
-                    "last_seen": now_str
+                    "last_seen": now_str,
+                    "price_history_24h": [{"timestamp": now_ts, "price": current_p}],
+                    "wave_high_24h": current_p,
+                    "rebounded": False
                 }
-                print(f"   ✨ [自動追蹤] 新入購物車品項：【{item_key}】(初始基準: ${current_p:,})")
+                print(f"   ✨ [自動追蹤] 新入購物車品項：【{item_key}】(初始波段高點: ${current_p:,})")
             else:
                 base_info = cart_baselines[item_key]
                 base_p = base_info.get("baseline_price", current_p)
+                history = base_info.get("price_history_24h", [])
+
+                # 若舊記錄缺少 24h 歷史，以既有 baseline / last_price 初始化
+                if not history:
+                    seed_p = base_info.get("last_price") or base_p or current_p
+                    history = [{"timestamp": now_ts - 3600, "price": seed_p}]
+
+                # 異常價格防禦：計算預估波段高點（若暴跌超過 80%，高機率為 DOM 折數標籤誤解析，隔離保護）
+                est_wave_high = max([p["price"] for p in history] + [current_p])
+                if est_wave_high >= 500 and current_p < est_wave_high * 0.2:
+                    print(f"⚠️ [異常價格保護] {item_key}: 現價 ${current_p:,} 較波段高點 ${est_wave_high:,} 暴跌逾 80%，疑似折數標籤誤判，暫停更新基準與通報。", file=sys.stderr)
+                    continue
+
+                # 更新 24h 滑動窗口歷史紀錄與波段最高價
+                valid_history, wave_high = update_price_history_24h(history, current_p, now_ts)
+                base_info["price_history_24h"] = valid_history
+                base_info["wave_high_24h"] = wave_high
                 base_info["last_price"] = current_p
                 base_info["last_seen"] = now_str
                 base_info["original_price"] = orig_p
 
-                # 若現價低於初始基準價，立即推播通報！
-                if current_p < base_p:
-                    # 異常價格防禦：若暴跌超過 80% (例如 $55,900 跌至 $99)，高機率為 DOM 折數標籤誤解析，隔離保護
-                    if base_p >= 500 and current_p < base_p * 0.2:
-                        print(f"⚠️ [異常價格保護] {item_key}: 現價 ${current_p:,} 較基準價 ${base_p:,} 暴跌逾 80%，疑似折數標籤誤判，暫停更新基準與通報。", file=sys.stderr)
-                        continue
+                drop_amount = wave_high - current_p
+                drop_rate = (drop_amount / wave_high) if wave_high > 0 else 0.0
 
-                    drop_amount = base_p - current_p
-                    notify_key = f"cart_drop:{item_key}"
-                    if should_notify(notify_key, current_p, base_p, state):
-                        dispatch_cart_drop_alert(ci["title"], ci["option"], current_p, base_p, drop_amount, url)
-                        state.setdefault("last_notified", {})[notify_key] = {
-                            "price": current_p,
-                            "timestamp": time.time(),
-                            "time": now_str
-                        }
-                        base_info["baseline_price"] = current_p  # 更新基準
+                notify_key = f"cart_drop:{item_key}"
+                last_info = state.get("last_notified", {}).get(notify_key)
+
+                # 回彈判定：價格回到非特價區間 (drop_rate < 5%) 或較上次通報價回升 >= 5%
+                if drop_rate < 0.05:
+                    base_info["rebounded"] = True
+                elif last_info and (current_p - last_info.get("price", current_p)) / max(1, last_info.get("price", current_p)) >= 0.05:
+                    base_info["rebounded"] = True
+
+                rebounded = base_info.get("rebounded", False)
+
+                # 判定是否觸發 5% 降價通報 (含 Cooldown / Ratchet 防轟炸)
+                if should_notify_cart_drop(notify_key, current_p, wave_high, drop_rate, drop_amount, state, rebounded, now_ts):
+                    dispatch_cart_drop_alert(ci["title"], ci["option"], current_p, wave_high, drop_amount, drop_rate, url)
+                    state.setdefault("last_notified", {})[notify_key] = {
+                        "price": current_p,
+                        "timestamp": now_ts,
+                        "time": now_str,
+                        "wave_high": wave_high,
+                        "drop_rate": drop_rate,
+                        "drop_amount": drop_amount
+                    }
+                    base_info["rebounded"] = False
+                    base_info["baseline_price"] = current_p
 
         # 2. 同步檢查手動門檻 (Thresholds)
         thresholds = state.get("thresholds", {})
@@ -455,28 +591,32 @@ def cmd_status(args):
         else:
             print("（目前購物車無在線品項，新商品放入購物車後將自動同步）")
     else:
-        print(f"{'商品品名與規格':<42} | {'目前現價':<10} | {'基準最低價':<10} | {'差額':<9} | {'狀態'}")
+        print(f"{'商品品名與規格':<42} | {'目前現價':<10} | {'24h波段高':<10} | {'差額':<9} | {'狀態'}")
         print("------------------------------------------------------------------------------")
         for k, info, _ in active_items:
             cur_p = info.get("last_price", info.get("baseline_price", 0))
-            base_p = info.get("baseline_price", cur_p)
-            diff = cur_p - base_p
+            wave_h = info.get("wave_high_24h", info.get("baseline_price", cur_p))
+            diff = cur_p - wave_h
 
             name_display = f"{info.get('title', k)[:24]} ({info.get('option', '')[:14]})"
             price_str = f"${cur_p:,}"
-            base_str = f"${base_p:,}"
+            wave_str = f"${wave_h:,}"
 
             if diff < 0:
                 diff_str = f"-${abs(diff):,}"
-                status = "🚨 降價下殺！"
+                drop_rate = (abs(diff) / wave_h) if wave_h > 0 else 0
+                if drop_rate >= 0.05 and abs(diff) >= 10:
+                    status = f"🚨 降 {drop_rate*100:.1f}%"
+                else:
+                    status = f"📉 降 {drop_rate*100:.1f}%"
             elif diff == 0:
                 diff_str = "$0"
                 status = "🟢 盯價中"
             else:
                 diff_str = f"+${diff:,}"
-                status = "📈 價格回彈"
+                status = "📈 創新高"
 
-            print(f"{name_display:<40} | {price_str:<10} | {base_str:<10} | {diff_str:<9} | {status}")
+            print(f"{name_display:<40} | {price_str:<10} | {wave_str:<10} | {diff_str:<9} | {status}")
 
     # 若有過期品項，移入歷史暫存區塊，並顯式標註最後同步時間與警告
     if stale_items:
@@ -535,7 +675,8 @@ def cmd_list(args):
     for idx, (k, info) in enumerate(cart_baselines.items(), 1):
         if "保留清單" in k or "保留清單" in info.get("option", ""):
             continue
-        print(f"  {idx}. {info.get('title')} ({info.get('option')}) -> 基準現價: ${info.get('baseline_price'):,}")
+        wave_h = info.get("wave_high_24h", info.get("baseline_price", 0))
+        print(f"  {idx}. {info.get('title')} ({info.get('option')}) -> 24h波段高點: ${wave_h:,}")
 
     if thresholds:
         print(f"\n🎯 手動指定門檻品項 (共 {len(thresholds)} 項)：")
