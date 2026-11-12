@@ -334,10 +334,44 @@ def send_telegram_alert(text: str, parse_mode: str = "HTML") -> bool:
         return False
 
 
-def notify_question(agent: str, question_text: str) -> bool:
+def resolve_agent_display_name(
+    agent: str,
+    custom_name: Optional[str] = None,
+    agent_info: Optional[Dict[str, Any]] = None
+) -> str:
+    """解析出更具語意、易讀的 Agent 顯示名稱 (例如: 個人助理 · agy 或 自訂名稱)"""
+    if custom_name and custom_name.strip():
+        return custom_name.strip()
+
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    if not info:
+        return f"Herdr Agent [{agent}]"
+
+    ws_name = ""
+    cwd = info.get("cwd") or info.get("foreground_cwd")
+    if cwd:
+        ws_name = Path(cwd).name
+    if not ws_name:
+        ws_name = info.get("tokens", {}).get("group") or info.get("workspace_id", "")
+
+    agent_kind = info.get("agent") or "agent"
+    pane_id = info.get("pane_id") or agent
+
+    if ws_name:
+        return f"{ws_name} · {agent_kind} ({pane_id})"
+    return f"Herdr Agent [{agent}]"
+
+
+def notify_question(
+    agent: str,
+    question_text: str,
+    name: Optional[str] = None,
+    agent_info: Optional[Dict[str, Any]] = None
+) -> bool:
     """發送提問/等待確認卡片給主人 (使用自適應渲染引擎轉換為精美 HTML)"""
+    display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
     raw_msg = (
-        f"❓ **【Herdr Agent [{agent}] 請示主人】**\n\n"
+        f"❓ **【{display_title} 請示主人】**\n\n"
         f"{question_text.strip()}\n\n"
         f"💡 _請透過 Telegram 回覆或使用指令回寫：_\n"
         f"`python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"<答覆>\"`"
@@ -350,24 +384,30 @@ def notify_question(agent: str, question_text: str) -> bool:
         print(f"[HerdrCoordinator] ⚠️ 提問渲染失敗，回退轉義: {e}", file=sys.stderr)
         escaped_q = html.escape(question_text.strip())
         fallback_html = (
-            f"❓ <b>Herdr Agent [{agent}] 請示主人</b>\n\n"
+            f"❓ <b>{display_title} 請示主人</b>\n\n"
             f"<pre>{escaped_q}</pre>\n\n"
             f"💡 <i>請透過 Telegram 回覆或使用指令回寫：</i>\n"
             f"<code>python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"&lt;答覆&gt;\"</code>"
         )
         ok = send_telegram_alert(fallback_html, parse_mode="HTML")
 
-    print(f"\n[HerdrCoordinator] 📢 請示主人 (Agent: {agent}):\n{question_text}\n")
+    print(f"\n[HerdrCoordinator] 📢 請示主人 (Agent: {display_title}):\n{question_text}\n")
     return ok
 
 
-def notify_completion(agent: str, summary_text: str) -> bool:
+def notify_completion(
+    agent: str,
+    summary_text: str,
+    name: Optional[str] = None,
+    agent_info: Optional[Dict[str, Any]] = None
+) -> bool:
     """發送完工卡片給主人 (使用 telegram_service.markdown_to_telegram_html 消除 # 字號，轉為精美粗體與圓點)"""
+    display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
     content = summary_text.strip()
     if len(content) > 3500:
         content = content[:3500] + "\n\n...(部分長輸出已為您截斷)..."
 
-    raw_msg = f"🎉 **【Herdr Agent [{agent}] 任務完成】**\n\n{content}"
+    raw_msg = f"🎉 **【{display_title} 任務完成】**\n\n{content}"
     try:
         from telegram_service import markdown_to_telegram_html
         formatted_html = markdown_to_telegram_html(raw_msg)
@@ -377,15 +417,16 @@ def notify_completion(agent: str, summary_text: str) -> bool:
         ok = send_telegram_alert(html.escape(raw_msg), parse_mode="HTML")
 
     if not ok:
-        send_telegram_alert(f"🎉 Herdr Agent [{agent}] 任務完成\n\n{content}", parse_mode="")
+        send_telegram_alert(f"🎉 {display_title} 任務完成\n\n{content}", parse_mode="")
 
-    print(f"\n[HerdrCoordinator] 🎉 任務完工 (Agent: {agent}):\n{summary_text}\n")
+    print(f"\n[HerdrCoordinator] 🎉 任務完工 (Agent: {display_title}):\n{summary_text}\n")
     return ok
 
 
 def dispatch_task(
     agent: str,
     prompt: str,
+    name: Optional[str] = None,
     no_watch: bool = False,
     interval: float = 3.0,
     ttl_minutes: int = 120,
@@ -405,6 +446,7 @@ def dispatch_task(
     res = {
         "success": True,
         "agent": agent,
+        "name": name,
         "injected_prompt": injected_prompt,
     }
 
@@ -412,14 +454,19 @@ def dispatch_task(
         try:
             from task_manager import TaskManager
             tm = TaskManager()
+            watch_args = ["watch", "--agent", agent, "--interval", str(interval)]
+            if name:
+                watch_args.extend(["--name", name])
+
             watch_task = tm.spawn(
                 name=f"herdr-watch-{agent}",
                 script="scripts/herdr_coordinator.py",
-                args=["watch", "--agent", agent, "--interval", str(interval)],
+                args=watch_args,
                 ttl_minutes=ttl_minutes,
             )
             res["watch_task"] = watch_task
-            print(f"🚀 任務已成功派發給 Herdr Agent [{agent}]！")
+            display_title = resolve_agent_display_name(agent, custom_name=name)
+            print(f"🚀 任務已成功派發給 【{display_title}】！")
             print(f"👀 背景守護進程已啟動 (Task ID: {watch_task.get('task_id')})，將於需要確認或完工時推播 Telegram。")
         except Exception as e:
             print(f"[HerdrCoordinator] ⚠️ 啟動 TaskManager 守護進程失敗: {e}", file=sys.stderr)
@@ -446,6 +493,7 @@ def watch_agent(
     max_iterations: Optional[int] = None,
     timeout: Optional[float] = None,
     start_grace_seconds: float = 12.0,
+    name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     背景守護主循環：
@@ -459,7 +507,8 @@ def watch_agent(
     last_question_content: Optional[str] = None
     iteration = 0
 
-    print(f"[HerdrCoordinator] 👀 開始守護 Herdr Agent [{agent}] (輪詢間隔: {interval}s)...")
+    display_title = resolve_agent_display_name(agent, custom_name=name)
+    print(f"[HerdrCoordinator] 👀 開始守護 【{display_title}】 (輪詢間隔: {interval}s)...")
 
     while True:
         iteration += 1
@@ -494,7 +543,7 @@ def watch_agent(
             if not waiting_input or question_text != last_question_content:
                 waiting_input = True
                 last_question_content = question_text
-                notify_question(agent, question_text)
+                notify_question(agent, question_text, name=name, agent_info=agent_info)
             # 保持在守護狀態，等待主人 relay 答覆
             time.sleep(interval)
             continue
@@ -503,7 +552,7 @@ def watch_agent(
         if has_seen_working:
             # 曾進入 working 狀態且現在回到 idle/done，且無提問 -> 完工！
             summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
-            notify_completion(agent, summary)
+            notify_completion(agent, summary, name=name, agent_info=agent_info)
             return {"status": "completed", "agent": agent, "summary": summary}
 
         # 尚未觀察到 working 狀態：檢查是否超過剛派發的初始啟動緩衝期
@@ -515,7 +564,7 @@ def watch_agent(
         else:
             # 超過緩衝期且依然為 idle/done，視為快速指令完工
             summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
-            notify_completion(agent, summary)
+            notify_completion(agent, summary, name=name, agent_info=agent_info)
             return {"status": "completed", "agent": agent, "summary": summary}
 
 
@@ -560,6 +609,7 @@ def main():
     sub_dispatch = subparsers.add_parser("dispatch", help="派發任務並啟動背景守護")
     sub_dispatch.add_argument("--agent", "-a", required=True, help="目標 Agent 名稱或 Pane ID")
     sub_dispatch.add_argument("--prompt", "-p", required=True, help="要派發的任務 Prompt")
+    sub_dispatch.add_argument("--name", "-n", default=None, help="自訂顯示名稱 (例如: 個人助理 · Git檢查)")
     sub_dispatch.add_argument("--no-watch", action="store_true", help="僅派發任務，不啟動背景守護進程")
     sub_dispatch.add_argument("--interval", type=float, default=3.0, help="守護者輪詢間隔 (秒)")
     sub_dispatch.add_argument("--ttl", type=int, default=120, help="守護進程生命週期上限 (分鐘)")
@@ -567,6 +617,7 @@ def main():
     # watch
     sub_watch = subparsers.add_parser("watch", help="啟動背景守護監聽特定 Agent")
     sub_watch.add_argument("--agent", "-a", required=True, help="目標 Agent 名稱或 Pane ID")
+    sub_watch.add_argument("--name", "-n", default=None, help="自訂顯示名稱")
     sub_watch.add_argument("--interval", "-i", type=float, default=3.0, help="輪詢間隔 (秒)")
     sub_watch.add_argument("--timeout", type=float, default=None, help="最大監聽逾時 (秒)")
 
@@ -588,6 +639,7 @@ def main():
         res = dispatch_task(
             agent=args.agent,
             prompt=args.prompt,
+            name=args.name,
             no_watch=args.no_watch,
             interval=args.interval,
             ttl_minutes=args.ttl,
@@ -598,6 +650,7 @@ def main():
     elif args.subcommand == "watch":
         res = watch_agent(
             agent=args.agent,
+            name=args.name,
             interval=args.interval,
             timeout=args.timeout,
         )

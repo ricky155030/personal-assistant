@@ -298,6 +298,7 @@ def test_cli_dispatch(mock_dispatch):
     mock_dispatch.assert_called_once_with(
         agent="agy",
         prompt="測試任務",
+        name=None,
         no_watch=True,
         interval=3.0,
         ttl_minutes=120,
@@ -322,6 +323,7 @@ def test_cli_watch(mock_watch):
         main()
     mock_watch.assert_called_once_with(
         agent="agy",
+        name=None,
         interval=1.5,
         timeout=None,
     )
