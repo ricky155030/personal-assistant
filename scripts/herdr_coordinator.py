@@ -211,8 +211,8 @@ def clean_terminal_text(raw_text: str) -> str:
         # 過濾 statusline 欄位
         if any(marker in stripped for marker in STATUSLINE_MARKERS):
             continue
-        # 過濾孤立的提示符號
-        if stripped in (">", "❯", "➜", "$", "#", "%"):
+        # 過濾孤立的提示符號或用戶輸入回顯 (例如 > 請確認..., > git diff)
+        if stripped in (">", "❯", "➜", "$", "#", "%") or stripped.startswith("> "):
             continue
         cleaned_lines.append(line)
 
@@ -259,20 +259,68 @@ def detect_question_or_confirmation(raw_text: str, status: str = "") -> Optional
     return None
 
 
-def extract_completion_summary(raw_text: str, max_chars: int = 1500) -> str:
-    """擷取 Agent 任務完工時的最後成果文字摘要"""
-    cleaned = clean_terminal_text(raw_text)
+def get_agent_session_transcript(agent: str, agent_info: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """從 Agent 底層 session 日誌中提取最後一輪完整回覆內容 (避免終端視窗截斷)"""
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    if not info:
+        return None
+    session = info.get("agent_session", {})
+    agent_kind = session.get("agent", "")
+    session_val = session.get("value", "")
+
+    if agent_kind == "agy" and session_val:
+        candidate_paths = [
+            Path.home() / ".gemini" / "antigravity-cli" / "brain" / session_val / ".system_generated" / "logs" / "transcript_full.jsonl",
+            Path.home() / ".gemini" / "antigravity-cli" / "brain" / session_val / ".system_generated" / "logs" / "transcript.jsonl",
+        ]
+        for p in candidate_paths:
+            if p.exists():
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    for line in reversed(lines):
+                        data = json.loads(line)
+                        if data.get("type") == "PLANNER_RESPONSE" and data.get("content"):
+                            return data["content"].strip()
+                except Exception:
+                    pass
+    return None
+
+
+def extract_completion_summary(
+    agent_or_text: str,
+    raw_text: str = "",
+    agent_info: Optional[Dict[str, Any]] = None,
+    max_chars: int = 3500
+) -> str:
+    """擷取 Agent 任務完工時的最後成果文字摘要，優先從對話日誌讀取完整乾淨文字"""
+    agent = ""
+    text_to_clean = raw_text
+    if raw_text:
+        agent = agent_or_text
+    else:
+        # 單一參數呼叫：若為多行長字串視為純終端文字
+        if len(agent_or_text.splitlines()) > 1 or len(agent_or_text) > 80:
+            text_to_clean = agent_or_text
+        else:
+            agent = agent_or_text
+
+    if agent:
+        log_content = get_agent_session_transcript(agent, agent_info=agent_info)
+        if log_content:
+            if len(log_content) > max_chars:
+                return log_content[:max_chars] + "\n\n...(全文過長，已為您摘要截斷)..."
+            return log_content
+
+    # 回退到終端可視區域文字解析
+    cleaned = clean_terminal_text(text_to_clean)
     if not cleaned:
         return "任務已執行完成（無輸出文字）。"
 
     lines = cleaned.splitlines()
-    # 取最後 25 行作為完工成果段落
     summary = "\n".join(lines[-25:]).strip()
     if len(summary) > max_chars:
-        # 截斷並保留頭尾
-        head = summary[:500]
-        tail = summary[-800:]
-        summary = f"{head}\n\n...(部分長輸出已省略)...\n\n{tail}"
+        summary = summary[:max_chars]
     return summary
 
 
@@ -287,27 +335,52 @@ def send_telegram_alert(text: str, parse_mode: str = "HTML") -> bool:
 
 
 def notify_question(agent: str, question_text: str) -> bool:
-    """發送提問/等待確認卡片給主人"""
-    escaped_q = html.escape(question_text.strip())
-    msg = (
-        f"❓ <b>Herdr Agent [{agent}] 請示主人</b>\n\n"
-        f"<pre>{escaped_q}</pre>\n\n"
-        f"💡 <i>請透過 Telegram 回覆或使用指令回寫：</i>\n"
-        f"<code>python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"&lt;答覆&gt;\"</code>"
+    """發送提問/等待確認卡片給主人 (使用自適應渲染引擎轉換為精美 HTML)"""
+    raw_msg = (
+        f"❓ **【Herdr Agent [{agent}] 請示主人】**\n\n"
+        f"{question_text.strip()}\n\n"
+        f"💡 _請透過 Telegram 回覆或使用指令回寫：_\n"
+        f"`python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"<答覆>\"`"
     )
+    try:
+        from telegram_service import markdown_to_telegram_html
+        html_msg = markdown_to_telegram_html(raw_msg)
+        ok = send_telegram_alert(html_msg, parse_mode="HTML")
+    except Exception as e:
+        print(f"[HerdrCoordinator] ⚠️ 提問渲染失敗，回退轉義: {e}", file=sys.stderr)
+        escaped_q = html.escape(question_text.strip())
+        fallback_html = (
+            f"❓ <b>Herdr Agent [{agent}] 請示主人</b>\n\n"
+            f"<pre>{escaped_q}</pre>\n\n"
+            f"💡 <i>請透過 Telegram 回覆或使用指令回寫：</i>\n"
+            f"<code>python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"&lt;答覆&gt;\"</code>"
+        )
+        ok = send_telegram_alert(fallback_html, parse_mode="HTML")
+
     print(f"\n[HerdrCoordinator] 📢 請示主人 (Agent: {agent}):\n{question_text}\n")
-    return send_telegram_alert(msg, parse_mode="HTML")
+    return ok
 
 
 def notify_completion(agent: str, summary_text: str) -> bool:
-    """發送完工卡片給主人"""
-    escaped_s = html.escape(summary_text.strip())
-    msg = (
-        f"✅ <b>Herdr Agent [{agent}] 任務完成</b>\n\n"
-        f"<pre>{escaped_s}</pre>"
-    )
+    """發送完工卡片給主人 (使用 telegram_service.markdown_to_telegram_html 消除 # 字號，轉為精美粗體與圓點)"""
+    content = summary_text.strip()
+    if len(content) > 3500:
+        content = content[:3500] + "\n\n...(部分長輸出已為您截斷)..."
+
+    raw_msg = f"🎉 **【Herdr Agent [{agent}] 任務完成】**\n\n{content}"
+    try:
+        from telegram_service import markdown_to_telegram_html
+        formatted_html = markdown_to_telegram_html(raw_msg)
+        ok = send_telegram_alert(formatted_html, parse_mode="HTML")
+    except Exception as e:
+        print(f"[HerdrCoordinator] ⚠️ markdown_to_telegram_html 轉換失敗: {e}", file=sys.stderr)
+        ok = send_telegram_alert(html.escape(raw_msg), parse_mode="HTML")
+
+    if not ok:
+        send_telegram_alert(f"🎉 Herdr Agent [{agent}] 任務完成\n\n{content}", parse_mode="")
+
     print(f"\n[HerdrCoordinator] 🎉 任務完工 (Agent: {agent}):\n{summary_text}\n")
-    return send_telegram_alert(msg, parse_mode="HTML")
+    return ok
 
 
 def dispatch_task(
@@ -429,7 +502,7 @@ def watch_agent(
         # 無提問
         if has_seen_working:
             # 曾進入 working 狀態且現在回到 idle/done，且無提問 -> 完工！
-            summary = extract_completion_summary(visible_text)
+            summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
             notify_completion(agent, summary)
             return {"status": "completed", "agent": agent, "summary": summary}
 
@@ -441,7 +514,7 @@ def watch_agent(
             continue
         else:
             # 超過緩衝期且依然為 idle/done，視為快速指令完工
-            summary = extract_completion_summary(visible_text)
+            summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
             notify_completion(agent, summary)
             return {"status": "completed", "agent": agent, "summary": summary}
 
