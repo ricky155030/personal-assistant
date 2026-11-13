@@ -571,6 +571,16 @@ struct HandsFreeMainView: View {
                 .padding(.bottom, 8)
             }
             .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    scrollToBottom(proxy: proxy, animated: false)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    scrollToBottom(proxy: proxy, animated: false)
+                }
+            }
             .onChange(of: coordinator.messages.count) { _, _ in
                 scrollToBottom(proxy: proxy, animated: true)
             }
@@ -1137,6 +1147,54 @@ struct GeminiLiveWaveformIcon: View {
 }
 
 // MARK: - Gemini 風格對話訊息列
+private struct PreviewPhotoItem: Identifiable {
+    let id = UUID()
+    let data: Data
+}
+
+private struct FullScreenPhotoViewer: View {
+    let imageData: Data
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1.0
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+
+            if let uiImg = UIImage(data: imageData) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(scale)
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { val in
+                                scale = max(1.0, min(val, 4.0))
+                            }
+                            .onEnded { _ in
+                                if scale < 1.1 {
+                                    withAnimation(.spring()) { scale = 1.0 }
+                                }
+                            }
+                    )
+                    .onTapGesture(count: 2) {
+                        withAnimation(.spring()) {
+                            scale = scale > 1.2 ? 1.0 : 2.2
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(20)
+            }
+        }
+    }
+}
+
 struct GeminiMessageRow: View {
     let message: ChatMessage
     let isCurrentlySpeaking: Bool
@@ -1145,6 +1203,7 @@ struct GeminiMessageRow: View {
 
     @State private var isThoughtExpanded: Bool = false
     @State private var isToolsExpanded: Bool = false
+    @State private var previewPhoto: PreviewPhotoItem? = nil
 
     private var isUser: Bool {
         message.role == .user
@@ -1170,6 +1229,9 @@ struct GeminiMessageRow: View {
                                             .scaledToFill()
                                             .frame(width: 110, height: 110)
                                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                            .onTapGesture {
+                                                previewPhoto = PreviewPhotoItem(data: multi[idx])
+                                            }
                                     }
                                 }
                             }
@@ -1181,6 +1243,9 @@ struct GeminiMessageRow: View {
                             .scaledToFill()
                             .frame(maxWidth: 200, maxHeight: 200)
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .onTapGesture {
+                                previewPhoto = PreviewPhotoItem(data: imgData)
+                            }
                     }
 
                     Text(message.content)
@@ -1194,6 +1259,9 @@ struct GeminiMessageRow: View {
                         )
                         .textSelection(.enabled)
                 }
+            }
+            .fullScreenCover(item: $previewPhoto) { item in
+                FullScreenPhotoViewer(imageData: item.data)
             }
         } else {
             // 助理回覆：左側 Gemini 四色星芒標頭 + 乾淨無框全寬文字與工具膠囊
