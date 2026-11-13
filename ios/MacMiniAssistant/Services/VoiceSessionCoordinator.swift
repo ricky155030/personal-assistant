@@ -788,7 +788,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let fallbackFormatter = ISO8601DateFormatter()
 
-        var appended = false
+        var changed = false
         for item in items {
             let parsedDate = isoFormatter.date(from: item.timestamp)
                 ?? fallbackFormatter.date(from: item.timestamp)
@@ -797,24 +797,30 @@ public final class VoiceSessionCoordinator: ObservableObject {
             let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
             let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            if !qText.isEmpty {
-                let alreadyExists = messages.suffix(30).contains {
-                    $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == qText
+            // 檢查此輪回覆是否已存在於目前時間軸（避免切換 App 或重開時重複堆疊）
+            if !rText.isEmpty,
+               let existingIdx = messages.lastIndex(where: {
+                   $0.role == .assistant && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == rText
+               }) {
+                // 若本地訊息尚未補上後端 metadata，順便補齊
+                if messages[existingIdx].metadata == nil, let meta = item.metadata {
+                    messages[existingIdx].metadata = meta
+                    changed = true
                 }
-                if !alreadyExists {
-                    messages.append(ChatMessage(role: .user, content: qText, timestamp: parsedDate, status: .completed))
-                    appended = true
+                if !item.timestamp.isEmpty {
+                    lastSyncedHistoryTimestamp = item.timestamp
                 }
+                continue
             }
 
+            // 僅追加真正來自其他裝置/頻道（或本地遺漏）的新對話輪次
+            if !qText.isEmpty {
+                messages.append(ChatMessage(role: .user, content: qText, timestamp: parsedDate, status: .completed))
+                changed = true
+            }
             if !rText.isEmpty {
-                let alreadyExists = messages.suffix(30).contains {
-                    $0.role == .assistant && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == rText
-                }
-                if !alreadyExists {
-                    messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed, metadata: item.metadata))
-                    appended = true
-                }
+                messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed, metadata: item.metadata))
+                changed = true
             }
 
             if !item.timestamp.isEmpty {
@@ -822,7 +828,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             }
         }
 
-        if appended {
+        if changed {
             saveUnifiedTimeline()
         }
     }
