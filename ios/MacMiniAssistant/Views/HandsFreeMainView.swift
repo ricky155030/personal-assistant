@@ -461,6 +461,10 @@ struct HandsFreeMainView: View {
             return (100.0, "--", .green, "bolt.fill")
         }
         switch family {
+        case .hydrogen:
+            let pct = snap.weeklyRemainingPct
+            let tint: Color = pct >= 50 ? .cyan : (pct >= 20 ? .orange : .red)
+            return (pct, snap.weeklyRefreshesIn, tint, "flame.fill")
         case .flash:
             let pct = snap.weeklyRemainingPct
             let tint: Color = pct >= 50 ? .green : (pct >= 20 ? .orange : .red)
@@ -469,10 +473,10 @@ struct HandsFreeMainView: View {
             let pct = snap.argonRemainingPct
             let tint: Color = pct >= 50 ? Color(red: 0.45, green: 0.65, blue: 1.0) : (pct >= 20 ? .orange : .red)
             return (pct, snap.argonRefreshesIn, tint, "atom")
-        case .claude:
+        case .claude, .opus:
             let pct = snap.thirdPartyRemainingPct
             let tint: Color = pct >= 50 ? .purple : (pct >= 20 ? .orange : .red)
-            return (pct, snap.thirdPartyRefreshesIn, tint, "sparkles")
+            return (pct, snap.thirdPartyRefreshesIn, tint, family.icon)
         }
     }
 

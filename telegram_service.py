@@ -19,6 +19,148 @@ from quota_service import quota_service
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
+TELEGRAM_PREFS_PATH = settings.DATA_DIR / "telegram_prefs.json"
+
+TELEGRAM_MODEL_FAMILIES = {
+    "hydrogen": {
+        "label": "Gemini 4 Hydrogen",
+        "levels": {
+            "low": "gemini-4-hydrogen-low",
+            "medium": "gemini-4-hydrogen-medium",
+            "high": "gemini-4-hydrogen-high",
+            "xhigh": "gemini-4-hydrogen-xhigh",
+        },
+    },
+    "argon": {
+        "label": "Gemini 4 Argon",
+        "levels": {
+            "low": "gemini-4-argon-low",
+            "medium": "gemini-4-argon-medium",
+            "high": "gemini-4-argon-high",
+        },
+    },
+    "flash": {
+        "label": "Gemini 3.8 Flash",
+        "levels": {
+            "low": "gemini-3.8-flash-low",
+            "medium": "gemini-3.8-flash-medium",
+            "high": "gemini-3.8-flash-high",
+        },
+    },
+    "sonnet": {
+        "label": "Claude Sonnet 5.5",
+        "levels": {
+            "low": "claude-sonnet-5-5-low",
+            "medium": "claude-sonnet-5-5-medium",
+            "high": "claude-sonnet-5-5-high",
+        },
+    },
+    "opus": {
+        "label": "Claude Opus 5.5",
+        "levels": {
+            "low": "claude-opus-5-5-low",
+            "medium": "claude-opus-5-5-medium",
+            "high": "claude-opus-5-5-high",
+        },
+    },
+}
+
+TELEGRAM_THINKING_LABELS = {
+    "auto": "🤖 Auto",
+    "low": "⚡ Low",
+    "medium": "🧠 Med",
+    "high": "🔥 High",
+    "xhigh": "🚀 XHigh",
+}
+
+
+def get_telegram_prefs() -> dict:
+    """讀取 Telegram 模型與思考強度偏好設定"""
+    default_prefs = {"model_family": "hydrogen", "thinking_level": "auto"}
+    try:
+        if TELEGRAM_PREFS_PATH.exists():
+            data = json.loads(TELEGRAM_PREFS_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                mf = data.get("model_family", "hydrogen")
+                tl = data.get("thinking_level", "auto")
+                if mf in TELEGRAM_MODEL_FAMILIES and tl in TELEGRAM_THINKING_LABELS:
+                    return {"model_family": mf, "thinking_level": tl}
+    except Exception:
+        pass
+    return default_prefs
+
+
+def save_telegram_prefs(prefs: dict) -> None:
+    """持久化儲存 Telegram 模型與思考強度偏好"""
+    try:
+        TELEGRAM_PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TELEGRAM_PREFS_PATH.write_text(json.dumps(prefs, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[TelegramService] ⚠️ 儲存偏好設定失敗: {e}")
+
+
+def resolve_telegram_model_and_level(query: str) -> Tuple[Optional[str], Optional[str], str]:
+    """根據 Telegram 偏好與查詢內容，解析目標 (level, model_override, label)"""
+    from thinking_router import classify_thinking_level
+    prefs = get_telegram_prefs()
+    mf = prefs["model_family"]
+    tl = prefs["thinking_level"]
+
+    if tl == "auto":
+        routed = classify_thinking_level(query)
+        eff_level = "medium" if routed in ("med", "medium") else ("high" if routed == "high" else "low")
+        level_arg = None
+    else:
+        eff_level = tl
+        level_arg = "med" if tl == "medium" else tl
+
+    family_info = TELEGRAM_MODEL_FAMILIES.get(mf, TELEGRAM_MODEL_FAMILIES["hydrogen"])
+    levels_map = family_info["levels"]
+    # 若該模型不支援 xhigh，平滑回退至 high
+    model_id = levels_map.get(eff_level) or levels_map.get("high") or next(iter(levels_map.values()))
+    return level_arg, model_id, f"{family_info['label']} ({eff_level})"
+
+
+def build_model_settings_card() -> Tuple[str, dict]:
+    """建立 Telegram 模型與 Thinking Level 互動式設定卡片"""
+    prefs = get_telegram_prefs()
+    mf = prefs["model_family"]
+    tl = prefs["thinking_level"]
+    mf_label = TELEGRAM_MODEL_FAMILIES[mf]["label"]
+    tl_label = TELEGRAM_THINKING_LABELS[tl]
+
+    if tl == "auto":
+        active_desc = f"{mf_label} (依問題難度自動分流 Low/Med/High)"
+    else:
+        resolved_id = TELEGRAM_MODEL_FAMILIES[mf]["levels"].get(tl) or TELEGRAM_MODEL_FAMILIES[mf]["levels"]["high"]
+        active_desc = f"{mf_label} · <code>{resolved_id}</code>"
+
+    text = (
+        f"🎛️ <b>【Telegram AI 模型與思考強度設定】</b>\n\n"
+        f"• <b>目前模型</b>：{mf_label}\n"
+        f"• <b>思考強度</b>：{tl_label}\n"
+        f"• <b>實際派發</b>：{active_desc}\n\n"
+        f"💡 <i>點擊下方按鈕即可無損即時切換（不中斷現有對話記憶）：</i>"
+    )
+
+    def _m_btn(key: str, short_name: str) -> dict:
+        prefix = "✅ " if mf == key else ""
+        return {"text": f"{prefix}{short_name}", "callback_data": f"set_model:{key}"}
+
+    def _t_btn(key: str) -> dict:
+        prefix = "✅ " if tl == key else ""
+        return {"text": f"{prefix}{TELEGRAM_THINKING_LABELS[key]}", "callback_data": f"set_think:{key}"}
+
+    reply_markup = {
+        "inline_keyboard": [
+            [_m_btn("hydrogen", "G4 Hydrogen"), _m_btn("argon", "G4 Argon"), _m_btn("flash", "G3.8 Flash")],
+            [_m_btn("sonnet", "Claude Sonnet 5.5"), _m_btn("opus", "Claude Opus 5.5")],
+            [_t_btn("auto"), _t_btn("low"), _t_btn("medium")],
+            [_t_btn("high"), _t_btn("xhigh")],
+        ]
+    }
+    return text, reply_markup
+
 def infer_skill(query: str, reply: str, actions: Optional[List[str]] = None) -> str:
     """推斷本次對話使用的主要技能或資料來源"""
     act_str = " ".join(actions or []).lower()
@@ -932,7 +1074,8 @@ async def send_telegram_message(
     text: str, 
     chat_id: Optional[str] = None, 
     parse_mode: str = "HTML",
-    disable_notification: bool = False
+    disable_notification: bool = False,
+    reply_markup: Optional[dict] = None
 ) -> bool:
     """非同步發送 Telegram 訊息"""
     token = settings.TELEGRAM_BOT_TOKEN
@@ -948,6 +1091,8 @@ async def send_telegram_message(
     }
     if disable_notification:
         payload["disable_notification"] = True
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(url, json=payload)
@@ -955,6 +1100,8 @@ async def send_telegram_message(
                 fallback_payload = {"chat_id": target_chat, "text": strip_html_tags(text)}
                 if disable_notification:
                     fallback_payload["disable_notification"] = True
+                if reply_markup is not None:
+                    fallback_payload["reply_markup"] = reply_markup
                 fallback_resp = await client.post(url, json=fallback_payload)
                 return fallback_resp.status_code == 200
             return resp.status_code == 200
@@ -1249,11 +1396,18 @@ async def process_telegram_request(
     loop = asyncio.get_running_loop()
     existing_reports = {f.name: f.stat().st_mtime for f in settings.REPORTS_DIR.glob("*.html")}
 
+    tg_level, tg_model_id, tg_model_label = resolve_telegram_model_and_level(effective_query)
+
     def _stream_runner():
         card = TelegramLiveCard(chat_id=chat_id)
         turn_result = {}
         try:
-            stream_gen = agy_singleton.send_query_stream(effective_query, media=media_list if media_list else None)
+            stream_gen = agy_singleton.send_query_stream(
+                effective_query,
+                media=media_list if media_list else None,
+                level=tg_level,
+                model_override=tg_model_id,
+            )
             while True:
                 item = next(stream_gen)
                 if isinstance(item, tuple) and len(item) == 2:
@@ -1354,6 +1508,8 @@ async def start_telegram_bot():
 
             # 自動向 Telegram 伺服器同步註冊快捷指令選單
             commands = [
+                {"command": "model", "description": "切換 AI 模型與 Thinking Level 思考強度"},
+                {"command": "thinking", "description": "調整 AI 思考強度 (Auto/Low/Med/High/XHigh)"},
                 {"command": "stop", "description": "立即中止目前正在思考或執行中的回應"},
                 {"command": "compact", "description": "無損壓縮對話記憶 (/compact)，釋放 Context 空間"},
                 {"command": "status", "description": "查看系統狀態、上下文用量與 AI 配額"},
@@ -1411,6 +1567,44 @@ async def start_telegram_bot():
                                     f"{TELEGRAM_API_BASE}/bot{token}/answerCallbackQuery",
                                     json={"callback_query_id": cb_id, "text": toast_text}
                                 )
+                            except Exception:
+                                pass
+
+                        elif cb_data.startswith("set_model:") or cb_data.startswith("set_think:"):
+                            prefs = get_telegram_prefs()
+                            if cb_data.startswith("set_model:"):
+                                new_mf = cb_data.split(":", 1)[1].strip()
+                                if new_mf in TELEGRAM_MODEL_FAMILIES:
+                                    prefs["model_family"] = new_mf
+                                    save_telegram_prefs(prefs)
+                                    toast = f"✅ 模型已切換：{TELEGRAM_MODEL_FAMILIES[new_mf]['label']}"
+                                else:
+                                    toast = "⚠️ 未知模型選項"
+                            else:
+                                new_tl = cb_data.split(":", 1)[1].strip()
+                                if new_tl in TELEGRAM_THINKING_LABELS:
+                                    prefs["thinking_level"] = new_tl
+                                    save_telegram_prefs(prefs)
+                                    toast = f"✅ 思考強度已切換：{TELEGRAM_THINKING_LABELS[new_tl]}"
+                                else:
+                                    toast = "⚠️ 未知思考強度"
+                            try:
+                                await client.post(
+                                    f"{TELEGRAM_API_BASE}/bot{token}/answerCallbackQuery",
+                                    json={"callback_query_id": cb_id, "text": toast}
+                                )
+                                if cb_msg_id:
+                                    card_text, card_markup = build_model_settings_card()
+                                    await client.post(
+                                        f"{TELEGRAM_API_BASE}/bot{token}/editMessageText",
+                                        json={
+                                            "chat_id": cb_chat_id,
+                                            "message_id": cb_msg_id,
+                                            "text": card_text,
+                                            "parse_mode": "HTML",
+                                            "reply_markup": card_markup,
+                                        }
+                                    )
                             except Exception:
                                 pass
 
@@ -1526,6 +1720,28 @@ async def start_telegram_bot():
                     if not user_text:
                         if "voice" in message:
                             await send_telegram_message("收到語音訊息！目前建議點擊鍵盤麥克風使用 iOS 聽寫發送文字，秒控更精確喔！", chat_id=chat_id)
+                        continue
+
+                    # 模型與思考強度切換指令：/model, /thinking, /level, 切換模型, 模型設定, 調整思考
+                    u_lower = user_text.lower()
+                    if (
+                        u_lower in ("/model", "/thinking", "/level", "切換模型", "模型設定", "調整思考", "切換思考")
+                        or u_lower.startswith("/model ")
+                        or u_lower.startswith("/thinking ")
+                        or u_lower.startswith("/level ")
+                    ):
+                        prefs = get_telegram_prefs()
+                        parts = u_lower.split(maxsplit=1)
+                        if len(parts) == 2:
+                            arg = parts[1].strip()
+                            if arg in ("hydrogen", "argon", "flash", "sonnet", "opus"):
+                                prefs["model_family"] = arg
+                                save_telegram_prefs(prefs)
+                            elif arg in ("auto", "low", "med", "medium", "high", "xhigh"):
+                                prefs["thinking_level"] = "medium" if arg == "med" else arg
+                                save_telegram_prefs(prefs)
+                        card_text, card_markup = build_model_settings_card()
+                        await send_telegram_message(card_text, chat_id=chat_id, reply_markup=card_markup)
                         continue
 
                     # 系統狀態與配額整合指令：/status, /usage, /quota, /context, 狀態, 用量, 額度, 配額

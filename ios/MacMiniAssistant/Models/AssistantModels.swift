@@ -8,33 +8,41 @@ public enum VoiceInputMode: String, Equatable {
 }
 
 public enum ModelFamily: String, CaseIterable, Identifiable {
-    case flash = "flash"
+    case hydrogen = "hydrogen"
     case argon = "argon"
+    case flash = "flash"
     case claude = "claude"
+    case opus = "opus"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .flash: return "Flash"
+        case .hydrogen: return "Hydrogen"
         case .argon: return "Argon"
-        case .claude: return "Claude"
+        case .flash: return "Flash"
+        case .claude: return "Sonnet 5.5"
+        case .opus: return "Opus 5.5"
         }
     }
 
     public var fullName: String {
         switch self {
-        case .flash: return "Gemini 3.8 Flash"
+        case .hydrogen: return "Gemini 4 Hydrogen"
         case .argon: return "Gemini 4 Argon"
-        case .claude: return "Claude 3.5 / 5.5"
+        case .flash: return "Gemini 3.8 Flash"
+        case .claude: return "Claude Sonnet 5.5"
+        case .opus: return "Claude Opus 5.5"
         }
     }
 
     public var icon: String {
         switch self {
-        case .flash: return "bolt.fill"
+        case .hydrogen: return "flame.fill"
         case .argon: return "atom"
+        case .flash: return "bolt.fill"
         case .claude: return "sparkles"
+        case .opus: return "crown.fill"
         }
     }
 }
@@ -90,11 +98,11 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
     public var headerTitle: String {
         switch self {
         case .low:
-            return "Flash 快速"
+            return "快速 (Low)"
         case .med:
-            return "Flash 中等"
+            return "中等 (Med)"
         case .high:
-            return "Pro 深度"
+            return "深度 (High)"
         }
     }
 

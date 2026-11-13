@@ -479,7 +479,12 @@ def dispatch_task(
 
 def relay_answer(agent: str, answer: str) -> Dict[str, Any]:
     """回寫答案解鎖等待輸入的 Agent"""
-    res = send_herdr_keys(agent, f"{answer}\n")
+    # 若為單一終端按鍵 (如 Enter, C-c)，使用 send-keys；否則使用 prompt 發送文字指令
+    if answer.strip() in {"Enter", "Return", "C-c", "y", "n"}:
+        res = send_herdr_keys(agent, answer.strip())
+    else:
+        res = submit_herdr_prompt(agent, answer)
+
     if res.get("success"):
         print(f"✅ 已成功將答覆回寫至 Herdr Agent [{agent}]：{answer}")
     else:

@@ -207,13 +207,21 @@ def test_dispatch_task_with_watch(mock_submit, mock_spawn):
     mock_spawn.assert_called_once()
 
 
+@patch("scripts.herdr_coordinator.submit_herdr_prompt")
 @patch("scripts.herdr_coordinator.send_herdr_keys")
-def test_relay_answer(mock_send):
-    mock_send.return_value = {"success": True}
+def test_relay_answer(mock_send_keys, mock_submit_prompt):
+    mock_submit_prompt.return_value = {"success": True}
+    mock_send_keys.return_value = {"success": True}
 
+    # 文字答覆 -> 應調用 submit_herdr_prompt
     res = relay_answer("agy", "選項 2: 雲端備份")
     assert res["success"] is True
-    mock_send.assert_called_once_with("agy", "選項 2: 雲端備份\n")
+    mock_submit_prompt.assert_called_once_with("agy", "選項 2: 雲端備份")
+
+    # 單一控制鍵 -> 應調用 send_herdr_keys
+    res_key = relay_answer("agy", "Enter")
+    assert res_key["success"] is True
+    mock_send_keys.assert_called_once_with("agy", "Enter")
 
 
 @patch("scripts.herdr_coordinator.send_telegram_alert")

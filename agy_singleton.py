@@ -1243,22 +1243,64 @@ class AgyBrainPool:
         self,
         query: str,
         media: Optional[List[dict]] = None,
-        level: Optional[str] = None
+        level: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> Generator[Tuple[str, str], None, dict]:
         """
         核心串流發送介面：
         1. 自動執行 thinking_router 判定 (若外部未指定)
-        2. 在同一個統一 Session 內透過 session/set_model 動態切換對應模型 (Low / Med / High)
+        2. 在同一個統一 Session 內透過 session/set_model 動態切換對應模型 (Low / Med / High / 自訂模型)
         3. 即時串流 thought / status / tool_done / text
         """
         raw_level = level or classify_thinking_level(query)
         chosen_level = "med" if raw_level == "medium" else raw_level.lower()
         clean_q = clean_query_prefix(query)
 
-        if "argon" in chosen_level:
-            target_model = getattr(settings, "AGY_MODEL_ARGON", "gemini-argon-wtu")
-        elif "claude" in chosen_level:
-            target_model = getattr(settings, "AGY_MODEL_CLAUDE", "claude-sonnet-5.5")
+        family_map = {
+            "hydrogen": {
+                "low": "gemini-4-hydrogen-low",
+                "med": "gemini-4-hydrogen-medium",
+                "high": "gemini-4-hydrogen-high",
+                "xhigh": "gemini-4-hydrogen-xhigh",
+            },
+            "argon": {
+                "low": "gemini-4-argon-low",
+                "med": "gemini-4-argon-medium",
+                "high": "gemini-4-argon-high",
+            },
+            "flash": {
+                "low": "gemini-3.8-flash-low",
+                "med": "gemini-3.8-flash-medium",
+                "high": "gemini-3.8-flash-high",
+            },
+            "sonnet": {
+                "low": "claude-sonnet-5-5-low",
+                "med": "claude-sonnet-5-5-medium",
+                "high": "claude-sonnet-5-5-high",
+            },
+            "claude": {
+                "low": "claude-sonnet-5-5-low",
+                "med": "claude-sonnet-5-5-medium",
+                "high": "claude-sonnet-5-5-high",
+            },
+            "opus": {
+                "low": "claude-opus-5-5-low",
+                "med": "claude-opus-5-5-medium",
+                "high": "claude-opus-5-5-high",
+            },
+        }
+
+        if model_override:
+            target_model = model_override
+        elif ":" in chosen_level:
+            fam_key, tier_key = chosen_level.split(":", 1)
+            tier_key = "med" if tier_key == "medium" else tier_key
+            fam_levels = family_map.get(fam_key, family_map["hydrogen"])
+            target_model = fam_levels.get(tier_key) or fam_levels.get("med") or self.med_model
+            chosen_level = tier_key
+        elif chosen_level in family_map:
+            fam_levels = family_map[chosen_level]
+            target_model = fam_levels.get("med") or next(iter(fam_levels.values()))
         elif chosen_level == "low":
             target_model = self.low_model
         elif chosen_level == "high":

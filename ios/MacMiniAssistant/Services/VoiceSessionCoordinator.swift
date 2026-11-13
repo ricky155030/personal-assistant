@@ -9,8 +9,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var state: SessionState = .idle
     @Published public var voiceInputMode: VoiceInputMode = .none
     @Published public var selectedModelFamily: ModelFamily = {
-        let saved = UserDefaults.standard.string(forKey: "macmini_model_family") ?? "flash"
-        return ModelFamily(rawValue: saved) ?? .flash
+        let saved = UserDefaults.standard.string(forKey: "macmini_model_family") ?? "hydrogen"
+        return ModelFamily(rawValue: saved) ?? .hydrogen
     }() {
         didSet {
             UserDefaults.standard.set(selectedModelFamily.rawValue, forKey: "macmini_model_family")
@@ -41,14 +41,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var isForcedSpeaker: Bool = true
 
     public var effectiveLevel: String {
-        switch selectedModelFamily {
-        case .flash:
-            return thinkingLevel.rawValue
-        case .argon:
-            return "argon"
-        case .claude:
-            return "claude"
-        }
+        return "\(selectedModelFamily.rawValue):\(thinkingLevel.rawValue)"
     }
     @Published public var sttMode: STTRecognitionMode = {
         let saved = UserDefaults.standard.string(forKey: "macmini_stt_mode") ?? "hybrid"

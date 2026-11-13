@@ -24,12 +24,12 @@ class Settings(BaseModel):
     # 核心引擎模式：'agy' (Antigravity CLI), 'omp' (Oh My Pi) 或 'direct'
     AGENT_ENGINE: str = os.getenv("AGENT_ENGINE", "agy")
     AGY_BIN: str = os.getenv("AGY_BIN", shutil.which("agy") or os.path.expanduser("~/.local/bin/agy"))
-    AGY_MODEL: str = os.getenv("AGY_MODEL", "gemini-3.8-flash-low")
-    AGY_MODEL_LOW: str = os.getenv("AGY_MODEL_LOW", "gemini-3.8-flash-low")
-    AGY_MODEL_MED: str = os.getenv("AGY_MODEL_MED", "gemini-3.8-flash-medium")
-    AGY_MODEL_HIGH: str = os.getenv("AGY_MODEL_HIGH", "gemini-3.8-flash-high")
-    AGY_MODEL_FAST: str = os.getenv("AGY_MODEL_FAST", "gemini-3.8-flash-low")
-    AGY_MODEL_DEEP: str = os.getenv("AGY_MODEL_DEEP", "gemini-3.8-flash-medium")
+    AGY_MODEL: str = os.getenv("AGY_MODEL", "gemini-4-hydrogen-low")
+    AGY_MODEL_LOW: str = os.getenv("AGY_MODEL_LOW", "gemini-4-hydrogen-low")
+    AGY_MODEL_MED: str = os.getenv("AGY_MODEL_MED", "gemini-4-hydrogen-medium")
+    AGY_MODEL_HIGH: str = os.getenv("AGY_MODEL_HIGH", "gemini-4-hydrogen-high")
+    AGY_MODEL_FAST: str = os.getenv("AGY_MODEL_FAST", "gemini-4-hydrogen-low")
+    AGY_MODEL_DEEP: str = os.getenv("AGY_MODEL_DEEP", "gemini-4-hydrogen-medium")
 
     OMP_BIN: str = os.getenv("OMP_BIN", shutil.which("omp") or os.path.expanduser("~/.local/bin/omp"))
     OMP_MODEL: str = os.getenv("OMP_MODEL", "minimax/MiniMax-M2.5-lightning")
