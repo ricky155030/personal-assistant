@@ -77,6 +77,7 @@ struct HandsFreeMainView: View {
     @State private var showSettings: Bool = false
     @State private var showModelPopover: Bool = false
     @State private var showContextPopover: Bool = false
+    @State private var isAtBottom: Bool = true
     @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
@@ -406,7 +407,16 @@ struct HandsFreeMainView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
                 .padding(.horizontal, 12)
-                .padding(.bottom, 6)
+                .padding(.bottom, 4)
+
+            popoverOptionRow(
+                title: coordinator.isCompactingContext ? "正在壓縮記憶..." : "一鍵壓縮記憶 (/compact)",
+                icon: "wand.and.stars",
+                isSelected: false
+            ) {
+                coordinator.compactBrainContext()
+                showContextPopover = false
+            }
 
             Divider().opacity(0.25)
 
@@ -568,46 +578,100 @@ struct HandsFreeMainView: View {
     // MARK: - 3B. 主畫面直接顯示即時對話列表
     private var conversationScrollSection: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 22) {
-                    ForEach(coordinator.messages) { msg in
-                        GeminiMessageRow(
-                            message: msg,
-                            isCurrentlySpeaking: isSpeakingMessage(msg),
-                            onTapSpeak: {
-                                haptic.impactOccurred()
-                                coordinator.toggleSpeakMessage(msg)
-                            },
-                            onTapQuickReply: { chosen in
-                                haptic.impactOccurred()
-                                coordinator.sendQuickReply(chosen)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(spacing: 22) {
+                        ForEach(coordinator.messages) { msg in
+                            GeminiMessageRow(
+                                message: msg,
+                                isCurrentlySpeaking: isSpeakingMessage(msg),
+                                onTapSpeak: {
+                                    haptic.impactOccurred()
+                                    coordinator.toggleSpeakMessage(msg)
+                                },
+                                onTapQuickReply: { chosen in
+                                    haptic.impactOccurred()
+                                    coordinator.sendQuickReply(chosen)
+                                }
+                            )
+                            .id(msg.id)
+                            .contextMenu {
+                                if !msg.content.isEmpty {
+                                    Button {
+                                        UIPasteboard.general.string = msg.content
+                                    } label: {
+                                        Label("複製文字", systemImage: "doc.on.doc")
+                                    }
+
+                                    Button {
+                                        coordinator.toggleSpeakMessage(msg)
+                                    } label: {
+                                        Label(
+                                            isSpeakingMessage(msg) ? "停止朗讀" : "朗讀此則訊息",
+                                            systemImage: isSpeakingMessage(msg) ? "stop.circle" : "speaker.wave.2"
+                                        )
+                                    }
+
+                                    if msg.role == .user {
+                                        Button {
+                                            coordinator.sendQuickReply(msg.content)
+                                        } label: {
+                                            Label("重新發送", systemImage: "arrow.clockwise")
+                                        }
+                                    }
+                                }
                             }
-                        )
-                        .id(msg.id)
-                    }
+                        }
 
-                    // 當使用者在 Live 模式開口講話時，即時在右側顯示邊講邊跳字的預覽氣泡！
-                    if coordinator.isLiveMode && !coordinator.liveTranscript.isEmpty {
-                        liveTranscriptPreviewBubble
-                            .id("live_transcript_preview")
-                    }
+                        // 當使用者在 Live 模式開口講話時，即時在右側顯示邊講邊跳字的預覽氣泡！
+                        if coordinator.isLiveMode && !coordinator.liveTranscript.isEmpty {
+                            liveTranscriptPreviewBubble
+                                .id("live_transcript_preview")
+                        }
 
-                    if let err = coordinator.errorMessage {
-                        Text("⚠️ \(err)")
-                            .font(.footnote)
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 16)
-                    }
+                        if let err = coordinator.errorMessage {
+                            Text("⚠️ \(err)")
+                                .font(.footnote)
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 16)
+                        }
 
-                    Color.clear
-                        .frame(height: 8)
-                        .id("bottom_anchor")
+                        Color.clear
+                            .frame(height: 8)
+                            .id("bottom_anchor")
+                            .onAppear { isAtBottom = true }
+                            .onDisappear { isAtBottom = false }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
+                .scrollDismissesKeyboard(.interactively)
+
+                if !isAtBottom && coordinator.messages.count > 2 {
+                    Button(action: {
+                        haptic.impactOccurred()
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }) {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .background(
+                                Circle()
+                                    .fill(Color(white: 0.16).opacity(0.95))
+                                    .overlay(
+                                        Circle()
+                                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                    )
+                                    .shadow(color: .black.opacity(0.35), radius: 5, x: 0, y: 2)
+                            )
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 12)
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
             .onAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                     scrollToBottom(proxy: proxy, animated: false)

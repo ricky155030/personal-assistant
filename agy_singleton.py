@@ -1354,7 +1354,8 @@ class AgyBrainPool:
         turn_result["model"] = target_model
         turn_result["worker"] = worker.name
 
-        if not turn_result.get("cancelled"):
+        has_partial_reply = bool((turn_result.get("clean_reply") or "").strip())
+        if not turn_result.get("cancelled") or has_partial_reply:
             ttft = turn_result.get("time_to_first_token", 0)
             tot = turn_result.get("total_latency", 0)
             usage = dict(worker.last_usage or {})
@@ -1381,6 +1382,8 @@ class AgyBrainPool:
                 [actions_str],
                 metadata=metadata,
             )
+            if turn_result.get("cancelled"):
+                print(f"[AgyBrainPool] 💾 連線中斷但已產出部分回覆，已寫入歷史紀錄防漏訊 (耗時: {tot:.2f}s)")
         else:
             print(f"[AgyBrainPool] 🛑 統一大腦本次 Turn 已被使用者中途取消 (耗時: {turn_result.get('total_latency', 0):.2f}s)")
 
