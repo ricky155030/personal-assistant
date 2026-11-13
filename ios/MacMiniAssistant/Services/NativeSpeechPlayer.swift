@@ -267,8 +267,9 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         }
 
         // 4. 若後端仍在生成中 (isGenerating == true)，但音訊佇列暫時空了且還有未播文字句子：
-        // 守候 1.2 秒，若逾時新分片未送達則自動本地備援朗讀，確保語音絕對不腰斬
+        // 必須先將 isPlaying 設為 false，否則後續 enqueueAudioChunk / waitFallback / markGenerationFinished 都會被 !isPlaying 卡死
         if isGenerating && !sentenceQueue.isEmpty {
+            isPlaying = false
             scheduleAudioWaitFallback()
             return
         }
