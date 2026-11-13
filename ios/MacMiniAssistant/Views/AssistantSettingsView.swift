@@ -200,6 +200,13 @@ struct AssistantSettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Section("連線與診斷") {
+                    Toggle("顯示連線與收音診斷 HUD", isOn: $coordinator.showDebugHUD)
+                    Text("開啟後會在主畫面頂部顯示 Mac mini 連線狀態、語音辨識引擎與收音診斷資訊。")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+
                 Section("對話紀錄與快取") {
                     Button(action: {
                         Task {

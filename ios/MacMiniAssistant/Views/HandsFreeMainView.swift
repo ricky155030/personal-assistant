@@ -183,11 +183,10 @@ struct HandsFreeMainView: View {
     // MARK: - 2. 頂部 Gemini 風格導覽列
     private var topHeaderBar: some View {
         HStack(spacing: 14) {
-            // 左上同步與診斷按鈕（點擊向 Mac mini 同步統一時間軸並切換收音診斷）
+            // 左上同步按鈕（點擊向 Mac mini 同步統一時間軸；連線診斷開關已移至設定頁）
             Button(action: {
                 haptic.impactOccurred()
                 isInputFocused = false
-                coordinator.showDebugHUD.toggle()
                 Task {
                     await coordinator.syncRemoteHistory()
                 }
@@ -201,9 +200,9 @@ struct HandsFreeMainView: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                         .overlay(
-                            Image(systemName: coordinator.showDebugHUD ? "waveform.badge.magnifyingglass" : "arrow.triangle.2.circlepath")
+                            Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(coordinator.showDebugHUD ? .cyan : .white.opacity(0.85))
+                                .foregroundColor(.white.opacity(0.85))
                         )
 
                     Circle()
@@ -329,8 +328,8 @@ struct HandsFreeMainView: View {
 
             Spacer()
 
-            // 音訊輸出切換器 (支援車載藍牙、揚聲器擴音、聽筒切換)
-            audioRoutePickerButton
+            // Context 佔比指示器（圓形填充 + 百分比，點擊可檢視明細與切換音訊輸出）
+            contextUsageButton
 
             // 右上 1：AI 配額膠囊（動態連動選取的模型 Family：Flash / Argon / Claude）
             Button(action: {
@@ -377,37 +376,54 @@ struct HandsFreeMainView: View {
                 )
             }
 
-            // 右上 2：個人頭像 / 設定按鈕
+            // 右上 2：設定按鈕
             Button(action: {
                 haptic.impactOccurred()
                 showSettings = true
             }) {
                 ZStack {
                     Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(red: 0.22, green: 0.35, blue: 0.65), Color(red: 0.12, green: 0.18, blue: 0.35)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(Color(white: 0.14))
                         .frame(width: 42, height: 42)
                         .overlay(
                             Circle()
-                                .stroke(Color(white: 0.22), lineWidth: 2)
+                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
                         )
 
-                    Text("宏")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
                 }
             }
         }
     }
 
-    // MARK: - 音訊輸出路由切換按鈕 (車機藍牙 / 揚聲器 / 聽筒一鍵切換)
-    private var audioRoutePickerButton: some View {
-        Menu {
+    // MARK: - Context 佔比圓形填充指示器 (點擊檢視 Token 明細 / 切換音訊輸出)
+    private var latestContextUsage: (ratio: Double, pctText: String, detailText: String, tint: Color) {
+        let contextLimit = 1_000_000.0
+        guard let lastUsage = coordinator.messages.reversed().compactMap({ $0.metadata?.usage }).first else {
+            return (0.0, "--%", "尚無本輪統計", Color(white: 0.5))
+        }
+        let inputTok = lastUsage.input_tokens ?? 0
+        let cachedTok = lastUsage.cached_read_tokens ?? 0
+        let usedTokens = Double(inputTok + cachedTok)
+        let rawRatio = usedTokens / contextLimit
+        let clampedRatio = min(1.0, max(0.0, rawRatio))
+        let pct = rawRatio * 100.0
+        let pctText = pct >= 100.0 ? "100%" : (pct >= 10.0 ? String(format: "%.0f%%", pct) : String(format: "%.1f%%", pct))
+        let tint: Color = pct >= 80.0 ? .red : (pct >= 50.0 ? .orange : .cyan)
+        let usedK = Int((usedTokens / 1000.0).rounded())
+        let detail = "Context 約 \(usedK)K / 1,000K（輸入 \(inputTok) + 快取 \(cachedTok)）"
+        return (clampedRatio, pctText, detail, tint)
+    }
+
+    private var contextUsageButton: some View {
+        let info = latestContextUsage
+        return Menu {
+            Section("Context 視窗佔比") {
+                Text(info.detailText)
+            }
+
             Section("當前音訊：\(coordinator.currentAudioRouteName)") {
                 Button(action: {
                     haptic.impactOccurred()
@@ -431,20 +447,28 @@ struct HandsFreeMainView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: coordinator.currentAudioRouteIcon)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(coordinator.isBluetoothOrCarConnected ? .cyan : (coordinator.isForcedSpeaker ? .green : .white))
-            }
-            .frame(width: 38, height: 38)
-            .background(
+            ZStack {
                 Circle()
-                    .fill(Color(white: 0.14))
-                    .overlay(
-                        Circle()
-                            .stroke(coordinator.isBluetoothOrCarConnected ? Color.cyan.opacity(0.4) : (coordinator.isForcedSpeaker ? Color.green.opacity(0.4) : Color.white.opacity(0.12)), lineWidth: 1)
-                    )
-            )
+                    .fill(Color(white: 0.13))
+
+                ContextPieFillShape(progress: info.ratio)
+                    .fill(info.tint.opacity(0.36))
+
+                Circle()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 2)
+
+                Circle()
+                    .trim(from: 0, to: CGFloat(max(0.02, info.ratio)))
+                    .stroke(info.tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+
+                Text(info.pctText)
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .minimumScaleFactor(0.75)
+                    .lineLimit(1)
+            }
+            .frame(width: 42, height: 42)
         }
     }
 
@@ -1843,4 +1867,32 @@ struct AudioRoutePickerViewWrapper: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+// MARK: - 圓形扇區填充形狀 (Context 視窗佔比視覺化)
+struct ContextPieFillShape: Shape {
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let clamped = min(1.0, max(0.0, progress))
+        var path = Path()
+        guard clamped > 0 else { return path }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2.0
+        path.move(to: center)
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(-90 + 360.0 * clamped),
+            clockwise: false
+        )
+        path.closeSubpath()
+        return path
+    }
 }
