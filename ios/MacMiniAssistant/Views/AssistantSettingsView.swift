@@ -10,6 +10,7 @@ struct AssistantSettingsView: View {
     @State private var testConnectionResult: String? = nil
     @State private var isTestingConnection: Bool = false
     @State private var selectedEdgeVoice: String = UserDefaults.standard.string(forKey: "macmini_edge_tts_voice") ?? "zh-TW-HsiaoChenNeural"
+    @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
 
     private var availableVoices: [AVSpeechSynthesisVoice] {
         NativeSpeechPlayer.getAvailableVoices()
@@ -56,6 +57,21 @@ struct AssistantSettingsView: View {
                             .font(.caption)
                             .foregroundColor(result.contains("成功") ? .green : .red)
                     }
+                }
+
+                Section("對話字體大小") {
+                    Picker("對話文字大小", selection: $chatBaseFontSize) {
+                        Text("偏小").tag(13.5)
+                        Text("適中").tag(15.0)
+                        Text("較大").tag(16.5)
+                        Text("特大").tag(18.5)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("預覽：這是目前對話文字的大小（不受 iPhone 系統字體設定影響）。")
+                        .font(.system(size: chatBaseFontSize))
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 2)
                 }
 
                 Section("真人神經語音引擎 (Edge-TTS)") {

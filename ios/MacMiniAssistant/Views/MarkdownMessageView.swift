@@ -3,6 +3,7 @@ import SwiftUI
 /// 原生輕量 Markdown 渲染器（零第三方依賴，支援動態字體與串流未閉合程式碼區塊）
 struct MarkdownMessageView: View {
     let content: String
+    @AppStorage("chatBaseFontSize") private var baseFontSize: Double = 15.0
 
     private enum Block: Identifiable {
         case heading(level: Int, text: String)
@@ -48,7 +49,7 @@ struct MarkdownMessageView: View {
                 .padding(.bottom, 1)
 
         case .codeBlock(let language, let code):
-            CodeBlockCard(language: language, code: code)
+            CodeBlockCard(language: language, code: code, fontSize: max(11.5, baseFontSize - 2))
 
         case .blockquote(let text):
             HStack(alignment: .top, spacing: 10) {
@@ -57,7 +58,7 @@ struct MarkdownMessageView: View {
                     .frame(width: 3)
 
                 inlineMarkdownText(text)
-                    .font(.callout)
+                    .font(.system(size: max(12.0, baseFontSize - 0.5)))
                     .foregroundColor(.white.opacity(0.82))
                     .lineSpacing(3)
             }
@@ -66,20 +67,19 @@ struct MarkdownMessageView: View {
         case .bulletItem(let marker, let text):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(marker)
-                    .font(.body)
-                    .fontWeight(.semibold)
+                    .font(.system(size: baseFontSize, weight: .semibold))
                     .foregroundColor(.cyan.opacity(0.9))
                     .frame(minWidth: marker == "•" ? 10 : 18, alignment: .leading)
 
                 inlineMarkdownText(text)
-                    .font(.body)
+                    .font(.system(size: baseFontSize))
                     .foregroundColor(.white.opacity(0.94))
-                    .lineSpacing(4)
+                    .lineSpacing(3.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
         case .table(let headers, let rows):
-            MarkdownTableView(headers: headers, rows: rows)
+            MarkdownTableView(headers: headers, rows: rows, fontSize: max(11.5, baseFontSize - 2))
 
         case .divider:
             Divider()
@@ -88,17 +88,17 @@ struct MarkdownMessageView: View {
 
         case .paragraph(let text):
             inlineMarkdownText(text)
-                .font(.body)
+                .font(.system(size: baseFontSize))
                 .foregroundColor(.white.opacity(0.94))
-                .lineSpacing(4)
+                .lineSpacing(3.5)
         }
     }
 
     private func headingFont(for level: Int) -> Font {
         switch level {
-        case 1: return .title3
-        case 2: return .headline
-        default: return .subheadline
+        case 1: return .system(size: baseFontSize + 3.0)
+        case 2: return .system(size: baseFontSize + 1.5)
+        default: return .system(size: baseFontSize + 0.5)
         }
     }
 
@@ -294,6 +294,7 @@ struct MarkdownMessageView: View {
 private struct CodeBlockCard: View {
     let language: String
     let code: String
+    let fontSize: Double
     @State private var copied: Bool = false
 
     var body: some View {
@@ -331,7 +332,7 @@ private struct CodeBlockCard: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(.footnote, design: .monospaced))
+                    .font(.system(size: fontSize, design: .monospaced))
                     .foregroundColor(Color(white: 0.92))
                     .textSelection(.enabled)
                     .padding(12)
@@ -353,6 +354,7 @@ private struct CodeBlockCard: View {
 private struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
+    let fontSize: Double
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -360,8 +362,7 @@ private struct MarkdownTableView: View {
                 HStack(spacing: 0) {
                     ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
                         Text(header)
-                            .font(.caption)
-                            .fontWeight(.bold)
+                            .font(.system(size: fontSize, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
@@ -376,7 +377,7 @@ private struct MarkdownTableView: View {
                         ForEach(0..<headers.count, id: \.self) { cIdx in
                             let cell = cIdx < row.count ? row[cIdx] : ""
                             Text(cell)
-                                .font(.caption)
+                                .font(.system(size: fontSize))
                                 .foregroundColor(.white.opacity(0.88))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)

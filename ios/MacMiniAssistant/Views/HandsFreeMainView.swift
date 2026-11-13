@@ -86,6 +86,7 @@ struct HandsFreeMainView: View {
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
     @FocusState private var isInputFocused: Bool
 
     /// 單則訊息最多可附加的照片張數
@@ -1076,7 +1077,7 @@ struct HandsFreeMainView: View {
                         .foregroundColor(Color(white: 0.55)),
                     axis: .vertical
                 )
-                .font(.body)
+                .font(.system(size: max(14.0, chatBaseFontSize)))
                 .lineLimit(1...5)
                 .foregroundColor(.white)
                 .focused($isInputFocused)
@@ -1550,6 +1551,7 @@ struct GeminiMessageRow: View {
     @State private var isThoughtExpanded: Bool = false
     @State private var isToolsExpanded: Bool = false
     @State private var previewPhoto: PreviewPhotoItem? = nil
+    @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
 
     private var isUser: Bool {
         message.role == .user
@@ -1595,7 +1597,7 @@ struct GeminiMessageRow: View {
                     }
 
                     Text(message.content)
-                        .font(.body)
+                        .font(.system(size: chatBaseFontSize))
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
