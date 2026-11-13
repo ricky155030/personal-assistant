@@ -1334,16 +1334,20 @@ private struct FullScreenPhotoViewer: View {
     let imageData: Data
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1.0
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            Color.black
+                .opacity(max(0.15, 1.0 - Double(dragOffset / 380.0)))
+                .ignoresSafeArea()
 
             if let uiImg = UIImage(data: imageData) {
                 Image(uiImage: uiImg)
                     .resizable()
                     .scaledToFit()
-                    .scaleEffect(scale)
+                    .scaleEffect(scale * max(0.85, 1.0 - dragOffset / 1200.0))
+                    .offset(y: dragOffset)
                     .gesture(
                         MagnificationGesture()
                             .onChanged { val in
@@ -1352,6 +1356,28 @@ private struct FullScreenPhotoViewer: View {
                             .onEnded { _ in
                                 if scale < 1.1 {
                                     withAnimation(.spring()) { scale = 1.0 }
+                                }
+                            }
+                    )
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 18)
+                            .onChanged { value in
+                                guard scale <= 1.05 else { return }
+                                if value.translation.height > 0 {
+                                    dragOffset = value.translation.height
+                                }
+                            }
+                            .onEnded { value in
+                                guard scale <= 1.05 else {
+                                    dragOffset = 0
+                                    return
+                                }
+                                if value.translation.height > 110 || value.predictedEndTranslation.height > 220 {
+                                    dismiss()
+                                } else {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        dragOffset = 0
+                                    }
                                 }
                             }
                     )
@@ -1369,7 +1395,9 @@ private struct FullScreenPhotoViewer: View {
                     .foregroundColor(.white.opacity(0.85))
                     .padding(20)
             }
+            .opacity(dragOffset > 20 ? 0.4 : 1.0)
         }
+        .presentationBackground(.clear)
     }
 }
 
