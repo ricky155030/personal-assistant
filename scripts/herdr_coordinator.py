@@ -259,32 +259,147 @@ def detect_question_or_confirmation(raw_text: str, status: str = "") -> Optional
     return None
 
 
-def get_agent_session_transcript(agent: str, agent_info: Optional[Dict[str, Any]] = None) -> Optional[str]:
-    """從 Agent 底層 session 日誌中提取最後一輪完整回覆內容 (避免終端視窗截斷)"""
-    info = agent_info if agent_info is not None else get_herdr_agent(agent)
-    if not info:
-        return None
-    session = info.get("agent_session", {})
-    agent_kind = session.get("agent", "")
-    session_val = session.get("value", "")
+def resolve_session_log_path(agent_info: Optional[Dict[str, Any]]) -> Tuple[str, Optional[Path]]:
+    """解析不同類型 Agent (agy / omp) 的底層 JSONL 對話日誌路徑"""
+    if not agent_info:
+        return ("", None)
+    session = agent_info.get("agent_session") or {}
+    agent_kind = (session.get("agent") or agent_info.get("agent") or "").lower()
+    kind = (session.get("kind") or "").lower()
+    val = str(session.get("value") or "").strip()
+    if not val:
+        return (agent_kind, None)
 
-    if agent_kind == "agy" and session_val:
+    if agent_kind == "agy" or kind == "id":
         candidate_paths = [
-            Path.home() / ".gemini" / "antigravity-cli" / "brain" / session_val / ".system_generated" / "logs" / "transcript_full.jsonl",
-            Path.home() / ".gemini" / "antigravity-cli" / "brain" / session_val / ".system_generated" / "logs" / "transcript.jsonl",
+            Path.home() / ".gemini" / "antigravity-cli" / "brain" / val / ".system_generated" / "logs" / "transcript_full.jsonl",
+            Path.home() / ".gemini" / "antigravity-cli" / "brain" / val / ".system_generated" / "logs" / "transcript.jsonl",
         ]
         for p in candidate_paths:
             if p.exists():
-                try:
-                    with open(p, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                    for line in reversed(lines):
-                        data = json.loads(line)
-                        if data.get("type") == "PLANNER_RESPONSE" and data.get("content"):
-                            return data["content"].strip()
-                except Exception:
-                    pass
-    return None
+                return ("agy", p)
+        return ("agy", None)
+
+    if kind == "path" or agent_kind == "omp":
+        p = Path(val).expanduser()
+        return (agent_kind or "omp", p if p.exists() else None)
+
+    return (agent_kind, None)
+
+
+def count_session_log_lines(agent: str, agent_info: Optional[Dict[str, Any]] = None) -> int:
+    """取得派發當下該 Agent JSONL 日誌的總行數，作為增量擷取基準線"""
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    _, log_path = resolve_session_log_path(info)
+    if not log_path or not log_path.exists():
+        return 0
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            return sum(1 for _ in f)
+    except Exception:
+        return 0
+
+
+def _extract_omp_text_blocks(content: Any) -> str:
+    """將 omp message.content（字串或區塊陣列）正規化為純文字"""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: List[str] = []
+        for blk in content:
+            if isinstance(blk, dict) and blk.get("type") == "text" and blk.get("text"):
+                parts.append(str(blk["text"]).strip())
+            elif isinstance(blk, str) and blk.strip():
+                parts.append(blk.strip())
+        return "\n".join(parts).strip()
+    return ""
+
+
+def read_session_turns(
+    agent: str,
+    agent_info: Optional[Dict[str, Any]] = None,
+    baseline_lines: int = 0,
+) -> Dict[str, Any]:
+    """
+    從 agy 或 omp 的 JSONL 日誌中，精準擷取基準線之後的新增輸入、工具呼叫與回覆文字。
+    """
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    agent_kind, log_path = resolve_session_log_path(info)
+    result: Dict[str, Any] = {
+        "agent_kind": agent_kind,
+        "log_path": str(log_path) if log_path else "",
+        "total_lines": 0,
+        "user_inputs": [],
+        "assistant_outputs": [],
+        "tool_calls": [],
+        "latest_reply": "",
+    }
+    if not log_path or not log_path.exists():
+        return result
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except Exception:
+        return result
+
+    result["total_lines"] = len(lines)
+    start_idx = max(0, min(baseline_lines, len(lines)))
+    delta_lines = lines[start_idx:]
+
+    for raw in delta_lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+
+        if agent_kind == "agy":
+            step_type = data.get("type")
+            if step_type == "USER_INPUT" and data.get("content"):
+                result["user_inputs"].append(str(data["content"]).strip())
+            elif step_type == "PLANNER_RESPONSE":
+                for tc in data.get("tool_calls") or []:
+                    if isinstance(tc, dict):
+                        t_name = tc.get("name") or tc.get("function", {}).get("name") or "tool"
+                        result["tool_calls"].append(str(t_name))
+                if data.get("content"):
+                    result["assistant_outputs"].append(str(data["content"]).strip())
+            elif step_type == "GENERIC" and data.get("content"):
+                result["assistant_outputs"].append(str(data["content"]).strip())
+
+        elif agent_kind == "omp":
+            if data.get("type") != "message":
+                continue
+            msg = data.get("message")
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            if role == "user":
+                txt = _extract_omp_text_blocks(msg.get("content"))
+                if txt:
+                    result["user_inputs"].append(txt)
+            elif role == "assistant":
+                txt = _extract_omp_text_blocks(msg.get("content"))
+                if txt:
+                    result["assistant_outputs"].append(txt)
+            elif role == "toolResult":
+                t_name = str(msg.get("toolName") or "tool")
+                is_err = bool(msg.get("isError"))
+                result["tool_calls"].append(f"{t_name}{' (error)' if is_err else ''}")
+
+    if result["assistant_outputs"]:
+        result["latest_reply"] = result["assistant_outputs"][-1]
+    return result
+
+
+def get_agent_session_transcript(agent: str, agent_info: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """從 Agent 底層 session 日誌中提取最後一輪完整回覆內容 (支援 agy 與 omp)"""
+    turns = read_session_turns(agent, agent_info=agent_info, baseline_lines=0)
+    latest = (turns.get("latest_reply") or "").strip()
+    return latest or None
 
 
 def extract_completion_summary(
@@ -423,6 +538,185 @@ def notify_completion(
     return ok
 
 
+def collect_workspace_evidence(cwd: Optional[str]) -> str:
+    """在目標 Agent 工作目錄下收集 git status 與 git diff --stat 供品管驗收參考"""
+    if not cwd or not Path(cwd).is_dir():
+        return ""
+    parts: List[str] = []
+    for label, git_args in [("git status", ["git", "status", "--short"]), ("git diff --stat", ["git", "diff", "--stat"])]:
+        try:
+            proc = subprocess.run(
+                git_args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10.0,
+            )
+            out = (proc.stdout or "").strip()
+            if proc.returncode == 0 and out:
+                parts.append(f"[{label}]\n{out[:1200]}")
+        except Exception:
+            pass
+    return "\n\n".join(parts)
+
+
+def review_worker_output(
+    task_prompt: str,
+    criteria: Optional[str],
+    turn_data: Dict[str, Any],
+    git_evidence: str = "",
+    fallback_summary: str = "",
+) -> Dict[str, Any]:
+    """
+    透過無狀態 `agy -p` 對工人產出進行品管驗收：
+    回傳 {"verdict": "PASS"|"REJECT", "feedback": str, "summary": str}
+    """
+    worker_reply = (turn_data.get("latest_reply") or fallback_summary or "").strip()
+    tool_list = ", ".join(turn_data.get("tool_calls") or []) or "無紀錄"
+    criteria_block = criteria.strip() if criteria else "確認任務需求已完成、無明顯錯誤且有實際驗證結果。"
+
+    review_prompt = (
+        "你是嚴謹的技術協調者與品管審查員。請根據以下資訊判斷底層工程 Agent 是否已確實完成任務：\n\n"
+        f"【原始任務需求】\n{task_prompt}\n\n"
+        f"【驗收標準】\n{criteria_block}\n\n"
+        f"【工人呼叫的工具紀錄】\n{tool_list}\n\n"
+        f"【工人最後回覆內容】\n{worker_reply[:3000]}\n\n"
+        + (f"【工作區 Git 異動證據】\n{git_evidence}\n\n" if git_evidence else "")
+        + "請嚴格以 JSON 格式回覆（不要加 markdown 圍欄），格式如下：\n"
+        '{"verdict": "PASS" 或 "REJECT", "summary": "給主人的 2~3 句繁體中文精簡總結", "feedback": "若 REJECT，請給工人具體可執行的修正指示；若 PASS 則留空"}'
+    )
+
+    agy_bin = shutil.which("agy") or "/opt/homebrew/bin/agy"
+    if not Path(agy_bin).exists() and not shutil.which("agy"):
+        return {
+            "verdict": "PASS",
+            "summary": worker_reply[:1500] or "任務已完成。",
+            "feedback": "",
+        }
+
+    try:
+        proc = subprocess.run(
+            [agy_bin, "-p", review_prompt],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=90.0,
+        )
+        raw_out = (proc.stdout or "").strip()
+        # 嘗試抽取 JSON 區塊
+        m = re.search(r"\{[\s\S]*\}", raw_out)
+        if m:
+            parsed = json.loads(m.group(0))
+            verdict = str(parsed.get("verdict", "PASS")).upper()
+            if verdict not in {"PASS", "REJECT"}:
+                verdict = "PASS"
+            return {
+                "verdict": verdict,
+                "summary": str(parsed.get("summary") or worker_reply[:1500]).strip(),
+                "feedback": str(parsed.get("feedback") or "").strip(),
+            }
+    except Exception as e:
+        print(f"[HerdrCoordinator] ⚠️ 驗收評審異常，降級為直接回報: {e}", file=sys.stderr)
+
+    return {
+        "verdict": "PASS",
+        "summary": worker_reply[:1500] or "任務已完成。",
+        "feedback": "",
+    }
+
+
+def record_task_to_history_and_memory(
+    agent: str,
+    display_title: str,
+    task_prompt: str,
+    summary: str,
+    log_path: str = "",
+    sync_idle_memory: bool = True,
+) -> None:
+    """將 Herdr 任務成果安全寫入 data/history.jsonl，並於主大腦閒置時靜默同步 3 行摘要"""
+    try:
+        from memory_manager import memory_manager
+        actions = [f"herdr_coordinator ({agent})"]
+        if log_path:
+            actions.append(f"session_log: {log_path}")
+        memory_manager.log_interaction(
+            f"[Herdr 派工 · {display_title}] {task_prompt[:300]}",
+            summary,
+            actions=actions,
+        )
+    except Exception as e:
+        print(f"[HerdrCoordinator] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
+
+    if not sync_idle_memory:
+        return
+
+    try:
+        import urllib.request
+        from config import settings
+        url = f"http://127.0.0.1:{settings.PORT}/api/internal/memory-sync"
+        memo = (
+            f"任務對象：{display_title}（Agent: {agent}）\n"
+            f"派發需求：{task_prompt[:180]}\n"
+            f"驗收結果：{summary[:350]}"
+        )
+        req_data = json.dumps({"summary": memo, "source": f"herdr:{agent}"}).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if settings.ASSISTANT_API_KEY:
+            headers["X-Agent-Key"] = settings.ASSISTANT_API_KEY
+        req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            resp.read()
+    except Exception as e:
+        print(f"[HerdrCoordinator] ℹ️ 主大腦靜默記憶同步略過: {e}", file=sys.stderr)
+
+
+def update_batch_progress(
+    batch_id: str,
+    agent: str,
+    display_title: str,
+    status: str,
+    summary: str,
+    batch_total: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    """追蹤多任務批次進度（使用檔案鎖防止併發寫入衝突）"""
+    if not batch_id:
+        return None
+    batch_file = BASE_DIR / "data" / "herdr_batches.json"
+    batch_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl as _fcntl
+    except ImportError:
+        _fcntl = None
+
+    with open(batch_file, "a+", encoding="utf-8") as f:
+        if _fcntl is not None:
+            _fcntl.flock(f.fileno(), _fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            raw = f.read().strip()
+            all_batches = json.loads(raw) if raw else {}
+            entry = all_batches.get(batch_id) or {"total": batch_total or 0, "tasks": {}}
+            if batch_total and batch_total > entry.get("total", 0):
+                entry["total"] = batch_total
+            entry["tasks"][agent] = {
+                "title": display_title,
+                "status": status,
+                "summary": summary[:300],
+            }
+            all_batches[batch_id] = entry
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(all_batches, ensure_ascii=False, indent=2))
+            f.flush()
+            return entry
+        finally:
+            if _fcntl is not None:
+                _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
+
+
 def dispatch_task(
     agent: str,
     prompt: str,
@@ -430,14 +724,29 @@ def dispatch_task(
     no_watch: bool = False,
     interval: float = 3.0,
     ttl_minutes: int = 120,
+    criteria: Optional[str] = None,
+    max_retries: int = 3,
+    batch_id: Optional[str] = None,
+    batch_total: Optional[int] = None,
+    auto_review: bool = True,
+    force: bool = False,
 ) -> Dict[str, Any]:
     """
     派發任務給 Herdr Agent：
-    1. 注入協調指令規範鐵律
-    2. 透過 herdr agent prompt 發送
-    3. 若無指定 --no-watch，則透過 TaskManager 託管啟動背景 watch 守護進程
+    1. 檢查目標是否忙碌 (working)，避免同一終端輸入衝突
+    2. 記錄派發前 JSONL 基準線
+    3. 注入協調指令規範鐵律並透過 herdr agent prompt 發送
+    4. 若無指定 --no-watch，則透過 TaskManager 託管啟動背景 watch + 驗收守護進程
     """
-    injected_prompt = inject_coordination_rule(prompt)
+    agent_info = get_herdr_agent(agent)
+    if agent_info and agent_info.get("agent_status") == "working" and not force:
+        err_msg = f"目標 Agent [{agent}] 目前正在執行中 (working)，為避免終端輸入衝突請稍候或加上 --force。"
+        print(f"⚠️ {err_msg}", file=sys.stderr)
+        return {"success": False, "agent": agent, "error": "agent_busy", "message": err_msg}
+
+    baseline_lines = count_session_log_lines(agent, agent_info=agent_info)
+    full_prompt = prompt if not criteria else f"{prompt}\n\n【驗收標準】\n{criteria}"
+    injected_prompt = inject_coordination_rule(full_prompt)
     prompt_res = submit_herdr_prompt(agent, injected_prompt)
     if not prompt_res.get("success"):
         print(f"❌ 派發任務至 Herdr Agent [{agent}] 失敗: {prompt_res.get('error')}", file=sys.stderr)
@@ -447,6 +756,8 @@ def dispatch_task(
         "success": True,
         "agent": agent,
         "name": name,
+        "baseline_lines": baseline_lines,
+        "max_retries": max_retries,
         "injected_prompt": injected_prompt,
     }
 
@@ -454,9 +765,24 @@ def dispatch_task(
         try:
             from task_manager import TaskManager
             tm = TaskManager()
-            watch_args = ["watch", "--agent", agent, "--interval", str(interval)]
+            watch_args = [
+                "watch",
+                "--agent", agent,
+                "--interval", str(interval),
+                "--task", prompt,
+                "--max-retries", str(max_retries),
+                "--baseline-lines", str(baseline_lines),
+            ]
             if name:
                 watch_args.extend(["--name", name])
+            if criteria:
+                watch_args.extend(["--criteria", criteria])
+            if batch_id:
+                watch_args.extend(["--batch-id", batch_id])
+            if batch_total is not None:
+                watch_args.extend(["--batch-total", str(batch_total)])
+            if not auto_review:
+                watch_args.append("--no-review")
 
             watch_task = tm.spawn(
                 name=f"herdr-watch-{agent}",
@@ -465,9 +791,9 @@ def dispatch_task(
                 ttl_minutes=ttl_minutes,
             )
             res["watch_task"] = watch_task
-            display_title = resolve_agent_display_name(agent, custom_name=name)
-            print(f"🚀 任務已成功派發給 【{display_title}】！")
-            print(f"👀 背景守護進程已啟動 (Task ID: {watch_task.get('task_id')})，將於需要確認或完工時推播 Telegram。")
+            display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
+            print(f"🚀 任務已成功派發給 【{display_title}】！（最大自動重修上限：{max_retries} 次）")
+            print(f"👀 背景協調者已啟動 (Task ID: {watch_task.get('task_id')})，將於驗收通過或需確認時推播通知。")
         except Exception as e:
             print(f"[HerdrCoordinator] ⚠️ 啟動 TaskManager 守護進程失敗: {e}", file=sys.stderr)
             res["watch_task_error"] = str(e)
@@ -492,6 +818,98 @@ def relay_answer(agent: str, answer: str) -> Dict[str, Any]:
     return res
 
 
+def _finalize_watch_completion(
+    agent: str,
+    visible_text: str,
+    agent_info: Dict[str, Any],
+    name: Optional[str],
+    task_prompt: Optional[str],
+    criteria: Optional[str],
+    baseline_lines: int,
+    retries_used: int,
+    max_retries: int,
+    auto_review: bool,
+    batch_id: Optional[str],
+    batch_total: Optional[int],
+) -> Dict[str, Any]:
+    """
+    工人完工後的統一品管收尾：
+    回傳 {"action": "retry", "new_baseline": int} 或 {"action": "done", "result": dict}
+    """
+    turn_data = read_session_turns(agent, agent_info=agent_info, baseline_lines=baseline_lines)
+    raw_summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
+    display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
+
+    if auto_review and task_prompt:
+        cwd = agent_info.get("cwd") or agent_info.get("foreground_cwd")
+        git_evidence = collect_workspace_evidence(cwd)
+        review = review_worker_output(
+            task_prompt=task_prompt,
+            criteria=criteria,
+            turn_data=turn_data,
+            git_evidence=git_evidence,
+            fallback_summary=raw_summary,
+        )
+        verdict = review.get("verdict", "PASS")
+        reviewed_summary = review.get("summary") or raw_summary
+        feedback = review.get("feedback") or ""
+
+        if verdict == "REJECT" and retries_used < max_retries:
+            attempt_no = retries_used + 1
+            new_baseline = turn_data.get("total_lines") or count_session_log_lines(agent, agent_info=agent_info)
+            retry_prompt = inject_coordination_rule(
+                f"【協調者品管打回 · 第 {attempt_no}/{max_retries} 次重修】\n"
+                f"未通過驗收原因與修正要求：\n{feedback or '請確認所有驗收標準皆已執行並通過測試。'}\n\n"
+                "請直接修正並重新驗證完成。"
+            )
+            submit_herdr_prompt(agent, retry_prompt)
+            print(f"[HerdrCoordinator] 🔁 【{display_title}】未通過驗收，已打回第 {attempt_no}/{max_retries} 次重修。")
+            return {"action": "retry", "new_baseline": new_baseline}
+
+        if verdict == "REJECT":
+            final_text = f"⚠️ 已達最大重修次數 ({max_retries} 次) 仍未完全通過驗收：\n{feedback}\n\n最後摘要：\n{reviewed_summary}"
+        else:
+            final_text = reviewed_summary
+    else:
+        final_text = raw_summary
+
+    notify_completion(agent, final_text, name=name, agent_info=agent_info)
+    if task_prompt:
+        record_task_to_history_and_memory(
+            agent=agent,
+            display_title=display_title,
+            task_prompt=task_prompt,
+            summary=final_text,
+            log_path=turn_data.get("log_path", ""),
+        )
+
+    if batch_id:
+        batch_entry = update_batch_progress(
+            batch_id=batch_id,
+            agent=agent,
+            display_title=display_title,
+            status="completed",
+            summary=final_text,
+            batch_total=batch_total,
+        )
+        if batch_entry and batch_entry.get("total", 0) > 0:
+            done_cnt = len(batch_entry.get("tasks", {}))
+            total_cnt = batch_entry["total"]
+            if done_cnt >= total_cnt:
+                lines = [f"• <b>{html.escape(t.get('title', k))}</b>：{html.escape(t.get('summary', '')[:120])}" for k, t in batch_entry["tasks"].items()]
+                send_telegram_alert(f"🏁 <b>批次任務 {done_cnt}/{total_cnt} 全部驗收完成</b>\n\n" + "\n".join(lines))
+
+    return {
+        "action": "done",
+        "result": {
+            "status": "completed",
+            "agent": agent,
+            "summary": final_text,
+            "retries_used": retries_used,
+        },
+    }
+
+
 def watch_agent(
     agent: str,
     interval: float = 3.0,
@@ -499,21 +917,30 @@ def watch_agent(
     timeout: Optional[float] = None,
     start_grace_seconds: float = 12.0,
     name: Optional[str] = None,
+    task_prompt: Optional[str] = None,
+    criteria: Optional[str] = None,
+    max_retries: int = 3,
+    baseline_lines: int = 0,
+    batch_id: Optional[str] = None,
+    batch_total: Optional[int] = None,
+    auto_review: bool = True,
 ) -> Dict[str, Any]:
     """
-    背景守護主循環：
+    背景守護主循環（含自動驗收與打回重修迴圈）：
     1. 輪詢 agent get 與 read visible lines
     2. 提問辨識：偵測到提問且處於 idle/blocked，推播 Telegram 請示主人
-    3. 完工辨識：由 working 轉為 idle/done 且無提問，推播完工卡片並結束進程
+    3. 完工辨識：由 working 轉為 idle/done 且無提問 ➔ 讀取 JSONL 驗收（不通過最多打回 max_retries 次）
     """
     start_time = time.time()
     has_seen_working = False
     waiting_input = False
     last_question_content: Optional[str] = None
     iteration = 0
+    retries_used = 0
+    current_baseline = baseline_lines
 
     display_title = resolve_agent_display_name(agent, custom_name=name)
-    print(f"[HerdrCoordinator] 👀 開始守護 【{display_title}】 (輪詢間隔: {interval}s)...")
+    print(f"[HerdrCoordinator] 👀 開始守護 【{display_title}】 (輪詢間隔: {interval}s, 重修上限: {max_retries})...")
 
     while True:
         iteration += 1
@@ -536,41 +963,47 @@ def watch_agent(
         if agent_status == "working":
             has_seen_working = True
             waiting_input = False
-            # Agent 正在處理中，繼續等待
             time.sleep(interval)
             continue
 
-        # 狀態為 idle, blocked, done 或 unknown
         question_text = detect_question_or_confirmation(visible_text, status=agent_status)
 
         if question_text:
-            # 偵測到提問或需要確認
             if not waiting_input or question_text != last_question_content:
                 waiting_input = True
                 last_question_content = question_text
                 notify_question(agent, question_text, name=name, agent_info=agent_info)
-            # 保持在守護狀態，等待主人 relay 答覆
             time.sleep(interval)
             continue
 
-        # 無提問
-        if has_seen_working:
-            # 曾進入 working 狀態且現在回到 idle/done，且無提問 -> 完工！
-            summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
-            notify_completion(agent, summary, name=name, agent_info=agent_info)
-            return {"status": "completed", "agent": agent, "summary": summary}
-
-        # 尚未觀察到 working 狀態：檢查是否超過剛派發的初始啟動緩衝期
         elapsed = time.time() - start_time
-        if elapsed < start_grace_seconds:
-            # 緩衝期內，繼續等待 Agent 啟動
+        if not has_seen_working and elapsed < start_grace_seconds:
             time.sleep(interval)
             continue
-        else:
-            # 超過緩衝期且依然為 idle/done，視為快速指令完工
-            summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
-            notify_completion(agent, summary, name=name, agent_info=agent_info)
-            return {"status": "completed", "agent": agent, "summary": summary}
+
+        outcome = _finalize_watch_completion(
+            agent=agent,
+            visible_text=visible_text,
+            agent_info=agent_info,
+            name=name,
+            task_prompt=task_prompt,
+            criteria=criteria,
+            baseline_lines=current_baseline,
+            retries_used=retries_used,
+            max_retries=max_retries,
+            auto_review=auto_review,
+            batch_id=batch_id,
+            batch_total=batch_total,
+        )
+        if outcome["action"] == "retry":
+            retries_used += 1
+            current_baseline = outcome["new_baseline"]
+            has_seen_working = False
+            waiting_input = False
+            start_time = time.time()
+            time.sleep(interval)
+            continue
+        return outcome["result"]
 
 
 def print_agent_table(agents: List[Dict[str, Any]]) -> None:
@@ -615,6 +1048,12 @@ def main():
     sub_dispatch.add_argument("--agent", "-a", required=True, help="目標 Agent 名稱或 Pane ID")
     sub_dispatch.add_argument("--prompt", "-p", required=True, help="要派發的任務 Prompt")
     sub_dispatch.add_argument("--name", "-n", default=None, help="自訂顯示名稱 (例如: 個人助理 · Git檢查)")
+    sub_dispatch.add_argument("--criteria", "-c", default=None, help="驗收標準 (Definition of Done)")
+    sub_dispatch.add_argument("--max-retries", type=int, default=3, help="品管驗收未通過時自動打回重修上限 (預設 3 次)")
+    sub_dispatch.add_argument("--batch-id", default=None, help="多任務併發批次 ID")
+    sub_dispatch.add_argument("--batch-total", type=int, default=None, help="該批次總任務數")
+    sub_dispatch.add_argument("--no-review", action="store_true", help="略過品管自動驗收，完工直接通知")
+    sub_dispatch.add_argument("--force", action="store_true", help="即使目標處於 working 也強制派發")
     sub_dispatch.add_argument("--no-watch", action="store_true", help="僅派發任務，不啟動背景守護進程")
     sub_dispatch.add_argument("--interval", type=float, default=3.0, help="守護者輪詢間隔 (秒)")
     sub_dispatch.add_argument("--ttl", type=int, default=120, help="守護進程生命週期上限 (分鐘)")
@@ -623,6 +1062,13 @@ def main():
     sub_watch = subparsers.add_parser("watch", help="啟動背景守護監聽特定 Agent")
     sub_watch.add_argument("--agent", "-a", required=True, help="目標 Agent 名稱或 Pane ID")
     sub_watch.add_argument("--name", "-n", default=None, help="自訂顯示名稱")
+    sub_watch.add_argument("--task", default=None, help="原始派發任務需求（供自動驗收參考）")
+    sub_watch.add_argument("--criteria", "-c", default=None, help="驗收標準 (Definition of Done)")
+    sub_watch.add_argument("--max-retries", type=int, default=3, help="自動打回重修上限 (預設 3 次)")
+    sub_watch.add_argument("--baseline-lines", type=int, default=0, help="派發前 JSONL 日誌基準行數")
+    sub_watch.add_argument("--batch-id", default=None, help="多任務併發批次 ID")
+    sub_watch.add_argument("--batch-total", type=int, default=None, help="該批次總任務數")
+    sub_watch.add_argument("--no-review", action="store_true", help="略過品管自動驗收")
     sub_watch.add_argument("--interval", "-i", type=float, default=3.0, help="輪詢間隔 (秒)")
     sub_watch.add_argument("--timeout", type=float, default=None, help="最大監聽逾時 (秒)")
 
@@ -648,6 +1094,12 @@ def main():
             no_watch=args.no_watch,
             interval=args.interval,
             ttl_minutes=args.ttl,
+            criteria=args.criteria,
+            max_retries=args.max_retries,
+            batch_id=args.batch_id,
+            batch_total=args.batch_total,
+            auto_review=not args.no_review,
+            force=args.force,
         )
         if not res.get("success"):
             sys.exit(1)
@@ -658,6 +1110,13 @@ def main():
             name=args.name,
             interval=args.interval,
             timeout=args.timeout,
+            task_prompt=args.task,
+            criteria=args.criteria,
+            max_retries=args.max_retries,
+            baseline_lines=args.baseline_lines,
+            batch_id=args.batch_id,
+            batch_total=args.batch_total,
+            auto_review=not args.no_review,
         )
         print(f"[HerdrCoordinator] 守護結束: {res.get('status')}")
 

@@ -954,6 +954,52 @@ async def trigger_memory_sync():
     result = await loop.run_in_executor(None, sync_and_commit_memory, False)
     return result
 
+
+class InternalMemorySyncRequest(BaseModel):
+    summary: str
+    source: str = "herdr-coordinator"
+
+
+@app.post("/api/internal/memory-sync")
+async def internal_memory_sync(
+    payload: InternalMemorySyncRequest,
+    _authorized: bool = Depends(verify_token),
+):
+    """背景任務完工後，趁主大腦閒置時靜默注入 3 行摘要，讓主人 Follow-up 可無縫接話"""
+    summary = (payload.summary or "").strip()
+    if not summary:
+        return {"status": "ignored", "synced": False, "reason": "empty_summary"}
+
+    worker = agy_singleton.brain_pool.primary_worker
+    if not worker.lock.acquire(blocking=False):
+        return {"status": "busy", "synced": False, "reason": "brain_busy"}
+    worker.lock.release()
+
+    def _inject_silent_memo() -> bool:
+        if not worker._is_ready or worker.proc is None or worker.proc.poll() is not None:
+            return False
+        memo_prompt = (
+            f"[系統背景備忘（來源: {payload.source}），請僅回覆「收到」兩字，勿呼叫任何工具]\n"
+            f"{summary}"
+        )
+        gen = worker.send_query_stream(memo_prompt, target_model=None)
+        try:
+            for _ in gen:
+                pass
+            return True
+        except Exception as ex:
+            print(f"[internal_memory_sync] Failed: {ex}")
+            return False
+        finally:
+            try:
+                gen.close()
+            except Exception:
+                pass
+
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(None, _inject_silent_memo)
+    return {"status": "ok" if ok else "skipped", "synced": ok}
+
 @app.get("/api/status")
 @app.get("/api/usage")
 @app.get("/api/quota")

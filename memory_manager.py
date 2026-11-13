@@ -1,9 +1,17 @@
 import json
 import shutil
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from config import settings
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+_JSONL_THREAD_LOCK = threading.Lock()
 
 class MemoryManager:
     """
@@ -205,6 +213,21 @@ class MemoryManager:
         self._log_audit("demand", demand_record)
         return f"已記錄專案項目至 memory/projects.md：[{status}] {title}"
 
+    def _append_jsonl_locked(self, file_path: Path, record: Dict[str, Any]):
+        """執行緒與跨進程安全的 JSONL 附加寫入"""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with _JSONL_THREAD_LOCK:
+            with open(file_path, "a", encoding="utf-8") as f:
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.write(line)
+                    f.flush()
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
     def log_interaction(
         self,
         query: str,
@@ -221,8 +244,7 @@ class MemoryManager:
         }
         if metadata:
             record["metadata"] = metadata
-        with open(settings.HISTORY_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._append_jsonl_locked(settings.HISTORY_LOG_PATH, record)
 
     def _log_audit(self, event_type: str, data: Dict[str, Any]):
         audit_file = settings.DATA_DIR / "audit.jsonl"
@@ -231,7 +253,6 @@ class MemoryManager:
             "event": event_type,
             "data": data,
         }
-        with open(audit_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._append_jsonl_locked(audit_file, entry)
 
 memory_manager = MemoryManager()

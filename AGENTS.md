@@ -89,6 +89,11 @@
      - **秒級交差釋放**：啟動後，**應立即結束當前 turn** 並向主人回覆確認（例如：「👌 監控已在背景啟動（任務 ID: task_xxx）！有任何異動將自動推播通知給您。」），絕不留在當前對話中迴圈等待，確保主大腦立刻空出。
    - **深度耗時任務派出 Subagent (`invoke_subagent`)**：
      - 若任務涉及深度跨站調研、多文件批量處理或繁複代碼重構，主 agent 應優先透過 `invoke_subagent` 委派給專屬子代理在背景推進，主大腦秒級回報派發狀態，讓主人的日常生活隨問隨答永不卡頓。
+   - **跨專案 Herdr 派工、自動驗收與 Follow-up 查閱規範**：
+     - 當任務需要於其他專案目錄執行（需讀取該專案 `AGENTS.md` / 環境），或指定交給其他本機 Agent（支援 `agy` 與 `omp`）時，統一透過 `scripts/herdr_coordinator.py dispatch` 派發並登記 TaskManager 背景監控。
+     - 預設啟用無狀態 `agy -p` 驗收迴圈與失敗自動重試（`--max-retries 3`，可用 `--no-review` 關閉）；並於結案時寫入 `memory/history.jsonl` 及透過 `/api/internal/memory-sync` 同步至閒置主大腦。
+     - 支援同批次併發追蹤（`--batch-id` / `--batch-total`），並於發送前檢查目標 `agent_status` 是否忙碌。
+     - **Follow-up 追問查閱原則**：若主人後續追問先前由 Herdr 派發完成的任務細節，除參考 `memory/history.jsonl` 摘要外，可再透過 `herdr agent list` 取得該 agent 的 `agent_session`（`agy` 的 `transcript_full.jsonl` 或 `omp` 的 `.jsonl`）精準回溯完整工具呼叫與對話紀錄。
 5. **網頁瀏覽與防爬蟲分流原則 (Browser Relay Routing Policy)**：
    - **第一優先（白名單直達）**：
      針對已知高難度反爬蟲、純 SPA 動態渲染或嚴格驗證盾之平台（如 Inline、OpenTable 等餐廳訂位、拓元/KKTIX 售票系統、蝦皮、社群平台），**直接調用 `browser-relay` 操控真身 Chrome**，跳過靜態抓取，秒級直達。

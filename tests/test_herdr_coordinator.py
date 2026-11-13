@@ -310,6 +310,12 @@ def test_cli_dispatch(mock_dispatch):
         no_watch=True,
         interval=3.0,
         ttl_minutes=120,
+        criteria=None,
+        max_retries=3,
+        batch_id=None,
+        batch_total=None,
+        auto_review=True,
+        force=False,
     )
 
 
@@ -334,5 +340,173 @@ def test_cli_watch(mock_watch):
         name=None,
         interval=1.5,
         timeout=None,
+        task_prompt=None,
+        criteria=None,
+        max_retries=3,
+        baseline_lines=0,
+        batch_id=None,
+        batch_total=None,
+        auto_review=True,
     )
+
+
+def test_read_session_turns_agy_baseline(tmp_path):
+    from scripts.herdr_coordinator import read_session_turns
+
+    log_file = tmp_path / "transcript_full.jsonl"
+    lines = [
+        json.dumps({"type": "USER_INPUT", "content": "old prompt"}),
+        json.dumps({"type": "PLANNER_RESPONSE", "content": "old reply"}),
+        json.dumps({"type": "USER_INPUT", "content": "new prompt"}),
+        json.dumps(
+            {
+                "type": "PLANNER_RESPONSE",
+                "content": "new reply done",
+                "tool_calls": [{"name": "run_command"}],
+            }
+        ),
+    ]
+    log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("agy", log_file)):
+        res = read_session_turns("agy", baseline_lines=2)
+
+    assert res["agent_kind"] == "agy"
+    assert res["total_lines"] == 4
+    assert res["user_inputs"] == ["new prompt"]
+    assert res["latest_reply"] == "new reply done"
+    assert "run_command" in res["tool_calls"]
+
+
+def test_read_session_turns_omp_baseline(tmp_path):
+    from scripts.herdr_coordinator import read_session_turns
+
+    log_file = tmp_path / "omp_session.jsonl"
+    lines = [
+        json.dumps({"type": "session", "id": "s1"}),
+        json.dumps(
+            {
+                "type": "message",
+                "message": {"role": "user", "content": [{"type": "text", "text": "fix bug"}]},
+            }
+        ),
+        json.dumps(
+            {
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "bug fixed"}],
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "message",
+                "message": {"role": "toolResult", "toolName": "edit_file", "isError": False},
+            }
+        ),
+    ]
+    log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("omp", log_file)):
+        res = read_session_turns("omp-worker", baseline_lines=1)
+
+    assert res["agent_kind"] == "omp"
+    assert res["total_lines"] == 4
+    assert res["user_inputs"] == ["fix bug"]
+    assert res["latest_reply"] == "bug fixed"
+    assert "edit_file" in res["tool_calls"]
+
+
+@patch("scripts.herdr_coordinator.get_herdr_agent")
+def test_dispatch_task_busy_guard(mock_get):
+    mock_get.return_value = {"agent": "agy-worker", "agent_status": "working"}
+    res = dispatch_task("agy-worker", "new task")
+    assert res["success"] is False
+    assert res["error"] == "agent_busy"
+
+
+@patch("scripts.herdr_coordinator.notify_completion")
+@patch("scripts.herdr_coordinator.record_task_to_history_and_memory")
+@patch("scripts.herdr_coordinator.submit_herdr_prompt")
+@patch("scripts.herdr_coordinator.review_worker_output")
+@patch("scripts.herdr_coordinator.collect_workspace_evidence")
+@patch("scripts.herdr_coordinator.read_session_turns")
+@patch("scripts.herdr_coordinator.read_herdr_agent_visible", return_value="")
+@patch("scripts.herdr_coordinator.get_herdr_agent")
+def test_watch_agent_review_reject_then_pass(
+    mock_get,
+    _mock_read_visible,
+    mock_turns,
+    mock_evidence,
+    mock_review,
+    mock_submit,
+    mock_record,
+    mock_notify,
+):
+    mock_get.side_effect = [
+        {"agent": "agy", "agent_status": "working", "cwd": "/tmp/repo"},
+        {"agent": "agy", "agent_status": "idle", "cwd": "/tmp/repo"},
+        {"agent": "agy", "agent_status": "working", "cwd": "/tmp/repo"},
+        {"agent": "agy", "agent_status": "idle", "cwd": "/tmp/repo"},
+    ]
+    mock_turns.return_value = {
+        "latest_reply": "fixed attempt",
+        "total_lines": 8,
+        "log_path": "/tmp/log",
+        "tool_calls": ["pytest"],
+    }
+    mock_evidence.return_value = "M app.py"
+    mock_review.side_effect = [
+        {"verdict": "REJECT", "summary": "missing tests", "feedback": "Add unit tests"},
+        {"verdict": "PASS", "summary": "tests added and passing", "feedback": ""},
+    ]
+    mock_submit.return_value = {"success": True}
+    mock_notify.return_value = True
+
+    res = watch_agent(
+        "agy",
+        interval=0.01,
+        start_grace_seconds=0.0,
+        task_prompt="implement feature",
+        max_retries=3,
+        auto_review=True,
+    )
+
+    assert res["status"] == "completed"
+    assert res["retries_used"] == 1
+    mock_submit.assert_called_once()
+    assert "Add unit tests" in mock_submit.call_args[0][1]
+    mock_record.assert_called_once()
+    mock_notify.assert_called_once()
+
+
+def test_update_batch_progress(tmp_path):
+    from scripts.herdr_coordinator import update_batch_progress
+
+    with patch("scripts.herdr_coordinator.BASE_DIR", tmp_path):
+        b1 = update_batch_progress("batch-1", "agy-1", "Task 1", "completed", "done 1", batch_total=2)
+        assert b1 is not None
+        assert b1["total"] == 2
+        assert len(b1["tasks"]) == 1
+
+        b2 = update_batch_progress("batch-1", "agy-2", "Task 2", "completed", "done 2", batch_total=2)
+        assert b2 is not None
+        assert len(b2["tasks"]) == 2
+        assert (tmp_path / "data" / "herdr_batches.json").exists()
+
+
+def test_memory_manager_append_jsonl_locked(tmp_path):
+    from memory_manager import MemoryManager
+
+    mm = MemoryManager()
+    jsonl_file = tmp_path / "history.jsonl"
+    mm._append_jsonl_locked(jsonl_file, {"role": "user", "content": "hello"})
+    mm._append_jsonl_locked(jsonl_file, {"role": "assistant", "content": "world"})
+
+    lines = jsonl_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["content"] == "hello"
+    assert json.loads(lines[1])["content"] == "world"
+
 
