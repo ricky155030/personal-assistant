@@ -759,12 +759,27 @@ public final class VoiceSessionCoordinator: ObservableObject {
         get { UserDefaults.standard.string(forKey: "macmini_last_synced_ts") }
         set { UserDefaults.standard.set(newValue, forKey: "macmini_last_synced_ts") }
     }
+    private var isSyncingHistory: Bool = false
 
     private func loadUnifiedTimeline() {
         if let data = try? Data(contentsOf: unifiedTimelineURL),
            let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data),
            !decoded.isEmpty {
-            messages = decoded
+            // 自動清理舊版同步異常可能殘留的連續重複訊息
+            var cleaned: [ChatMessage] = []
+            for msg in decoded {
+                let norm = msg.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let prev = cleaned.last,
+                   prev.role == msg.role,
+                   prev.content.trimmingCharacters(in: .whitespacesAndNewlines) == norm {
+                    continue
+                }
+                cleaned.append(msg)
+            }
+            messages = cleaned
+            if cleaned.count != decoded.count {
+                saveUnifiedTimeline()
+            }
             return
         }
         // 若初次升級尚未建立統一時間軸，從最近一次本地 session 無痛遷移
@@ -781,6 +796,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     public func syncRemoteHistory(limit: Int = 40) async {
+        guard !isSyncingHistory else { return }
+        isSyncingHistory = true
+        defer { isSyncingHistory = false }
+
         let items = await apiClient.fetchHistory(limit: limit, since: lastSyncedHistoryTimestamp)
         guard !items.isEmpty else { return }
 
