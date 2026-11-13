@@ -75,6 +75,8 @@ struct HandsFreeMainView: View {
     @State private var showHistoryDrawer: Bool = false
     @State private var showQuotaSheet: Bool = false
     @State private var showSettings: Bool = false
+    @State private var showModelPopover: Bool = false
+    @State private var showContextPopover: Bool = false
     @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
@@ -183,83 +185,12 @@ struct HandsFreeMainView: View {
     // MARK: - 2. 頂部 Gemini 風格導覽列
     private var topHeaderBar: some View {
         HStack(spacing: 12) {
-            // 模型選擇、思考層級、語音辨識與語音設定選單（使用原生 Picker 確保選中項顯示系統打勾 ✓）
-            Menu {
-                Section("AI 模型選擇") {
-                    Picker("AI 模型", selection: Binding(
-                        get: { coordinator.selectedModelFamily },
-                        set: { newVal in
-                            haptic.impactOccurred()
-                            coordinator.selectedModelFamily = newVal
-                        }
-                    )) {
-                        ForEach(ModelFamily.allCases) { fam in
-                            Label(fam.fullName, systemImage: fam.icon)
-                                .tag(fam)
-                        }
-                    }
-                }
-
-                Section("思考深度") {
-                    Picker("思考深度", selection: Binding(
-                        get: { coordinator.thinkingLevel },
-                        set: { newVal in
-                            haptic.impactOccurred()
-                            coordinator.thinkingLevel = newVal
-                        }
-                    )) {
-                        ForEach(ThinkingLevel.allCases) { level in
-                            Text("\(level.headerTitle) — \(level.menuSubtitle)")
-                                .tag(level)
-                        }
-                    }
-                }
-
-                Section("回覆長度") {
-                    Picker("回覆長度", selection: Binding(
-                        get: { coordinator.responseLength },
-                        set: { newVal in
-                            haptic.impactOccurred()
-                            coordinator.responseLength = newVal
-                        }
-                    )) {
-                        ForEach(ResponseLengthOption.allCases) { opt in
-                            Label(opt.title, systemImage: opt.icon)
-                                .tag(opt)
-                        }
-                    }
-                }
-
-                Section("語音辨識模式") {
-                    Picker("語音辨識", selection: Binding(
-                        get: { coordinator.sttMode },
-                        set: { newVal in
-                            haptic.impactOccurred()
-                            coordinator.sttMode = newVal
-                        }
-                    )) {
-                        ForEach(STTRecognitionMode.allCases) { mode in
-                            Label(mode.title, systemImage: mode.icon)
-                                .tag(mode)
-                        }
-                    }
-                }
-
-                Section("助理朗讀語速") {
-                    Picker("朗讀語速", selection: Binding(
-                        get: { coordinator.ttsSpeed },
-                        set: { newVal in
-                            haptic.impactOccurred()
-                            coordinator.ttsSpeed = newVal
-                        }
-                    )) {
-                        ForEach(TTSSpeedOption.allCases) { spd in
-                            Text(spd.title)
-                                .tag(spd)
-                        }
-                    }
-                }
-            } label: {
+            // 模型選擇、思考層級、語音辨識與語音設定選單（改用自訂小字級 Popover 解決系統 Menu 字體過大換行問題）
+            Button(action: {
+                haptic.impactOccurred()
+                isInputFocused = false
+                showModelPopover = true
+            }) {
                 VStack(alignment: .leading, spacing: 1.5) {
                     HStack(spacing: 3) {
                         Text(coordinator.selectedModelFamily.displayName)
@@ -294,6 +225,10 @@ struct HandsFreeMainView: View {
                     }
                 }
                 .fixedSize(horizontal: true, vertical: false)
+            }
+            .popover(isPresented: $showModelPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                modelMenuPopoverContent
+                    .presentationCompactAdaptation(.popover)
             }
 
             Spacer()
@@ -383,34 +318,11 @@ struct HandsFreeMainView: View {
 
     private var contextUsageButton: some View {
         let info = latestContextUsage
-        return Menu {
-            Section("Context 視窗佔比") {
-                Text(info.detailText)
-            }
-
-            Section("當前音訊：\(coordinator.currentAudioRouteName)") {
-                Button(action: {
-                    haptic.impactOccurred()
-                    coordinator.setAudioRoute(forceSpeaker: true)
-                }) {
-                    Label("手機底部揚聲器 (強制擴音)", systemImage: "speaker.wave.3.fill")
-                }
-
-                Button(action: {
-                    haptic.impactOccurred()
-                    coordinator.setAudioRoute(forceSpeaker: false)
-                }) {
-                    Label("車機 / 藍牙設備優先", systemImage: "car.fill")
-                }
-
-                Button(action: {
-                    haptic.impactOccurred()
-                    coordinator.setAudioRouteToReceiver()
-                }) {
-                    Label("手機頂部聽筒 (話筒私密)", systemImage: "ear")
-                }
-            }
-        } label: {
+        return Button(action: {
+            haptic.impactOccurred()
+            isInputFocused = false
+            showContextPopover = true
+        }) {
             ZStack {
                 Circle()
                     .fill(Color(white: 0.13))
@@ -434,6 +346,143 @@ struct HandsFreeMainView: View {
             }
             .frame(width: 42, height: 42)
         }
+        .popover(isPresented: $showContextPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            contextPopoverContent(info: info)
+                .presentationCompactAdaptation(.popover)
+        }
+    }
+
+    // MARK: - 精緻小字級 Popover 選單內容
+    private func popoverSectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundColor(Color(white: 0.55))
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 3)
+    }
+
+    private func popoverOptionRow(
+        title: String,
+        icon: String? = nil,
+        isSelected: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: {
+            haptic.impactOccurred()
+            action()
+        }) {
+            HStack(spacing: 8) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundColor(isSelected ? .cyan : Color(white: 0.72))
+                        .frame(width: 16)
+                }
+                Text(title)
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.cyan)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func contextPopoverContent(info: (ratio: Double, pctText: String, detailText: String, tint: Color)) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            popoverSectionHeader("Context 視窗佔比")
+            Text(info.detailText)
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+
+            Divider().opacity(0.25)
+
+            popoverSectionHeader("當前音訊：\(coordinator.currentAudioRouteName)")
+            popoverOptionRow(title: "手機底部揚聲器 (擴音)", icon: "speaker.wave.3.fill", isSelected: coordinator.isForcedSpeaker) {
+                coordinator.setAudioRoute(forceSpeaker: true)
+                showContextPopover = false
+            }
+            popoverOptionRow(title: "車機 / 藍牙設備優先", icon: "car.fill", isSelected: coordinator.isBluetoothOrCarConnected) {
+                coordinator.setAudioRoute(forceSpeaker: false)
+                showContextPopover = false
+            }
+            popoverOptionRow(title: "手機頂部聽筒 (私密)", icon: "ear", isSelected: false) {
+                coordinator.setAudioRouteToReceiver()
+                showContextPopover = false
+            }
+        }
+        .padding(.vertical, 6)
+        .frame(width: 248)
+        .background(Color(white: 0.12))
+        .preferredColorScheme(.dark)
+    }
+
+    private var modelMenuPopoverContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 1) {
+                popoverSectionHeader("AI 模型選擇")
+                ForEach(ModelFamily.allCases) { fam in
+                    popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
+                        coordinator.selectedModelFamily = fam
+                        showModelPopover = false
+                    }
+                }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+                popoverSectionHeader("思考深度")
+                ForEach(ThinkingLevel.allCases) { level in
+                    popoverOptionRow(title: "\(level.headerTitle) — \(level.menuSubtitle)", isSelected: coordinator.thinkingLevel == level) {
+                        coordinator.thinkingLevel = level
+                        showModelPopover = false
+                    }
+                }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+                popoverSectionHeader("回覆長度")
+                ForEach(ResponseLengthOption.allCases) { opt in
+                    popoverOptionRow(title: opt.title, icon: opt.icon, isSelected: coordinator.responseLength == opt) {
+                        coordinator.responseLength = opt
+                        showModelPopover = false
+                    }
+                }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+                popoverSectionHeader("語音辨識模式")
+                ForEach(STTRecognitionMode.allCases) { mode in
+                    popoverOptionRow(title: mode.title, icon: mode.icon, isSelected: coordinator.sttMode == mode) {
+                        coordinator.sttMode = mode
+                        showModelPopover = false
+                    }
+                }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+                popoverSectionHeader("助理朗讀語速")
+                ForEach(TTSSpeedOption.allCases) { spd in
+                    popoverOptionRow(title: spd.title, isSelected: coordinator.ttsSpeed == spd) {
+                        coordinator.ttsSpeed = spd
+                        showModelPopover = false
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(width: 248)
+        .frame(maxHeight: 460)
+        .background(Color(white: 0.12))
+        .preferredColorScheme(.dark)
     }
 
     private func dynamicQuotaInfo(for family: ModelFamily) -> (pct: Double, resetIn: String, tint: Color, icon: String) {
