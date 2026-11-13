@@ -401,12 +401,18 @@ public final class MacMiniAPIClient {
                             let thinkingLevel = json["thinking_level"] as? String ?? "med"
                             let reportUrl = json["report_url"] as? String ?? ""
                             let quickReplies = json["quick_replies"] as? [String] ?? []
+                            var parsedMeta: TurnMetadata? = nil
+                            if let metaObj = json["metadata"] as? [String: Any],
+                               let metaData = try? JSONSerialization.data(withJSONObject: metaObj) {
+                                parsedMeta = try? JSONDecoder().decode(TurnMetadata.self, from: metaData)
+                            }
                             continuation.yield(.done(
                                 fullReply: fullReply,
                                 latency: latency,
                                 thinkingLevel: thinkingLevel,
                                 reportUrl: reportUrl,
-                                quickReplies: quickReplies
+                                quickReplies: quickReplies,
+                                metadata: parsedMeta
                             ))
 
                         case "error":
@@ -431,6 +437,7 @@ public final class MacMiniAPIClient {
         public let query: String
         public let reply: String
         public let source: String?
+        public let metadata: TurnMetadata?
     }
 
     private struct RemoteHistoryResponse: Codable {

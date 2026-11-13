@@ -812,7 +812,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     $0.role == .assistant && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == rText
                 }
                 if !alreadyExists {
-                    messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed))
+                    messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed, metadata: item.metadata))
                     appended = true
                 }
             }
@@ -1205,13 +1205,14 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 self.speechPlayer.enqueueAudioChunk(seq: seq, sentence: sentence, audioData: audioData)
             }
 
-        case .done(let fullReply, _, _, let reportUrl, let quickReplies):
+        case .done(let fullReply, _, _, let reportUrl, let quickReplies, let metadata):
             self.currentToolStatus = nil
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
                 self.messages[idx].content = fullReply.isEmpty ? self.currentStreamingText : fullReply
                 self.messages[idx].status = .completed
                 self.messages[idx].reportUrl = reportUrl.isEmpty ? nil : reportUrl
                 self.messages[idx].quickReplies = quickReplies
+                self.messages[idx].metadata = metadata
             }
             self.syncCurrentSessionToHistory()
             self.refreshQuotaStatus(force: false)

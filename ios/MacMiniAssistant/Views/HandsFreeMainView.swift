@@ -1408,6 +1408,16 @@ struct GeminiMessageRow: View {
                         .cornerRadius(10)
                     }
                 }
+
+                // 單輪模型與花費 Metadata（已完成且有紀錄時顯示）
+                if message.status == .completed,
+                   let metaText = message.metadata?.summaryText,
+                   !metaText.isEmpty {
+                    Text(metaText)
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color(white: 0.48))
+                        .padding(.top, 2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -205,14 +205,22 @@ class MemoryManager:
         self._log_audit("demand", demand_record)
         return f"已記錄專案項目至 memory/projects.md：[{status}] {title}"
 
-    def log_interaction(self, query: str, reply: str, actions: List[str] = None):
-        """記錄每筆語音對話紀錄與執行的動作"""
+    def log_interaction(
+        self,
+        query: str,
+        reply: str,
+        actions: List[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """記錄每筆語音對話紀錄與執行的動作及花費 Metadata"""
         record = {
             "timestamp": datetime.now().isoformat(),
             "query": query,
             "reply": reply,
             "actions": actions or [],
         }
+        if metadata:
+            record["metadata"] = metadata
         with open(settings.HISTORY_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 

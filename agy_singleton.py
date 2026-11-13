@@ -29,6 +29,35 @@ from thinking_router import classify_thinking_level, clean_query_prefix
 
 logger = logging.getLogger("AgyBrainPool")
 
+# 各模型家族每百萬 Tokens 参考定價 (USD: input / cache_read / output)
+_MODEL_PRICING_PER_M = {
+    "hydrogen": (2.00, 0.20, 12.00),
+    "argon": (1.25, 0.125, 10.00),
+    "flash": (0.30, 0.03, 2.50),
+    "sonnet": (3.00, 0.30, 15.00),
+    "opus": (15.00, 1.50, 75.00),
+}
+
+
+def _estimate_turn_cost_usd(model: str, usage: Optional[dict]) -> float:
+    """依據模型定價與非快取輸入、Cache Read、輸出/思考 Tokens 估算單輪花費 (USD)"""
+    if not usage:
+        return 0.0
+    m_lower = (model or "").lower()
+    in_p, cache_p, out_p = _MODEL_PRICING_PER_M["hydrogen"]
+    for key, prices in _MODEL_PRICING_PER_M.items():
+        if key in m_lower:
+            in_p, cache_p, out_p = prices
+            break
+
+    inp = max(0, int(usage.get("input_tokens", 0) or 0))
+    c_read = max(0, int(usage.get("cached_read_tokens", 0) or 0))
+    out = max(0, int(usage.get("output_tokens", 0) or 0))
+    thought = max(0, int(usage.get("thought_tokens", 0) or 0))
+
+    cost = (inp * in_p + c_read * cache_p + (out + thought) * out_p) / 1_000_000.0
+    return round(cost, 6)
+
 
 def format_tool_status(tool_name: str, tool_info: Optional[dict] = None) -> str:
     """將底層工具調用轉化為使用者友善的即時進度狀態文字"""
@@ -1328,11 +1357,29 @@ class AgyBrainPool:
         if not turn_result.get("cancelled"):
             ttft = turn_result.get("time_to_first_token", 0)
             tot = turn_result.get("total_latency", 0)
+            usage = dict(worker.last_usage or {})
+            est_cost = _estimate_turn_cost_usd(target_model, usage)
+            metadata = {
+                "model": target_model,
+                "thinking_level": chosen_level,
+                "ttft_sec": round(ttft, 2),
+                "total_sec": round(tot, 2),
+                "usage": {
+                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                    "output_tokens": int(usage.get("output_tokens", 0) or 0),
+                    "thought_tokens": int(usage.get("thought_tokens", 0) or 0),
+                    "cached_read_tokens": int(usage.get("cached_read_tokens", 0) or 0),
+                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                },
+                "estimated_cost_usd": est_cost,
+            }
+            turn_result["metadata"] = metadata
             actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
             memory_manager.log_interaction(
                 query,
                 turn_result.get("clean_reply", ""),
-                [actions_str]
+                [actions_str],
+                metadata=metadata,
             )
         else:
             print(f"[AgyBrainPool] 🛑 統一大腦本次 Turn 已被使用者中途取消 (耗時: {turn_result.get('total_latency', 0):.2f}s)")

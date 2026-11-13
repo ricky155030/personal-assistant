@@ -218,6 +218,47 @@ public enum MessageStatus: String, Codable {
     case error
 }
 
+public struct TurnUsage: Codable, Equatable {
+    public var input_tokens: Int?
+    public var output_tokens: Int?
+    public var thought_tokens: Int?
+    public var cached_read_tokens: Int?
+    public var total_tokens: Int?
+}
+
+public struct TurnMetadata: Codable, Equatable {
+    public var model: String?
+    public var thinking_level: String?
+    public var ttft_sec: Double?
+    public var total_sec: Double?
+    public var usage: TurnUsage?
+    public var estimated_cost_usd: Double?
+
+    public var summaryText: String {
+        var parts: [String] = []
+        if let m = model, !m.isEmpty {
+            let shortModel = m
+                .replacingOccurrences(of: "gemini-4-hydrogen-", with: "G4 Hydrogen ")
+                .replacingOccurrences(of: "gemini-4-argon-", with: "G4 Argon ")
+                .replacingOccurrences(of: "gemini-3.8-flash-", with: "G3.8 Flash ")
+                .replacingOccurrences(of: "claude-sonnet-5-5-", with: "Sonnet 5.5 ")
+                .replacingOccurrences(of: "claude-opus-5-5-", with: "Opus 5.5 ")
+            parts.append(shortModel)
+        }
+        if let t = total_sec, t > 0 {
+            parts.append(String(format: "%.1fs", t))
+        }
+        if let cost = estimated_cost_usd, cost > 0 {
+            parts.append(String(format: "~$%.4f", cost))
+        }
+        if let c = usage?.cached_read_tokens, c > 0 {
+            let cStr = c >= 1000 ? String(format: "%.1fk", Double(c) / 1000.0) : "\(c)"
+            parts.append("Cache \(cStr)")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
 public struct ChatMessage: Identifiable, Codable, Equatable {
     public let id: UUID
     public let role: MessageRole
@@ -230,6 +271,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public var reportUrl: String?
     public var attachedImageData: Data?
     public var attachedImagesData: [Data]?
+    public var metadata: TurnMetadata?
 
     public init(
         id: UUID = UUID(),
@@ -242,7 +284,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         quickReplies: [String] = [],
         reportUrl: String? = nil,
         attachedImageData: Data? = nil,
-        attachedImagesData: [Data]? = nil
+        attachedImagesData: [Data]? = nil,
+        metadata: TurnMetadata? = nil
     ) {
         self.id = id
         self.role = role
@@ -255,10 +298,11 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.reportUrl = reportUrl
         self.attachedImageData = attachedImageData ?? attachedImagesData?.first
         self.attachedImagesData = attachedImagesData ?? (attachedImageData != nil ? [attachedImageData!] : nil)
+        self.metadata = metadata
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData
+        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData, metadata
     }
 
     public init(from decoder: Decoder) throws {
@@ -274,6 +318,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.reportUrl = try container.decodeIfPresent(String.self, forKey: .reportUrl)
         self.attachedImageData = try container.decodeIfPresent(Data.self, forKey: .attachedImageData)
         self.attachedImagesData = try container.decodeIfPresent([Data].self, forKey: .attachedImagesData)
+        self.metadata = try container.decodeIfPresent(TurnMetadata.self, forKey: .metadata)
     }
 }
 
@@ -302,7 +347,7 @@ public enum SSEEvent {
     case textDelta(delta: String)
     case ttsSentence(sentence: String)
     case audioChunk(seq: Int, sentence: String, audioData: Data)
-    case done(fullReply: String, latency: Double, thinkingLevel: String, reportUrl: String, quickReplies: [String])
+    case done(fullReply: String, latency: Double, thinkingLevel: String, reportUrl: String, quickReplies: [String], metadata: TurnMetadata?)
     case error(message: String)
 }
 

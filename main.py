@@ -731,7 +731,8 @@ async def voice_chat_stream(
                 "latency": total_latency,
                 "thinking_level": level or "med",
                 "report_url": report_url,
-                "quick_replies": quick_replies
+                "quick_replies": quick_replies,
+                "metadata": turn_result.get("metadata"),
             }
             loop.call_soon_threadsafe(event_queue.put_nowait, done_payload)
 
@@ -936,6 +937,7 @@ def chat_history(
                     "reply": item.get("reply", ""),
                     "source": item.get("source") or _infer_history_source(raw_q),
                     "actions": item.get("actions", []),
+                    "metadata": item.get("metadata"),
                 })
     except FileNotFoundError:
         pass
