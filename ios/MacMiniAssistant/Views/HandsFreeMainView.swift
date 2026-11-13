@@ -471,11 +471,11 @@ struct HandsFreeMainView: View {
     // MARK: - 精緻小字級 Popover 選單內容
     private func popoverSectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundColor(Color(white: 0.55))
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 3)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
     }
 
     private func popoverOptionRow(
@@ -488,17 +488,18 @@ struct HandsFreeMainView: View {
             haptic.impactOccurred()
             action()
         }) {
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 12))
+                        .font(.system(size: 12.5))
                         .foregroundColor(isSelected ? .cyan : Color(white: 0.72))
                         .frame(width: 16)
                 }
                 Text(title)
-                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
                     .foregroundColor(.white)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if isSelected {
                     Image(systemName: "checkmark")
@@ -506,8 +507,13 @@ struct HandsFreeMainView: View {
                         .foregroundColor(.cyan)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.cyan.opacity(0.12) : Color.clear)
+            )
+            .padding(.horizontal, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -515,22 +521,22 @@ struct HandsFreeMainView: View {
 
     private var modelMenuPopoverContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 // 連線狀態列
-                HStack(spacing: 6) {
+                HStack(spacing: 7) {
                     Circle()
                         .fill(connectionDotColor)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 7, height: 7)
                     Text(coordinator.serverStatusText)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(Color(white: 0.7))
+                        .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                        .foregroundColor(Color(white: 0.75))
                         .lineLimit(1)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
                 .padding(.top, 4)
-                .padding(.bottom, 2)
+                .padding(.bottom, 4)
 
-                Divider().opacity(0.25).padding(.vertical, 3)
+                Divider().opacity(0.22).padding(.horizontal, 12).padding(.vertical, 3)
 
                 popoverSectionHeader("AI 模型選擇")
                 ForEach(ModelFamily.allCases) { fam in
@@ -591,11 +597,12 @@ struct HandsFreeMainView: View {
                     showModelPopover = false
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 10)
         }
-        .frame(width: 248)
-        .frame(maxHeight: 460)
-        .background(Color(white: 0.12))
+        .contentMargins(.vertical, 6, for: .scrollContent)
+        .frame(width: 284)
+        .frame(maxHeight: 470)
+        .presentationBackground(Color(red: 0.12, green: 0.13, blue: 0.16))
         .preferredColorScheme(.dark)
     }
 
