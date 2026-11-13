@@ -1147,6 +1147,7 @@ struct GeminiMessageRow: View {
     var onTapQuickReply: ((String) -> Void)? = nil
 
     @State private var isThoughtExpanded: Bool = false
+    @State private var isToolsExpanded: Bool = false
 
     private var isUser: Bool {
         message.role == .user
@@ -1237,29 +1238,72 @@ struct GeminiMessageRow: View {
                     }
                 }
 
-                // 工具呼叫軌跡膠囊
+                // 1. 工具呼叫軌跡（預設摺疊僅顯示最新一筆，點擊可展開完整步驟）
                 if !message.toolHistory.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(message.toolHistory, id: \.self) { tool in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "terminal.fill")
-                                        .font(.system(size: 10))
-                                    Text(tool)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 4)
-                                .background(Color.white.opacity(0.07))
-                                .foregroundColor(Color(white: 0.75))
-                                .clipShape(Capsule())
+                    let latestTool = message.toolHistory.last ?? ""
+                    let extraCount = max(0, message.toolHistory.count - 1)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                isToolsExpanded.toggle()
                             }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "terminal.fill")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundColor(.cyan.opacity(0.9))
+                                Text(latestTool)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color(white: 0.80))
+                                    .lineLimit(1)
+                                if extraCount > 0 {
+                                    Text("(\(message.toolHistory.count))")
+                                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.secondary)
+                                }
+                                Image(systemName: isToolsExpanded ? "chevron.up" : "chevron.down")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.07))
+                            .overlay(
+                                Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                            )
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+
+                        if isToolsExpanded {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(message.toolHistory.enumerated()), id: \.offset) { idx, tool in
+                                    HStack(spacing: 6) {
+                                        Text("\(idx + 1).")
+                                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                            .foregroundColor(.secondary)
+                                        Text(tool)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(Color(white: 0.72))
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
+                                    )
+                            )
                         }
                     }
                 }
 
-                // 大腦思考推導過程 (agent_thought_chunk 可展開/收折膠囊)
+                // 2. 大腦思考推導過程（預設摺疊，點擊可展開）
                 if hasThoughts {
                     let isActivelyThinking = (message.status == .streaming && message.content.isEmpty)
                     VStack(alignment: .leading, spacing: 6) {
@@ -1275,7 +1319,7 @@ struct GeminiMessageRow: View {
                                 Text(isActivelyThinking ? "大腦正在推導思考..." : "檢視思考推導過程")
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Color(white: 0.78))
-                                Image(systemName: (isThoughtExpanded || isActivelyThinking) ? "chevron.up" : "chevron.down")
+                                Image(systemName: isThoughtExpanded ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 10, weight: .bold))
                                     .foregroundColor(.secondary)
                             }
@@ -1289,11 +1333,10 @@ struct GeminiMessageRow: View {
                         }
                         .buttonStyle(.plain)
 
-                        if isThoughtExpanded || isActivelyThinking {
+                        if isThoughtExpanded {
                             Text(message.thoughtProcess.trimmingCharacters(in: .whitespacesAndNewlines))
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(white: 0.68))
-                                .lineLimit(isActivelyThinking && !isThoughtExpanded ? 3 : nil)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
