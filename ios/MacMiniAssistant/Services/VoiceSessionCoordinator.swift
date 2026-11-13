@@ -571,11 +571,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
-    /// 直接送出鍵盤或語音轉文字輸入框的訊息（或單獨送出附加圖片）
+    /// 直接送出鍵盤輸入框的訊息（或單獨送出附加圖片，支援單張與多張）
     public func sendTextMessage() {
         let trimmed = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || pendingImageData != nil else { return }
-        let finalQuery = trimmed.isEmpty ? "請幫我分析這張圖片" : trimmed
+        let imageCount = pendingImagesData.count + (pendingImageData != nil && pendingImagesData.isEmpty ? 1 : 0)
+        guard !trimmed.isEmpty || imageCount > 0 else { return }
+        let defaultImagePrompt = imageCount > 1 ? "請幫我分析這 \(imageCount) 張圖片" : "請幫我分析這張圖片"
+        let finalQuery = trimmed.isEmpty ? defaultImagePrompt : trimmed
         textInput = ""
         dictationBaseText = ""
         liveTranscript = ""
@@ -1172,7 +1174,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
 
         // 2. 檢查是否為純打斷或禮貌應答詞（如「等一下」、「好，知道了」）
-        if pureStopWords.contains(strippedPunctuation) && pendingImageData == nil {
+        if pureStopWords.contains(strippedPunctuation) && pendingImageData == nil && pendingImagesData.isEmpty {
             resumeOrFinishAfterEmptyInput()
             return
         }

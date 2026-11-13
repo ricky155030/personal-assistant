@@ -72,12 +72,11 @@ struct GeminiSparkleIcon: View {
 struct HandsFreeMainView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
 
-    @State private var showHistoryDrawer: Bool = false
     @State private var showQuotaSheet: Bool = false
     @State private var showSettings: Bool = false
     @State private var showModelPopover: Bool = false
-    @State private var showContextPopover: Bool = false
     @State private var isAtBottom: Bool = true
+    @State private var hasUnseenUpdates: Bool = false
     @State private var isDraggingBottom: Bool = false
     @State private var startedDragAtBottom: Bool = false
     @State private var bottomPullOffset: CGFloat = 0
@@ -86,8 +85,11 @@ struct HandsFreeMainView: View {
     @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
-    @State private var selectedPhotoItem: PhotosPickerItem? = nil
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @FocusState private var isInputFocused: Bool
+
+    /// 單則訊息最多可附加的照片張數
+    private static let maxAttachedImages = 5
 
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
@@ -100,13 +102,21 @@ struct HandsFreeMainView: View {
                 }
 
             VStack(spacing: 0) {
-                // 2. 頂部導覽列 (連線診斷 / Flash 中等 ⌄ / 開新對話 / 頭像設定)
+                // 2. 頂部導覽列（連線狀態燈 + 模型膠囊 / 合併用量膠囊 / 設定）
                 topHeaderBar
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .padding(.bottom, 8)
 
-                // 除錯診斷 HUD (點左上按鈕可展開)
+                // 離線提示橫幅（確認離線時自動滑出，恢復後自動收起）
+                if isConfirmedOffline {
+                    offlineBanner
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // 除錯診斷 HUD（於設定頁開啟）
                 if coordinator.showDebugHUD {
                     debugHUDView
                         .padding(.horizontal, 16)
@@ -114,12 +124,8 @@ struct HandsFreeMainView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
-                // 3. 中央主區域：無對話時顯示「宏瑋，該你囉！」，有對話時直接顯示即時對話流
-                if coordinator.messages.isEmpty && !(coordinator.isLiveMode && !coordinator.liveTranscript.isEmpty) {
-                    emptyGreetingSection
-                } else {
-                    conversationScrollSection
-                }
+                // 3. 中央主區域：即時對話流
+                conversationScrollSection
 
                 // 4. 底部 Gemini 輸入膠囊與 Live 語音控制區
                 bottomInputSection
@@ -127,6 +133,7 @@ struct HandsFreeMainView: View {
                     .padding(.top, 8)
                     .padding(.bottom, 12)
             }
+            .animation(.easeInOut(duration: 0.25), value: isConfirmedOffline)
         }
         .sheet(isPresented: $showQuotaSheet) {
             QuotaDetailSheetView(coordinator: coordinator)
@@ -142,27 +149,137 @@ struct HandsFreeMainView: View {
         .fullScreenCover(isPresented: $showCameraPicker) {
             CameraImagePicker { image in
                 if let jpeg = Self.compressImage(image) {
-                    coordinator.pendingImageData = jpeg
+                    appendPendingImages([jpeg])
                 }
             }
             .ignoresSafeArea()
         }
-        .photosPicker(isPresented: $showPhotoLibraryPicker, selection: $selectedPhotoItem, matching: .images)
-        .onChange(of: selectedPhotoItem) { _, newItem in
-            guard let item = newItem else { return }
+        .photosPicker(
+            isPresented: $showPhotoLibraryPicker,
+            selection: $selectedPhotoItems,
+            maxSelectionCount: max(1, Self.maxAttachedImages - coordinator.pendingImagesData.count),
+            matching: .images
+        )
+        .onChange(of: selectedPhotoItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self),
-                   let uiImage = UIImage(data: data),
-                   let jpeg = Self.compressImage(uiImage) {
-                    await MainActor.run {
-                        coordinator.pendingImageData = jpeg
+                var loaded: [Data] = []
+                for item in newItems {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let uiImage = UIImage(data: data),
+                       let jpeg = Self.compressImage(uiImage) {
+                        loaded.append(jpeg)
                     }
                 }
                 await MainActor.run {
-                    selectedPhotoItem = nil
+                    appendPendingImages(loaded)
+                    selectedPhotoItems = []
                 }
             }
         }
+    }
+
+    /// 將新照片加入待送出佇列（相容舊的單張 pendingImageData，並限制最多張數）
+    private func appendPendingImages(_ newImages: [Data]) {
+        guard !newImages.isEmpty else { return }
+        var merged = coordinator.pendingImagesData
+        if let legacy = coordinator.pendingImageData {
+            merged.insert(legacy, at: 0)
+            coordinator.pendingImageData = nil
+        }
+        merged.append(contentsOf: newImages)
+        coordinator.pendingImagesData = Array(merged.prefix(Self.maxAttachedImages))
+    }
+
+    // MARK: - 離線提示橫幅
+    private var offlineBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.orange)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("與 Mac mini 連線中斷")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("每 12 秒自動重試，恢復後會自動收起")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(white: 0.65))
+            }
+
+            Spacer()
+
+            Button(action: {
+                haptic.impactOccurred()
+                coordinator.checkServerHealth()
+            }) {
+                Text("立即重試")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Capsule().fill(Color.orange.opacity(0.16)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(red: 0.20, green: 0.13, blue: 0.05).opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - 錯誤卡片（附重試按鈕）
+    private func errorCard(_ err: String) -> some View {
+        let lastUserText = coordinator.messages.last(where: { $0.role == .user })?.content
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14))
+                .foregroundColor(.red.opacity(0.9))
+                .padding(.top, 1)
+
+            Text(err)
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.88))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+
+            if !lastUserText.isEmpty && !coordinator.isProcessingOrSpeaking {
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.errorMessage = nil
+                    coordinator.sendQuickReply(lastUserText)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("重試")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Capsule().fill(Color.red.opacity(0.55)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.red.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.red.opacity(0.35), lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - 1. 背景漸層 (Live 模式時底部泛起動態藍光)
@@ -197,116 +314,144 @@ struct HandsFreeMainView: View {
                 isInputFocused = false
                 showModelPopover = true
             }) {
-                VStack(alignment: .leading, spacing: 1.5) {
-                    HStack(spacing: 3) {
-                        Text(coordinator.selectedModelFamily.displayName)
-                            .font(.system(size: 14.5, weight: .bold))
-                            .foregroundColor(.white)
+                HStack(spacing: 8) {
+                    // 連線狀態燈（綠：已連線 / 橘：檢查中 / 紅：離線）
+                    Circle()
+                        .fill(connectionDotColor)
+                        .frame(width: 7, height: 7)
+                        .shadow(color: connectionDotColor.opacity(0.7), radius: 3)
 
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Color(white: 0.65))
-                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Text(coordinator.selectedModelFamily.displayName)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
 
-                    HStack(spacing: 3) {
-                        Text(thinkingLevelSubLabel)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(Color(white: 0.6))
+                        }
+
+                        Text("\(thinkingLevelSubLabel)思考 · \(coordinator.responseLength.shortTag)")
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundColor(Color(white: 0.65))
-
-                        Text("·")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundColor(Color(white: 0.45))
-
-                        Text(coordinator.ttsSpeed.title.components(separatedBy: " ").first ?? "1.0x")
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundColor(.cyan)
-
-                        Text("·")
-                            .font(.system(size: 9.5, weight: .bold))
-                            .foregroundColor(Color(white: 0.45))
-
-                        Text(coordinator.responseLength.shortTag)
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundColor(.yellow.opacity(0.9))
+                            .foregroundColor(Color(white: 0.58))
+                            .lineLimit(1)
                     }
                 }
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+                .frame(height: 42)
+                .background(
+                    Capsule()
+                        .fill(Color(white: 0.11))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+                )
                 .fixedSize(horizontal: true, vertical: false)
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("模型與語音設定，目前 \(coordinator.selectedModelFamily.displayName)")
             .popover(isPresented: $showModelPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
                 modelMenuPopoverContent
                     .presentationCompactAdaptation(.popover)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
-            // Context 佔比指示器（圓形填充 + 百分比，點擊可檢視明細與切換音訊輸出）
-            contextUsageButton
+            // 右側：合併式「用量」膠囊（Context 佔比 + 當前模型配額），點擊開啟完整系統狀態面板
+            usageCapsuleButton
 
-            // 右上 1：AI 配額膠囊（動態連動選取的模型 Family：Flash / Argon / Claude）
-            Button(action: {
-                haptic.impactOccurred()
-                coordinator.refreshQuotaStatus(force: false)
-                showQuotaSheet = true
-            }) {
-                let info = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
-
-                HStack(spacing: 7) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.12), lineWidth: 2.5)
-                            .frame(width: 22, height: 22)
-                        Circle()
-                            .trim(from: 0, to: CGFloat(max(0.03, min(1.0, info.pct / 100.0))))
-                            .stroke(info.tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                            .frame(width: 22, height: 22)
-                            .rotationEffect(.degrees(-90))
-                        Image(systemName: info.icon)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(info.tint)
-                    }
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(coordinator.quotaSnapshot != nil ? String(format: "%.1f%%", info.pct) : "--%")
-                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                        Text("⏳ \(info.resetIn)")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundColor(Color(white: 0.68))
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 11)
-                .frame(height: 42)
-                .background(
-                    Capsule()
-                        .fill(Color(white: 0.13))
-                        .overlay(
-                            Capsule()
-                                .stroke(info.tint.opacity(0.28), lineWidth: 1)
-                        )
-                )
-            }
-
-            // 右上 2：設定按鈕
+            // 設定按鈕
             Button(action: {
                 haptic.impactOccurred()
                 showSettings = true
             }) {
-                ZStack {
-                    Circle()
-                        .fill(Color(white: 0.14))
-                        .frame(width: 42, height: 42)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        )
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.88))
+                    .frame(width: 42, height: 42)
+                    .background(
+                        Circle()
+                            .fill(Color(white: 0.11))
+                            .overlay(Circle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("設定")
+        }
+    }
 
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
+    private var connectionDotColor: Color {
+        if coordinator.isServerReachable { return .green }
+        return coordinator.serverStatusText.hasPrefix("離線") ? .red : .orange
+    }
+
+    /// 是否確定處於離線狀態（排除 App 剛啟動尚未完成首次健康檢查的情況）
+    private var isConfirmedOffline: Bool {
+        !coordinator.isServerReachable && coordinator.serverStatusText.hasPrefix("離線")
+    }
+
+    // MARK: - 合併式用量膠囊（Context ◔ + 配額 ◑）
+    private var usageCapsuleButton: some View {
+        let ctx = latestContextUsage
+        let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
+        let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+
+        return Button(action: {
+            haptic.impactOccurred()
+            isInputFocused = false
+            coordinator.refreshQuotaStatus(force: false)
+            showQuotaSheet = true
+        }) {
+            HStack(spacing: 9) {
+                // Context 佔比（實心填充圓）
+                HStack(spacing: 5) {
+                    ZStack {
+                        Circle().fill(Color.white.opacity(0.06))
+                        ContextPieFillShape(progress: ctx.ratio)
+                            .fill(ctx.tint.opacity(0.55))
+                        Circle().stroke(ctx.tint.opacity(0.75), lineWidth: 1.2)
+                    }
+                    .frame(width: 16, height: 16)
+
+                    Text(ctx.pctText)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .monospacedDigit()
+                }
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 1, height: 16)
+
+                // 當前模型剩餘配額（環形進度）
+                HStack(spacing: 5) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.12), lineWidth: 2.2)
+                        Circle()
+                            .trim(from: 0, to: CGFloat(max(0.03, min(1.0, quota.pct / 100.0))))
+                            .stroke(quota.tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
+                    .frame(width: 15, height: 15)
+
+                    Text(quotaText)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .monospacedDigit()
                 }
             }
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+            .background(
+                Capsule()
+                    .fill(Color(white: 0.11))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+            )
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("用量：Context \(ctx.pctText)，配額剩餘 \(quotaText)")
     }
 
     // MARK: - Context 佔比圓形填充指示器 (與 ACP 統一大腦 Context 用量同步，點擊檢視明細 / 切換音訊)
@@ -320,42 +465,6 @@ struct HandsFreeMainView: View {
         let tint: Color = pct >= 80.0 ? .red : (pct >= 50.0 ? .orange : .purple)
         let detail = "ACP Context：\(snap.contextTokens.formatted()) / \(snap.contextLimit.formatted()) tokens"
         return (clampedRatio, pctText, detail, tint)
-    }
-
-    private var contextUsageButton: some View {
-        let info = latestContextUsage
-        return Button(action: {
-            haptic.impactOccurred()
-            isInputFocused = false
-            showContextPopover = true
-        }) {
-            ZStack {
-                Circle()
-                    .fill(Color(white: 0.13))
-
-                ContextPieFillShape(progress: info.ratio)
-                    .fill(info.tint.opacity(0.36))
-
-                Circle()
-                    .stroke(Color.white.opacity(0.12), lineWidth: 2)
-
-                Circle()
-                    .trim(from: 0, to: CGFloat(max(0.02, info.ratio)))
-                    .stroke(info.tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-
-                Text(info.pctText)
-                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .minimumScaleFactor(0.75)
-                    .lineLimit(1)
-            }
-            .frame(width: 42, height: 42)
-        }
-        .popover(isPresented: $showContextPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-            contextPopoverContent(info: info)
-                .presentationCompactAdaptation(.popover)
-        }
     }
 
     // MARK: - 精緻小字級 Popover 選單內容
@@ -403,51 +512,25 @@ struct HandsFreeMainView: View {
         .buttonStyle(.plain)
     }
 
-    private func contextPopoverContent(info: (ratio: Double, pctText: String, detailText: String, tint: Color)) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            popoverSectionHeader("Context 視窗佔比")
-            Text(info.detailText)
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundColor(.white.opacity(0.9))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
-
-            popoverOptionRow(
-                title: coordinator.isCompactingContext ? "正在壓縮記憶..." : "一鍵壓縮記憶 (/compact)",
-                icon: "wand.and.stars",
-                isSelected: false
-            ) {
-                coordinator.compactBrainContext()
-                showContextPopover = false
-            }
-
-            Divider().opacity(0.25)
-
-            popoverSectionHeader("當前音訊：\(coordinator.currentAudioRouteName)")
-            popoverOptionRow(title: "手機底部揚聲器 (擴音)", icon: "speaker.wave.3.fill", isSelected: coordinator.isForcedSpeaker) {
-                coordinator.setAudioRoute(forceSpeaker: true)
-                showContextPopover = false
-            }
-            popoverOptionRow(title: "車機 / 藍牙設備優先", icon: "car.fill", isSelected: coordinator.isBluetoothOrCarConnected) {
-                coordinator.setAudioRoute(forceSpeaker: false)
-                showContextPopover = false
-            }
-            popoverOptionRow(title: "手機頂部聽筒 (私密)", icon: "ear", isSelected: false) {
-                coordinator.setAudioRouteToReceiver()
-                showContextPopover = false
-            }
-        }
-        .padding(.vertical, 6)
-        .frame(width: 248)
-        .background(Color(white: 0.12))
-        .preferredColorScheme(.dark)
-    }
-
     private var modelMenuPopoverContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 1) {
+                // 連線狀態列
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(connectionDotColor)
+                        .frame(width: 6, height: 6)
+                    Text(coordinator.serverStatusText)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(Color(white: 0.7))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+
                 popoverSectionHeader("AI 模型選擇")
                 ForEach(ModelFamily.allCases) { fam in
                     popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
@@ -491,6 +574,21 @@ struct HandsFreeMainView: View {
                         showModelPopover = false
                     }
                 }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+                popoverSectionHeader("音訊輸出（目前：\(coordinator.currentAudioRouteName)）")
+                popoverOptionRow(title: "手機底部揚聲器 (擴音)", icon: "speaker.wave.3.fill", isSelected: coordinator.isForcedSpeaker) {
+                    coordinator.setAudioRoute(forceSpeaker: true)
+                    showModelPopover = false
+                }
+                popoverOptionRow(title: "車機 / 藍牙設備優先", icon: "car.fill", isSelected: coordinator.isBluetoothOrCarConnected) {
+                    coordinator.setAudioRoute(forceSpeaker: false)
+                    showModelPopover = false
+                }
+                popoverOptionRow(title: "手機頂部聽筒 (私密)", icon: "ear", isSelected: false) {
+                    coordinator.setAudioRouteToReceiver()
+                    showModelPopover = false
+                }
             }
             .padding(.vertical, 6)
         }
@@ -529,54 +627,6 @@ struct HandsFreeMainView: View {
         case .low: return "快速"
         case .med: return "中等"
         case .high: return "深度"
-        }
-    }
-
-    // MARK: - 3A. 待命空畫面：「✨ 宏瑋，該你囉！」
-    private var emptyGreetingSection: some View {
-        VStack(spacing: 22) {
-            Spacer()
-
-            GeminiSparkleIcon(
-                size: 46,
-                isAnimating: coordinator.voiceInputMode != .none
-            )
-
-            Text("宏瑋，該你囉！")
-                .font(.system(size: 31, weight: .medium))
-                .foregroundColor(.white.opacity(0.93))
-                .tracking(0.5)
-
-            if coordinator.voiceInputMode != .none {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 8, height: 8)
-                    Text(coordinator.isLiveMode ? "Live 即時語音對談中，請直接開口..." : "正在語音轉文字，講完將留在下方對話框...")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white.opacity(0.75))
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.08))
-                .clipShape(Capsule())
-                .transition(.opacity.combined(with: .scale))
-            }
-
-            if let err = coordinator.errorMessage {
-                Text(err)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.red.opacity(0.9))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-            }
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            isInputFocused = false
         }
     }
 
@@ -635,10 +685,8 @@ struct HandsFreeMainView: View {
                         }
 
                         if let err = coordinator.errorMessage {
-                            Text("⚠️ \(err)")
-                                .font(.footnote)
-                                .foregroundColor(.red)
-                                .padding(.horizontal, 16)
+                            errorCard(err)
+                                .id("error_card")
                         }
 
                         // 底部繼續上拉重整提示（當滑到最底下繼續往上拉時顯示）
@@ -669,7 +717,10 @@ struct HandsFreeMainView: View {
                         Color.clear
                             .frame(height: 8)
                             .id("bottom_anchor")
-                            .onAppear { isAtBottom = true }
+                            .onAppear {
+                                isAtBottom = true
+                                hasUnseenUpdates = false
+                            }
                             .onDisappear { isAtBottom = false }
                     }
                     .padding(.horizontal, 16)
@@ -728,22 +779,33 @@ struct HandsFreeMainView: View {
                 if !isAtBottom && coordinator.messages.count > 2 {
                     Button(action: {
                         haptic.impactOccurred()
+                        hasUnseenUpdates = false
                         scrollToBottom(proxy: proxy, animated: true)
                     }) {
-                        Image(systemName: "arrow.down")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                            .frame(width: 36, height: 36)
-                            .background(
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 38, height: 38)
+                                .background(
+                                    Circle()
+                                        .fill(Color(white: 0.16).opacity(0.95))
+                                        .overlay(
+                                            Circle()
+                                                .stroke(hasUnseenUpdates ? Color.cyan.opacity(0.6) : Color.white.opacity(0.18), lineWidth: 1)
+                                        )
+                                        .shadow(color: .black.opacity(0.35), radius: 5, x: 0, y: 2)
+                                )
+
+                            if hasUnseenUpdates {
                                 Circle()
-                                    .fill(Color(white: 0.16).opacity(0.95))
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                    )
-                                    .shadow(color: .black.opacity(0.35), radius: 5, x: 0, y: 2)
-                            )
+                                    .fill(Color.cyan)
+                                    .frame(width: 9, height: 9)
+                                    .offset(x: 1, y: -1)
+                            }
+                        }
                     }
+                    .accessibilityLabel("回到底部")
                     .padding(.trailing, 16)
                     .padding(.bottom, 12)
                     .transition(.scale.combined(with: .opacity))
@@ -756,17 +818,31 @@ struct HandsFreeMainView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                    scrollToBottom(proxy: proxy, animated: false)
+                    if isAtBottom {
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
                 }
             }
             .onChange(of: coordinator.messages.count) { _, _ in
-                scrollToBottom(proxy: proxy, animated: true)
+                // 使用者剛送出新訊息，或原本就在底部時才自動捲動；否則標記有新內容
+                if isAtBottom || coordinator.messages.last?.role == .user {
+                    hasUnseenUpdates = false
+                    scrollToBottom(proxy: proxy, animated: true)
+                } else {
+                    hasUnseenUpdates = true
+                }
             }
             .onChange(of: coordinator.currentStreamingText) { _, _ in
-                scrollToBottom(proxy: proxy, animated: false)
+                if isAtBottom {
+                    scrollToBottom(proxy: proxy, animated: false)
+                } else if !coordinator.currentStreamingText.isEmpty {
+                    hasUnseenUpdates = true
+                }
             }
             .onChange(of: coordinator.liveTranscript) { _, _ in
-                scrollToBottom(proxy: proxy, animated: false)
+                if isAtBottom {
+                    scrollToBottom(proxy: proxy, animated: false)
+                }
             }
         }
     }
@@ -839,37 +915,93 @@ struct HandsFreeMainView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // 若有附加圖片，於輸入列上方顯示縮圖預覽卡
-            if let imgData = coordinator.pendingImageData, let uiImg = UIImage(data: imgData) {
-                HStack(spacing: 10) {
-                    Image(uiImage: uiImg)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 48, height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                        )
+            // 若有附加圖片（支援單張與多張），於輸入列上方顯示橫向縮圖預覽列
+            let allPendingImages: [Data] = {
+                if !coordinator.pendingImagesData.isEmpty {
+                    return coordinator.pendingImagesData
+                } else if let single = coordinator.pendingImageData {
+                    return [single]
+                }
+                return []
+            }()
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("已附加照片")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
-                        Text("可直接開口說話或打字提問，一起傳給助理")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+            if !allPendingImages.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("已附加 \(allPendingImages.count) 張照片（最多 \(Self.maxAttachedImages) 張）")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(Color(white: 0.72))
+
+                        Spacer()
+
+                        Button(action: {
+                            haptic.impactOccurred()
+                            coordinator.pendingImagesData.removeAll()
+                            coordinator.pendingImageData = nil
+                        }) {
+                            Text("全部清除")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundColor(.secondary)
+                        }
                     }
 
-                    Spacer()
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(allPendingImages.enumerated()), id: \.offset) { idx, imgData in
+                                if let uiImg = UIImage(data: imgData) {
+                                    ZStack(alignment: .topTrailing) {
+                                        Image(uiImage: uiImg)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 58, height: 58)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                            )
 
-                    Button(action: {
-                        haptic.impactOccurred()
-                        coordinator.pendingImageData = nil
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.secondary)
+                                        Button(action: {
+                                            haptic.impactOccurred()
+                                            if !coordinator.pendingImagesData.isEmpty && idx < coordinator.pendingImagesData.count {
+                                                coordinator.pendingImagesData.remove(at: idx)
+                                            } else {
+                                                coordinator.pendingImageData = nil
+                                            }
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 17))
+                                                .foregroundColor(.white)
+                                                .background(Circle().fill(Color.black.opacity(0.65)))
+                                        }
+                                        .offset(x: 4, y: -4)
+                                    }
+                                    .padding(.top, 4)
+                                    .padding(.trailing, 4)
+                                }
+                            }
+
+                            if allPendingImages.count < Self.maxAttachedImages {
+                                Button(action: {
+                                    haptic.impactOccurred()
+                                    isInputFocused = false
+                                    showPhotoLibraryPicker = true
+                                }) {
+                                    VStack(spacing: 3) {
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 16, weight: .semibold))
+                                        Text("加選")
+                                            .font(.system(size: 10))
+                                    }
+                                    .foregroundColor(.white.opacity(0.75))
+                                    .frame(width: 58, height: 58)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(Color.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4]))
+                                    )
+                                }
+                                .padding(.top, 4)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 12)
@@ -895,7 +1027,7 @@ struct HandsFreeMainView: View {
                         isInputFocused = false
                         showPhotoLibraryPicker = true
                     }) {
-                        Label("從相簿選取圖片", systemImage: "photo.on.rectangle")
+                        Label("從相簿選取圖片（可多選）", systemImage: "photo.on.rectangle")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -903,32 +1035,25 @@ struct HandsFreeMainView: View {
                         .foregroundColor(.white.opacity(0.88))
                         .frame(width: 36, height: 44)
                 }
+                .accessibilityLabel("附加圖片或拍照")
 
-                // 文字輸入框：「問問 Gemini」（按左側 🎙️ 時，STT 文字直接即時填入此輸入框，不自動送出）
-                HStack(spacing: 8) {
-                    if coordinator.isSingleDictationMode {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                    }
-
-                    TextField(
-                        "",
-                        text: $coordinator.textInput,
-                        prompt: Text(coordinator.isSingleDictationMode ? "正在聆聽，講完將留在對話框..." : "問問 Gemini")
-                            .foregroundColor(coordinator.isSingleDictationMode ? Color.red.opacity(0.85) : Color(white: 0.55)),
-                        axis: .vertical
-                    )
-                    .font(.system(size: 17))
-                    .lineLimit(1...5)
-                    .foregroundColor(.white)
-                    .focused($isInputFocused)
-                }
+                // 文字輸入框：「問問助理」
+                TextField(
+                    "",
+                    text: $coordinator.textInput,
+                    prompt: Text("問問助理")
+                        .foregroundColor(Color(white: 0.55)),
+                    axis: .vertical
+                )
+                .font(.system(size: 17))
+                .lineLimit(1...5)
+                .foregroundColor(.white)
+                .focused($isInputFocused)
                 .padding(.vertical, 8)
 
-                // 右側按鈕區：📷 隨身眼睛 + 🎙️ 語音轉文字填入框 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
+                // 右側按鈕區：📷 隨身眼睛拍照 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
                 HStack(spacing: 6) {
-                    // 📷 隨身眼睛快拍按鈕（位於麥克風圓形大按鈕旁）
+                    // 📷 隨身眼睛快拍按鈕
                     Button(action: {
                         haptic.impactOccurred()
                         isInputFocused = false
@@ -937,30 +1062,13 @@ struct HandsFreeMainView: View {
                         Image(systemName: "camera.fill")
                             .font(.system(size: 19, weight: .medium))
                             .foregroundColor(.white.opacity(0.88))
-                            .frame(width: 36, height: 44)
+                            .frame(width: 38, height: 44)
                     }
+                    .accessibilityLabel("隨身眼睛拍照")
 
-                    // 按鈕 1：🎙️ 語音轉文字 (STT 直接放進對話框，不自動送出)
-                    Button(action: {
-                        haptic.impactOccurred()
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                            coordinator.toggleSingleTurnVoice()
-                        }
-                    }) {
-                        ZStack {
-                            if coordinator.isSingleDictationMode {
-                                Circle()
-                                    .fill(Color.red.opacity(0.22))
-                                    .frame(width: 40, height: 40)
-                            }
-                            Image(systemName: coordinator.isSingleDictationMode ? "mic.fill" : "mic")
-                                .font(.system(size: 20, weight: .medium))
-                                .foregroundColor(coordinator.isSingleDictationMode ? .red : .white.opacity(0.88))
-                                .frame(width: 38, height: 44)
-                        }
-                    }
-
-                    if !coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || coordinator.pendingImageData != nil {
+                    if !coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !coordinator.pendingImagesData.isEmpty
+                        || coordinator.pendingImageData != nil {
                         // 有文字或已附加照片時：顯示藍色 ↑ 送出按鈕
                         Button(action: {
                             haptic.impactOccurred()
@@ -976,6 +1084,7 @@ struct HandsFreeMainView: View {
                                         .foregroundColor(.white)
                                 )
                         }
+                        .accessibilityLabel("送出訊息")
                     } else if coordinator.isProcessingOrSpeaking {
                         // 思考/工具執行/朗讀中：顯示紅色 ⏹️ 立即中止按鈕 (ACP Real-time Cancel)
                         Button(action: {

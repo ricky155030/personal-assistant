@@ -507,6 +507,7 @@ async def voice_chat_stream(
     client_source = payload.client or "ios-voice"
     level = payload.level
     cancel_event = threading.Event()
+    client_disconnected = threading.Event()
     worker_finished = threading.Event()
     with _VOICE_CANCEL_LOCK:
         _ACTIVE_VOICE_CANCEL_EVENTS.add(cancel_event)
@@ -577,12 +578,12 @@ async def voice_chat_stream(
                 tts_queue.task_done()
                 break
             seq, sentence = item
-            if cancel_event.is_set():
+            if cancel_event.is_set() or client_disconnected.is_set():
                 tts_queue.task_done()
                 continue
             try:
                 audio_b64 = await synthesize_to_base64(sentence, voice=tts_voice, rate=tts_rate)
-                if audio_b64 and not cancel_event.is_set():
+                if audio_b64 and not cancel_event.is_set() and not client_disconnected.is_set():
                     await event_queue.put({
                         "type": "audio_chunk",
                         "seq": seq,
@@ -665,17 +666,18 @@ async def voice_chat_stream(
                         {"type": "text_delta", "delta": delta}
                     )
                     sentences = extractor.feed(delta)
-                    for sent in sentences:
-                        seq = sentence_seq
-                        sentence_seq += 1
-                        loop.call_soon_threadsafe(
-                            event_queue.put_nowait,
-                            {"type": "tts_sentence", "sentence": sent, "seq": seq}
-                        )
-                        loop.call_soon_threadsafe(
-                            tts_queue.put_nowait,
-                            (seq, sent)
-                        )
+                    if not client_disconnected.is_set():
+                        for sent in sentences:
+                            seq = sentence_seq
+                            sentence_seq += 1
+                            loop.call_soon_threadsafe(
+                                event_queue.put_nowait,
+                                {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                            )
+                            loop.call_soon_threadsafe(
+                                tts_queue.put_nowait,
+                                (seq, sent)
+                            )
 
             was_cancelled = cancel_event.is_set() or bool(turn_result.get("cancelled"))
             if was_cancelled:
@@ -683,26 +685,28 @@ async def voice_chat_stream(
                 print(f"[voice_chat_stream] 🛑 本次語音請求已中途取消，略過後續 TTS 與 Telegram 推播: {user_query[:30]}")
                 return
 
-            # Flush 剩餘未結尾句子
-            for sent in extractor.flush():
-                seq = sentence_seq
-                sentence_seq += 1
-                loop.call_soon_threadsafe(
-                    event_queue.put_nowait,
-                    {"type": "tts_sentence", "sentence": sent, "seq": seq}
-                )
-                loop.call_soon_threadsafe(
-                    tts_queue.put_nowait,
-                    (seq, sent)
-                )
+            # Flush 剩餘未結尾句子（若客戶端已離線則略過 TTS 合成，直接完成任務寫入歷史與 Telegram）
+            if not client_disconnected.is_set():
+                for sent in extractor.flush():
+                    seq = sentence_seq
+                    sentence_seq += 1
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                    )
+                    loop.call_soon_threadsafe(
+                        tts_queue.put_nowait,
+                        (seq, sent)
+                    )
 
             # 通知 tts_queue 已送完所有句子，並等待 TTS 合成排隊完成
             loop.call_soon_threadsafe(tts_queue.put_nowait, None)
-            try:
-                fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
-                fut.result(timeout=15.0)
-            except Exception as e:
-                print(f"[voice_chat_stream] TTS wait timeout: {e}")
+            if not client_disconnected.is_set():
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
+                    fut.result(timeout=15.0)
+                except Exception as e:
+                    print(f"[voice_chat_stream] TTS wait timeout: {e}")
 
             if cancel_event.is_set():
                 print(f"[voice_chat_stream] 🛑 TTS 期間收到取消訊號，略過 Telegram 推播")
@@ -771,9 +775,8 @@ async def voice_chat_stream(
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
         finally:
             if not worker_finished.is_set() and not cancel_event.is_set():
-                cancel_event.set()
-                agy_singleton.cancel_active_turns(level=level)
-                print(f"[voice_chat_stream] 🔌 SSE 客戶端中斷連線，已自動觸發 ACP session/cancel")
+                client_disconnected.set()
+                print(f"[voice_chat_stream] 🔌 SSE 客戶端中斷連線（例如螢幕休眠），背景繼續完成任務並寫入歷史紀錄")
             with _VOICE_CANCEL_LOCK:
                 _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
 
