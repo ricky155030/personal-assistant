@@ -135,9 +135,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
         vad.sttMode = sttMode
         speechPlayer.speechRate = AVSpeechUtteranceDefaultSpeechRate * ttsSpeed.localRateMultiplier
         loadSessionHistory()
+        loadUnifiedTimeline()
         setupCallbacks()
         setupAudioNotifications()
         startHealthMonitoring()
+        Task {
+            await self.syncRemoteHistory()
+        }
     }
 
     private func setupAudioNotifications() {
@@ -193,6 +197,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.checkServerHealth()
+                Task {
+                    await self.syncRemoteHistory()
+                }
                 if self.voiceInputMode != .none, case .listening = self.state {
                     try? AVAudioSession.sharedInstance().setActive(true)
                     try? self.vad.startListening()
@@ -723,7 +730,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         return currentLive
     }
 
-    /// 開啟新對話（先保存目前對話至歷史，再清空畫面）
+    /// 停止目前進行中的串流或語音輸入，保持統一連續時間軸不清空
     public func startNewChat() {
         if !messages.isEmpty {
             syncCurrentSessionToHistory()
@@ -732,8 +739,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
         activeStreamTask = nil
         speechPlayer.stopImmediately()
         vad.stopListening()
-        currentSessionId = UUID()
-        messages.removeAll()
         pendingImageData = nil
         pendingImagesData.removeAll()
         liveTranscript = ""
@@ -742,6 +747,84 @@ public final class VoiceSessionCoordinator: ObservableObject {
         errorMessage = nil
         voiceInputMode = .none
         state = .idle
+    }
+
+    // MARK: - 統一單一連續時間軸持久化與雲端增量同步
+    private var unifiedTimelineURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("macmini_unified_timeline.json")
+    }
+
+    private var lastSyncedHistoryTimestamp: String? {
+        get { UserDefaults.standard.string(forKey: "macmini_last_synced_ts") }
+        set { UserDefaults.standard.set(newValue, forKey: "macmini_last_synced_ts") }
+    }
+
+    private func loadUnifiedTimeline() {
+        if let data = try? Data(contentsOf: unifiedTimelineURL),
+           let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data),
+           !decoded.isEmpty {
+            messages = decoded
+            return
+        }
+        // 若初次升級尚未建立統一時間軸，從最近一次本地 session 無痛遷移
+        if let latest = sessionHistory.first, !latest.messages.isEmpty {
+            messages = latest.messages
+            saveUnifiedTimeline()
+        }
+    }
+
+    private func saveUnifiedTimeline() {
+        let trimmed = messages.count > 200 ? Array(messages.suffix(200)) : messages
+        guard let data = try? JSONEncoder().encode(trimmed) else { return }
+        try? data.write(to: unifiedTimelineURL, options: .atomic)
+    }
+
+    public func syncRemoteHistory(limit: Int = 40) async {
+        let items = await apiClient.fetchHistory(limit: limit, since: lastSyncedHistoryTimestamp)
+        guard !items.isEmpty else { return }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+
+        var appended = false
+        for item in items {
+            let parsedDate = isoFormatter.date(from: item.timestamp)
+                ?? fallbackFormatter.date(from: item.timestamp)
+                ?? Date()
+
+            let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !qText.isEmpty {
+                let alreadyExists = messages.suffix(30).contains {
+                    $0.role == .user && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == qText
+                }
+                if !alreadyExists {
+                    messages.append(ChatMessage(role: .user, content: qText, timestamp: parsedDate, status: .completed))
+                    appended = true
+                }
+            }
+
+            if !rText.isEmpty {
+                let alreadyExists = messages.suffix(30).contains {
+                    $0.role == .assistant && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == rText
+                }
+                if !alreadyExists {
+                    messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed))
+                    appended = true
+                }
+            }
+
+            if !item.timestamp.isEmpty {
+                lastSyncedHistoryTimestamp = item.timestamp
+            }
+        }
+
+        if appended {
+            saveUnifiedTimeline()
+        }
     }
 
     // MARK: - 歷史對話持久化管理 (Recent Conversation History)
@@ -765,6 +848,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     public func syncCurrentSessionToHistory() {
         guard !messages.isEmpty else { return }
+        saveUnifiedTimeline()
         let firstUserText = messages.first(where: { $0.role == .user })?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? "語音對話"
         let title = String(firstUserText.prefix(28))
 

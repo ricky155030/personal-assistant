@@ -884,20 +884,62 @@ def chat_task_result(task_id: str, _authorized: bool = Depends(verify_token)):
     return result
 
 
+def _clean_history_query(raw_query: str) -> str:
+    """移除 iOS/Watch/HomePod 的系統前綴規範，還原純淨使用者對話文字"""
+    q = (raw_query or "").strip()
+    if any(marker in q for marker in ("[來源管道:", "【語音輸出嚴格規範】", "【回覆長度約束")):
+        parts = q.split("\n\n")
+        if len(parts) > 1:
+            q = parts[-1].strip()
+    return q
+
+
+def _infer_history_source(raw_query: str) -> str:
+    if "[來源管道: iOS" in raw_query:
+        return "ios"
+    if "[來源管道: Apple Watch" in raw_query:
+        return "watch"
+    if "[來源管道: HomePod" in raw_query:
+        return "homepod"
+    return "telegram"
+
+
 @app.get("/api/history")
-def chat_history(limit: int = 20, _authorized: bool = Depends(verify_token)):
-    """回傳最近的對話紀錄（data/history.jsonl 尾端 limit 筆，由舊到新，上限 200）"""
+def chat_history(
+    limit: int = 40,
+    since: Optional[str] = None,
+    before: Optional[str] = None,
+    _authorized: bool = Depends(verify_token),
+):
+    """回傳統一時間軸對話紀錄（data/history.jsonl，支援 since/before 增量與分頁拉取）"""
     limit = max(1, min(limit, 200))
     entries = []
     try:
         with open(settings.HISTORY_LOG_PATH, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    entries.append(line)
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                ts = item.get("timestamp", "")
+                if since and ts <= since:
+                    continue
+                if before and ts >= before:
+                    continue
+                raw_q = item.get("query", "")
+                entries.append({
+                    "timestamp": ts,
+                    "query": _clean_history_query(raw_q),
+                    "reply": item.get("reply", ""),
+                    "source": item.get("source") or _infer_history_source(raw_q),
+                    "actions": item.get("actions", []),
+                })
     except FileNotFoundError:
         pass
-    return {"history": [json.loads(entry) for entry in entries[-limit:]]}
+    return {"history": entries[-limit:]}
 
 
 @app.post("/api/memory/sync-now")

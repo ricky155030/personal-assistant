@@ -425,4 +425,41 @@ public final class MacMiniAPIClient {
             }
         }
     }
+
+    public struct RemoteHistoryItem: Codable {
+        public let timestamp: String
+        public let query: String
+        public let reply: String
+        public let source: String?
+    }
+
+    private struct RemoteHistoryResponse: Codable {
+        let history: [RemoteHistoryItem]
+    }
+
+    public func fetchHistory(limit: Int = 40, since: String? = nil) async -> [RemoteHistoryItem] {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var components = URLComponents(string: "\(cleanBase)/api/history")
+        var queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
+        if let since = since, !since.isEmpty {
+            queryItems.append(URLQueryItem(name: "since", value: since))
+        }
+        components?.queryItems = queryItems
+        guard let url = components?.url else { return [] }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(RemoteHistoryResponse.self, from: data)
+            return decoded.history
+        } catch {
+            return []
+        }
+    }
 }

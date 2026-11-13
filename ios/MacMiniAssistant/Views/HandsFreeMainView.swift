@@ -120,9 +120,6 @@ struct HandsFreeMainView: View {
                     .padding(.bottom, 12)
             }
         }
-        .sheet(isPresented: $showHistoryDrawer) {
-            ConversationDrawerView(coordinator: coordinator)
-        }
         .sheet(isPresented: $showQuotaSheet) {
             QuotaDetailSheetView(coordinator: coordinator)
                 .presentationDetents([.height(435), .medium])
@@ -186,11 +183,14 @@ struct HandsFreeMainView: View {
     // MARK: - 2. 頂部 Gemini 風格導覽列
     private var topHeaderBar: some View {
         HStack(spacing: 14) {
-            // 左上抽屜按鈕（點擊打開近期語音/文字對話歷史紀錄）
+            // 左上同步與診斷按鈕（點擊向 Mac mini 同步統一時間軸並切換收音診斷）
             Button(action: {
                 haptic.impactOccurred()
                 isInputFocused = false
-                showHistoryDrawer = true
+                coordinator.showDebugHUD.toggle()
+                Task {
+                    await coordinator.syncRemoteHistory()
+                }
             }) {
                 ZStack(alignment: .topTrailing) {
                     Circle()
@@ -201,14 +201,9 @@ struct HandsFreeMainView: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                         .overlay(
-                            VStack(spacing: 5) {
-                                Capsule()
-                                    .fill(Color.white.opacity(0.85))
-                                    .frame(width: 16, height: 2)
-                                Capsule()
-                                    .fill(Color.white.opacity(0.85))
-                                    .frame(width: 16, height: 2)
-                            }
+                            Image(systemName: coordinator.showDebugHUD ? "waveform.badge.magnifyingglass" : "arrow.triangle.2.circlepath")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(coordinator.showDebugHUD ? .cyan : .white.opacity(0.85))
                         )
 
                     Circle()
