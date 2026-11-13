@@ -214,116 +214,113 @@ struct HandsFreeMainView: View {
                 }
             }
 
-            // 模型選擇、思考層級、語音辨識與語音設定選單
+            // 模型選擇、思考層級、語音辨識與語音設定選單（使用原生 Picker 確保選中項顯示系統打勾 ✓）
             Menu {
-                Section("AI 模型選擇 (Model Family)") {
-                    ForEach(ModelFamily.allCases) { fam in
-                        Button(action: {
+                Section("AI 模型選擇") {
+                    Picker("AI 模型", selection: Binding(
+                        get: { coordinator.selectedModelFamily },
+                        set: { newVal in
                             haptic.impactOccurred()
-                            coordinator.selectedModelFamily = fam
-                        }) {
-                            HStack {
-                                Label(fam.fullName, systemImage: fam.icon)
-                                if coordinator.selectedModelFamily == fam {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                            coordinator.selectedModelFamily = newVal
+                        }
+                    )) {
+                        ForEach(ModelFamily.allCases) { fam in
+                            Label(fam.fullName, systemImage: fam.icon)
+                                .tag(fam)
                         }
                     }
                 }
 
-                Section("思考深度 (Thinking Level)") {
-                    ForEach(ThinkingLevel.allCases) { level in
-                        Button(action: {
-                            coordinator.thinkingLevel = level
-                        }) {
-                            HStack {
-                                Text("\(level.headerTitle) — \(level.menuSubtitle)")
-                                if coordinator.thinkingLevel == level {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Section("回覆長度 (Response Length)") {
-                    ForEach(ResponseLengthOption.allCases) { opt in
-                        Button(action: {
+                Section("思考深度") {
+                    Picker("思考深度", selection: Binding(
+                        get: { coordinator.thinkingLevel },
+                        set: { newVal in
                             haptic.impactOccurred()
-                            coordinator.responseLength = opt
-                        }) {
-                            HStack {
-                                Label(opt.title, systemImage: opt.icon)
-                                if coordinator.responseLength == opt {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                            coordinator.thinkingLevel = newVal
+                        }
+                    )) {
+                        ForEach(ThinkingLevel.allCases) { level in
+                            Text("\(level.headerTitle) — \(level.menuSubtitle)")
+                                .tag(level)
                         }
                     }
                 }
 
-                Section("語音辨識模式 (STT Mode)") {
-                    ForEach(STTRecognitionMode.allCases) { mode in
-                        Button(action: {
+                Section("回覆長度") {
+                    Picker("回覆長度", selection: Binding(
+                        get: { coordinator.responseLength },
+                        set: { newVal in
                             haptic.impactOccurred()
-                            coordinator.sttMode = mode
-                        }) {
-                            HStack {
-                                Label(mode.title, systemImage: mode.icon)
-                                if coordinator.sttMode == mode {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                            coordinator.responseLength = newVal
+                        }
+                    )) {
+                        ForEach(ResponseLengthOption.allCases) { opt in
+                            Label(opt.title, systemImage: opt.icon)
+                                .tag(opt)
                         }
                     }
                 }
 
-                Section("助理朗讀語速 (TTS Speed)") {
-                    ForEach(TTSSpeedOption.allCases) { spd in
-                        Button(action: {
-                            coordinator.ttsSpeed = spd
-                        }) {
-                            HStack {
-                                Text(spd.title)
-                                if coordinator.ttsSpeed == spd {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
+                Section("語音辨識模式") {
+                    Picker("語音辨識", selection: Binding(
+                        get: { coordinator.sttMode },
+                        set: { newVal in
+                            haptic.impactOccurred()
+                            coordinator.sttMode = newVal
+                        }
+                    )) {
+                        ForEach(STTRecognitionMode.allCases) { mode in
+                            Label(mode.title, systemImage: mode.icon)
+                                .tag(mode)
+                        }
+                    }
+                }
+
+                Section("助理朗讀語速") {
+                    Picker("朗讀語速", selection: Binding(
+                        get: { coordinator.ttsSpeed },
+                        set: { newVal in
+                            haptic.impactOccurred()
+                            coordinator.ttsSpeed = newVal
+                        }
+                    )) {
+                        ForEach(TTSSpeedOption.allCases) { spd in
+                            Text(spd.title)
+                                .tag(spd)
                         }
                     }
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
+                VStack(alignment: .leading, spacing: 1.5) {
+                    HStack(spacing: 3) {
                         Text(coordinator.selectedModelFamily.displayName)
-                            .font(.system(size: 17, weight: .bold))
+                            .font(.system(size: 14.5, weight: .bold))
                             .foregroundColor(.white)
 
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(Color(white: 0.65))
                     }
 
-                    HStack(spacing: 4) {
-                        Text(coordinator.thinkingLevel.headerTitle.replacingOccurrences(of: "Flash ", with: "").replacingOccurrences(of: "Pro ", with: ""))
-                            .font(.system(size: 11.5, weight: .medium))
+                    HStack(spacing: 3) {
+                        Text(thinkingLevelSubLabel)
+                            .font(.system(size: 10.5, weight: .medium))
                             .foregroundColor(Color(white: 0.65))
 
                         Text("·")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(Color(white: 0.45))
 
                         Text(coordinator.ttsSpeed.title.components(separatedBy: " ").first ?? "1.0x")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
                             .foregroundColor(.cyan)
 
                         Text("·")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.system(size: 9.5, weight: .bold))
                             .foregroundColor(Color(white: 0.45))
 
                         Text(coordinator.responseLength.shortTag)
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
                             .foregroundColor(.yellow.opacity(0.9))
                     }
                 }
