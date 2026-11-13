@@ -761,23 +761,59 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
     private var isSyncingHistory: Bool = false
 
+    private func normalizeForDedup(_ text: String) -> String {
+        return text
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private func loadUnifiedTimeline() {
         if let data = try? Data(contentsOf: unifiedTimelineURL),
            let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data),
            !decoded.isEmpty {
-            // 自動清理舊版同步異常可能殘留的連續重複訊息
+            // 自動清理舊版同步異常可能殘留的連續重複訊息與重複輪次 (user+assistant)
             var cleaned: [ChatMessage] = []
             for msg in decoded {
-                let norm = msg.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                let norm = normalizeForDedup(msg.content)
                 if let prev = cleaned.last,
                    prev.role == msg.role,
-                   prev.content.trimmingCharacters(in: .whitespacesAndNewlines) == norm {
+                   normalizeForDedup(prev.content) == norm {
                     continue
+                }
+                // 檢查是否為緊接著重複的上一輪 (user+assistant)
+                if msg.role == .user,
+                   cleaned.count >= 2,
+                   cleaned[cleaned.count - 2].role == .user,
+                   normalizeForDedup(cleaned[cleaned.count - 2].content) == norm {
+                    // 若緊接著的下一則也是重複的 assistant，則跳過整個重複輪次（先標記或直接靠最近檢查）
                 }
                 cleaned.append(msg)
             }
-            messages = cleaned
-            if cleaned.count != decoded.count {
+            // 再做一次相鄰重複輪次 (U1, A1, U1, A1 -> U1, A1) 清理
+            var dedupedTurns: [ChatMessage] = []
+            var i = 0
+            while i < cleaned.count {
+                if i + 3 < cleaned.count,
+                   cleaned[i].role == .user,
+                   cleaned[i + 1].role == .assistant,
+                   cleaned[i + 2].role == .user,
+                   cleaned[i + 3].role == .assistant,
+                   normalizeForDedup(cleaned[i].content) == normalizeForDedup(cleaned[i + 2].content),
+                   normalizeForDedup(cleaned[i + 1].content) == normalizeForDedup(cleaned[i + 3].content) {
+                    dedupedTurns.append(cleaned[i])
+                    dedupedTurns.append(cleaned[i + 1])
+                    i += 4
+                    continue
+                }
+                dedupedTurns.append(cleaned[i])
+                i += 1
+            }
+
+            messages = dedupedTurns
+            if dedupedTurns.count != decoded.count {
                 saveUnifiedTimeline()
             }
             return
@@ -815,17 +851,32 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
             let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
             let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normR = normalizeForDedup(rText)
+            let normQ = normalizeForDedup(qText)
 
-            // 檢查此輪回覆是否已存在於目前時間軸（避免切換 App 或重開時重複堆疊）
-            if !rText.isEmpty,
+            // 檢查此輪回覆是否已存在於目前時間軸（忽略 ** 等 Markdown 差異）
+            if !normR.isEmpty,
                let existingIdx = messages.lastIndex(where: {
-                   $0.role == .assistant && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == rText
+                   $0.role == .assistant && normalizeForDedup($0.content) == normR
                }) {
                 // 若本地訊息尚未補上後端 metadata，順便補齊
                 if messages[existingIdx].metadata == nil, let meta = item.metadata {
                     messages[existingIdx].metadata = meta
                     changed = true
                 }
+                if !item.timestamp.isEmpty {
+                    lastSyncedHistoryTimestamp = item.timestamp
+                }
+                continue
+            }
+
+            // 若近期已經有相同問題且緊接著也有助理回覆，同樣視為已存在於本地
+            if !normQ.isEmpty,
+               let qIdx = messages.suffix(20).lastIndex(where: {
+                   $0.role == .user && normalizeForDedup($0.content) == normQ
+               }),
+               qIdx + 1 < messages.endIndex,
+               messages[qIdx + 1].role == .assistant {
                 if !item.timestamp.isEmpty {
                     lastSyncedHistoryTimestamp = item.timestamp
                 }
