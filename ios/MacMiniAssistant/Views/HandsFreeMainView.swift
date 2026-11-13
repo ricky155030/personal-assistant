@@ -182,37 +182,7 @@ struct HandsFreeMainView: View {
 
     // MARK: - 2. 頂部 Gemini 風格導覽列
     private var topHeaderBar: some View {
-        HStack(spacing: 14) {
-            // 左上同步按鈕（點擊向 Mac mini 同步統一時間軸；連線診斷開關已移至設定頁）
-            Button(action: {
-                haptic.impactOccurred()
-                isInputFocused = false
-                Task {
-                    await coordinator.syncRemoteHistory()
-                }
-            }) {
-                ZStack(alignment: .topTrailing) {
-                    Circle()
-                        .fill(Color(white: 0.13))
-                        .frame(width: 44, height: 44)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                        .overlay(
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.85))
-                        )
-
-                    Circle()
-                        .fill(coordinator.isServerReachable ? Color.green : Color.red)
-                        .frame(width: 9, height: 9)
-                        .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
-                        .offset(x: -2, y: 2)
-                }
-            }
-
+        HStack(spacing: 12) {
             // 模型選擇、思考層級、語音辨識與語音設定選單（使用原生 Picker 確保選中項顯示系統打勾 ✓）
             Menu {
                 Section("AI 模型選擇") {
@@ -398,22 +368,16 @@ struct HandsFreeMainView: View {
         }
     }
 
-    // MARK: - Context 佔比圓形填充指示器 (點擊檢視 Token 明細 / 切換音訊輸出)
+    // MARK: - Context 佔比圓形填充指示器 (與 ACP 統一大腦 Context 用量同步，點擊檢視明細 / 切換音訊)
     private var latestContextUsage: (ratio: Double, pctText: String, detailText: String, tint: Color) {
-        let contextLimit = 1_000_000.0
-        guard let lastUsage = coordinator.messages.reversed().compactMap({ $0.metadata?.usage }).first else {
-            return (0.0, "--%", "尚無本輪統計", Color(white: 0.5))
+        guard let snap = coordinator.quotaSnapshot else {
+            return (0.0, "--%", "尚無 ACP Context 統計", Color(white: 0.5))
         }
-        let inputTok = lastUsage.input_tokens ?? 0
-        let cachedTok = lastUsage.cached_read_tokens ?? 0
-        let usedTokens = Double(inputTok + cachedTok)
-        let rawRatio = usedTokens / contextLimit
-        let clampedRatio = min(1.0, max(0.0, rawRatio))
-        let pct = rawRatio * 100.0
-        let pctText = pct >= 100.0 ? "100%" : (pct >= 10.0 ? String(format: "%.0f%%", pct) : String(format: "%.1f%%", pct))
-        let tint: Color = pct >= 80.0 ? .red : (pct >= 50.0 ? .orange : .cyan)
-        let usedK = Int((usedTokens / 1000.0).rounded())
-        let detail = "Context 約 \(usedK)K / 1,000K（輸入 \(inputTok) + 快取 \(cachedTok)）"
+        let pct = snap.contextPercent
+        let clampedRatio = min(1.0, max(0.0, pct / 100.0))
+        let pctText = pct >= 10.0 ? String(format: "%.0f%%", pct) : String(format: "%.1f%%", pct)
+        let tint: Color = pct >= 80.0 ? .red : (pct >= 50.0 ? .orange : .purple)
+        let detail = "ACP Context：\(snap.contextTokens.formatted()) / \(snap.contextLimit.formatted()) tokens"
         return (clampedRatio, pctText, detail, tint)
     }
 
