@@ -1119,18 +1119,19 @@ class AgyWorker:
                 self._active_turn_id = None
                 self._cancel_requested = False
 
-            total_latency = time.perf_counter() - start_t
-            self.last_active_time = time.time()
-            full_reply = "".join(full_reply_parts) or turn_result.get("response", "")
-            full_thought = "".join(full_thought_parts).strip()
-            clean_reply = full_reply.replace("**", "").replace("#", "").replace("`", "").strip()
+                total_latency = time.perf_counter() - start_t
+                self.last_active_time = time.time()
+                full_reply = "".join(full_reply_parts) or turn_result.get("response", "")
+                full_thought = "".join(full_thought_parts).strip()
+                clean_reply = full_reply.replace("**", "").replace("#", "").replace("`", "").strip()
 
-            turn_result["clean_reply"] = clean_reply
-            turn_result["thought"] = full_thought
-            turn_result["quick_replies"] = [] if was_cancelled else extract_quick_replies(clean_reply)
-            turn_result["cancelled"] = was_cancelled or turn_result.get("cancelled", False)
-            turn_result["time_to_first_token"] = first_token_time or total_latency
-            turn_result["total_latency"] = total_latency
+                turn_result["clean_reply"] = clean_reply
+                turn_result["thought"] = full_thought
+                turn_result["quick_replies"] = [] if was_cancelled else extract_quick_replies(clean_reply)
+                turn_result["cancelled"] = was_cancelled or turn_result.get("cancelled", False)
+                turn_result["time_to_first_token"] = first_token_time or total_latency
+                turn_result["total_latency"] = total_latency
+                self.last_turn_result = turn_result
 
             # 更新與持久化 Context 用量（精確反映 Session 記憶長度，排除多步工具重複累計）
             usage = turn_result.get("usage", {})
@@ -1341,51 +1342,58 @@ class AgyBrainPool:
         worker = self.primary_worker
         print(f"[AgyBrainPool] 🧠 請求派發至統一大腦 [ACP] (等級: {chosen_level.upper()} | 目標模型: {target_model} | 共享 Session: {(worker.session_id or 'N/A')[:8]})")
 
+        worker.last_turn_result = {}
         stream_gen = worker.send_query_stream(clean_q, media=media, target_model=target_model)
         turn_result = {}
+        logged = False
         try:
             while True:
                 item = next(stream_gen)
                 yield item
         except StopIteration as e:
             turn_result = e.value or {}
+        finally:
+            try:
+                stream_gen.close()
+            except Exception:
+                pass
+            if not turn_result:
+                turn_result = getattr(worker, "last_turn_result", {}) or {}
+            turn_result["thinking_level"] = chosen_level
+            turn_result["model"] = target_model
+            turn_result["worker"] = worker.name
 
-        turn_result["thinking_level"] = chosen_level
-        turn_result["model"] = target_model
-        turn_result["worker"] = worker.name
-
-        has_partial_reply = bool((turn_result.get("clean_reply") or "").strip())
-        if not turn_result.get("cancelled") or has_partial_reply:
-            ttft = turn_result.get("time_to_first_token", 0)
-            tot = turn_result.get("total_latency", 0)
-            usage = dict(worker.last_usage or {})
-            est_cost = _estimate_turn_cost_usd(target_model, usage)
-            metadata = {
-                "model": target_model,
-                "thinking_level": chosen_level,
-                "ttft_sec": round(ttft, 2),
-                "total_sec": round(tot, 2),
-                "usage": {
-                    "input_tokens": int(usage.get("input_tokens", 0) or 0),
-                    "output_tokens": int(usage.get("output_tokens", 0) or 0),
-                    "thought_tokens": int(usage.get("thought_tokens", 0) or 0),
-                    "cached_read_tokens": int(usage.get("cached_read_tokens", 0) or 0),
-                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
-                },
-                "estimated_cost_usd": est_cost,
-            }
-            turn_result["metadata"] = metadata
-            actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
-            memory_manager.log_interaction(
-                query,
-                turn_result.get("clean_reply", ""),
-                [actions_str],
-                metadata=metadata,
-            )
-            if turn_result.get("cancelled"):
-                print(f"[AgyBrainPool] 💾 連線中斷但已產出部分回覆，已寫入歷史紀錄防漏訊 (耗時: {tot:.2f}s)")
-        else:
-            print(f"[AgyBrainPool] 🛑 統一大腦本次 Turn 已被使用者中途取消 (耗時: {turn_result.get('total_latency', 0):.2f}s)")
+            clean_reply_text = (turn_result.get("clean_reply") or "").strip()
+            if not turn_result.get("cancelled") or clean_reply_text:
+                ttft = turn_result.get("time_to_first_token", 0)
+                tot = turn_result.get("total_latency", 0)
+                usage = dict(worker.last_usage or {})
+                est_cost = _estimate_turn_cost_usd(target_model, usage)
+                metadata = {
+                    "model": target_model,
+                    "thinking_level": chosen_level,
+                    "ttft_sec": round(ttft, 2),
+                    "total_sec": round(tot, 2),
+                    "usage": {
+                        "input_tokens": int(usage.get("input_tokens", 0) or 0),
+                        "output_tokens": int(usage.get("output_tokens", 0) or 0),
+                        "thought_tokens": int(usage.get("thought_tokens", 0) or 0),
+                        "cached_read_tokens": int(usage.get("cached_read_tokens", 0) or 0),
+                        "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                    },
+                    "estimated_cost_usd": est_cost,
+                }
+                turn_result["metadata"] = metadata
+                actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
+                memory_manager.log_interaction(
+                    query,
+                    clean_reply_text or turn_result.get("clean_reply", ""),
+                    [actions_str],
+                    metadata=metadata,
+                )
+                logged = True
+            if not logged:
+                print(f"[AgyBrainPool] 🛑 統一大腦本次 Turn 已被使用者中途取消且無文字產出 (耗時: {turn_result.get('total_latency', 0):.2f}s)")
 
         return turn_result
 
