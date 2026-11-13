@@ -1272,8 +1272,8 @@ struct GeminiMessageRow: View {
                         isAnimating: message.status == .streaming || isCurrentlySpeaking
                     )
 
-                    if message.status == .streaming && message.content.isEmpty {
-                        Text(message.toolHistory.last ?? "正在思考...")
+                    if message.status == .streaming && message.content.isEmpty && message.toolHistory.isEmpty && !hasThoughts {
+                        Text("正在思考...")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.secondary)
                     } else if isCurrentlySpeaking {
