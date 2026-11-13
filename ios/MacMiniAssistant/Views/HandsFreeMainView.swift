@@ -78,6 +78,11 @@ struct HandsFreeMainView: View {
     @State private var showModelPopover: Bool = false
     @State private var showContextPopover: Bool = false
     @State private var isAtBottom: Bool = true
+    @State private var isDraggingBottom: Bool = false
+    @State private var startedDragAtBottom: Bool = false
+    @State private var bottomPullOffset: CGFloat = 0
+    @State private var bottomPullHapticTriggered: Bool = false
+    @State private var isRefreshingHistory: Bool = false
     @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
@@ -636,6 +641,31 @@ struct HandsFreeMainView: View {
                                 .padding(.horizontal, 16)
                         }
 
+                        // 底部繼續上拉重整提示（當滑到最底下繼續往上拉時顯示）
+                        if bottomPullOffset > 15 || isRefreshingHistory {
+                            HStack(spacing: 8) {
+                                if isRefreshingHistory {
+                                    ProgressView()
+                                        .tint(.cyan)
+                                        .scaleEffect(0.8)
+                                    Text("正在清除快取並重抓最新紀錄...")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.cyan)
+                                } else {
+                                    let ready = bottomPullOffset >= 65
+                                    Image(systemName: ready ? "arrow.triangle.2.circlepath" : "arrow.up")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(ready ? .cyan : .secondary)
+                                    Text(ready ? "放開以清除快取並重整對話" : "繼續上拉以重整對話")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(ready ? .cyan : .secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .transition(.opacity)
+                        }
+
                         Color.clear
                             .frame(height: 8)
                             .id("bottom_anchor")
@@ -647,6 +677,53 @@ struct HandsFreeMainView: View {
                     .padding(.bottom, 8)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onChanged { value in
+                            if !isDraggingBottom {
+                                isDraggingBottom = true
+                                startedDragAtBottom = isAtBottom
+                                bottomPullHapticTriggered = false
+                            }
+                            guard startedDragAtBottom && !isRefreshingHistory else { return }
+                            let pullUp = -value.translation.height
+                            if pullUp > 0 {
+                                bottomPullOffset = pullUp
+                                if pullUp >= 65 && !bottomPullHapticTriggered {
+                                    bottomPullHapticTriggered = true
+                                    haptic.impactOccurred()
+                                } else if pullUp < 65 {
+                                    bottomPullHapticTriggered = false
+                                }
+                            } else {
+                                bottomPullOffset = 0
+                            }
+                        }
+                        .onEnded { value in
+                            let pullUp = -value.translation.height
+                            let shouldRefresh = startedDragAtBottom && pullUp >= 65 && !isRefreshingHistory
+                            isDraggingBottom = false
+                            startedDragAtBottom = false
+                            bottomPullHapticTriggered = false
+                            if shouldRefresh {
+                                isRefreshingHistory = true
+                                bottomPullOffset = 0
+                                Task {
+                                    await coordinator.rebuildTimelineFromServer()
+                                    await MainActor.run {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            isRefreshingHistory = false
+                                        }
+                                        scrollToBottom(proxy: proxy, animated: true)
+                                    }
+                                }
+                            } else {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    bottomPullOffset = 0
+                                }
+                            }
+                        }
+                )
 
                 if !isAtBottom && coordinator.messages.count > 2 {
                     Button(action: {
