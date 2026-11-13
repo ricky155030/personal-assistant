@@ -200,6 +200,25 @@ struct AssistantSettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Section("對話紀錄與快取") {
+                    Button(action: {
+                        Task {
+                            await coordinator.rebuildTimelineFromServer()
+                        }
+                        dismiss()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .foregroundColor(.blue)
+                            Text("清除本機快取並從 Mac mini 重抓紀錄")
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    Text("若對話畫面出現重複或順序異常，可點此以 Mac mini 紀錄檔為準立即重建（保留本機照片）。")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+
                 Section("關於本 App") {
                     HStack {
                         Text("版本")

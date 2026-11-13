@@ -831,7 +831,79 @@ public final class VoiceSessionCoordinator: ObservableObject {
         try? data.write(to: unifiedTimelineURL, options: .atomic)
     }
 
+    public func rebuildTimelineFromServer(limit: Int = 40) async {
+        guard !isSyncingHistory else { return }
+        isSyncingHistory = true
+        defer { isSyncingHistory = false }
+
+        let items = await apiClient.fetchHistory(limit: limit, since: nil)
+        guard !items.isEmpty else { return }
+
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackFormatter = ISO8601DateFormatter()
+
+        // 保留本機既有的照片附件與工具/思考軌跡，避免重建時遺失
+        let existingSnapshot = messages
+        var rebuilt: [ChatMessage] = []
+        var latestTs: String? = nil
+
+        for item in items {
+            let parsedDate = isoFormatter.date(from: item.timestamp)
+                ?? fallbackFormatter.date(from: item.timestamp)
+                ?? Date()
+            let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !qText.isEmpty {
+                let normQ = normalizeForDedup(qText)
+                let oldUser = existingSnapshot.last(where: { $0.role == .user && normalizeForDedup($0.content) == normQ })
+                rebuilt.append(ChatMessage(
+                    role: .user,
+                    content: qText,
+                    timestamp: parsedDate,
+                    status: .completed,
+                    attachedImageData: oldUser?.attachedImageData,
+                    attachedImagesData: oldUser?.attachedImagesData
+                ))
+            }
+
+            if !rText.isEmpty {
+                let normR = normalizeForDedup(rText)
+                let oldAst = existingSnapshot.last(where: { $0.role == .assistant && normalizeForDedup($0.content) == normR })
+                rebuilt.append(ChatMessage(
+                    role: .assistant,
+                    content: rText,
+                    timestamp: parsedDate,
+                    status: .completed,
+                    toolHistory: oldAst?.toolHistory ?? [],
+                    thoughtProcess: oldAst?.thoughtProcess ?? "",
+                    quickReplies: oldAst?.quickReplies ?? [],
+                    reportUrl: oldAst?.reportUrl,
+                    metadata: item.metadata ?? oldAst?.metadata
+                ))
+            }
+
+            if !item.timestamp.isEmpty {
+                latestTs = item.timestamp
+            }
+        }
+
+        messages = rebuilt
+        if let ts = latestTs {
+            lastSyncedHistoryTimestamp = ts
+        }
+        saveUnifiedTimeline()
+    }
+
     public func syncRemoteHistory(limit: Int = 40) async {
+        // 初次升級至伺服器為準架構時，自動以 Mac mini 最新紀錄重建乾淨時間軸（清理舊版殘留重複）
+        if !UserDefaults.standard.bool(forKey: "macmini_timeline_v2_rebuilt") {
+            await rebuildTimelineFromServer(limit: limit)
+            UserDefaults.standard.set(true, forKey: "macmini_timeline_v2_rebuilt")
+            return
+        }
+
         guard !isSyncingHistory else { return }
         isSyncingHistory = true
         defer { isSyncingHistory = false }
