@@ -282,9 +282,9 @@ struct AssistantSettingsView: View {
             let (ok, ms, detail) = await MacMiniAPIClient.shared.checkHealth()
             isTestingConnection = false
             if ok {
-                testConnectionResult = "✅ 連線成功！延遲 \(ms) ms"
+                testConnectionResult = "連線成功，延遲 \(ms) ms"
             } else {
-                testConnectionResult = "❌ 連線失敗: \(detail)"
+                testConnectionResult = "連線失敗: \(detail)"
                 MacMiniAPIClient.shared.baseURL = oldBase
                 MacMiniAPIClient.shared.apiKey = oldKey
             }

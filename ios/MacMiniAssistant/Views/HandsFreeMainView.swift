@@ -635,8 +635,19 @@ struct HandsFreeMainView: View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
-                    LazyVStack(spacing: 22) {
-                        ForEach(coordinator.messages) { msg in
+                    LazyVStack(spacing: 20) {
+                        ForEach(Array(coordinator.messages.enumerated()), id: \.element.id) { idx, msg in
+                            if shouldShowTimestampSeparator(at: idx) {
+                                Text(formatMessageTimestamp(msg.timestamp))
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(Color(white: 0.48))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 3)
+                                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                                    .frame(maxWidth: .infinity)
+                            }
+
                             GeminiMessageRow(
                                 message: msg,
                                 isCurrentlySpeaking: isSpeakingMessage(msg),
@@ -865,6 +876,26 @@ struct HandsFreeMainView: View {
         return false
     }
 
+    private func shouldShowTimestampSeparator(at index: Int) -> Bool {
+        guard index > 0 else { return true }
+        let prev = coordinator.messages[index - 1].timestamp
+        let curr = coordinator.messages[index].timestamp
+        return curr.timeIntervalSince(prev) >= 600
+    }
+
+    private func formatMessageTimestamp(_ date: Date) -> String {
+        let cal = Calendar.current
+        let timeStr = date.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(date) {
+            return "今天 \(timeStr)"
+        } else if cal.isDateInYesterday(date) {
+            return "昨天 \(timeStr)"
+        } else {
+            let dateStr = date.formatted(.dateTime.month(.defaultDigits).day(.defaultDigits))
+            return "\(dateStr) \(timeStr)"
+        }
+    }
+
     // MARK: - 邊講邊跳字的即時預覽氣泡 (徹底解決「不知道有沒有聽到」與「何時送出」)
     private var liveTranscriptPreviewBubble: some View {
         HStack {
@@ -1045,7 +1076,7 @@ struct HandsFreeMainView: View {
                         .foregroundColor(Color(white: 0.55)),
                     axis: .vertical
                 )
-                .font(.system(size: 17))
+                .font(.body)
                 .lineLimit(1...5)
                 .foregroundColor(.white)
                 .focused($isInputFocused)
@@ -1327,7 +1358,7 @@ struct HandsFreeMainView: View {
     private var debugHUDView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("🛠️ 收音與連線診斷 (\(coordinator.serverStatusText))")
+                Label("收音與連線診斷 (\(coordinator.serverStatusText))", systemImage: "wrench.and.screwdriver.fill")
                     .font(.caption)
                     .bold()
                     .foregroundColor(.cyan)
@@ -1564,7 +1595,7 @@ struct GeminiMessageRow: View {
                     }
 
                     Text(message.content)
-                        .font(.system(size: 16.5))
+                        .font(.body)
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
@@ -1732,12 +1763,9 @@ struct GeminiMessageRow: View {
                     }
                 }
 
-                // 助理回覆正文
+                // 助理回覆正文（完整 Markdown 渲染 + 動態字體）
                 if !message.content.isEmpty {
-                    Text(LocalizedStringKey(message.content))
-                        .font(.system(size: 16.5))
-                        .lineSpacing(4)
-                        .foregroundColor(.white.opacity(0.94))
+                    MarkdownMessageView(content: message.content)
                         .textSelection(.enabled)
                 }
 
@@ -1797,7 +1825,7 @@ struct GeminiMessageRow: View {
                    let metaText = message.metadata?.summaryText,
                    !metaText.isEmpty {
                     Text(metaText)
-                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .font(.caption2)
                         .foregroundColor(Color(white: 0.48))
                         .padding(.top, 2)
                 }

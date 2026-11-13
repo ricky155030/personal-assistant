@@ -127,9 +127,9 @@ public enum ResponseLengthOption: String, CaseIterable, Identifiable, Codable {
 
     public var title: String {
         switch self {
-        case .concise: return "⚡ 極簡俐落 (30~60字)"
-        case .balanced: return "⚖️ 標準均衡 (80~150字)"
-        case .detailed: return "📚 完整詳解 (深度完整)"
+        case .concise: return "極簡俐落 (30~60字)"
+        case .balanced: return "標準均衡 (80~150字)"
+        case .detailed: return "完整詳解 (深度完整)"
         }
     }
 
