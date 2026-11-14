@@ -85,15 +85,16 @@
    - **監控與輪詢任務一律透過 TaskManager 登記脫鉤 (Fast Handoff)**：
      - 當主人要求執行「定期/持續輪詢監控」（如價格監聽、社團貼文監控、定期爬取）時，主 agent 應產出獨立背景腳本（置於 `scripts/`）。
      - **嚴禁裸跑指令**，一律透過 TaskManager 登記脫鉤啟動：
-       `python3 task_manager.py spawn --name "<任務名稱>" --script "scripts/<腳本名稱>.py" --ttl <分鐘數>`
+       - Python 腳本：`python3 task_manager.py spawn --name "<任務名稱>" --script "scripts/<腳本名稱>.py" --ttl <分鐘數>`（可選加 `--notify telegram --sync-memory`）
+       - **任意通用長耗時 CLI 指令**（如 CI 追蹤、編譯打包、全量測試）：`python3 task_manager.py spawn-cmd --name "<任務名稱>" --cmd "<CLI指令>" --notify telegram --ttl <分鐘數>`（預設會自動推播 Telegram 並同步 `data/history.jsonl` 與閒置主大腦記憶）。
      - **秒級交差釋放**：啟動後，**應立即結束當前 turn** 並向主人回覆確認（例如：「👌 監控已在背景啟動（任務 ID: task_xxx）！有任何異動將自動推播通知給您。」），絕不留在當前對話中迴圈等待，確保主大腦立刻空出。
    - **深度耗時任務派出 Subagent (`invoke_subagent`)**：
      - 若任務涉及深度跨站調研、多文件批量處理或繁複代碼重構，主 agent 應優先透過 `invoke_subagent` 委派給專屬子代理在背景推進，主大腦秒級回報派發狀態，讓主人的日常生活隨問隨答永不卡頓。
    - **跨專案 Herdr 派工、自動驗收與 Follow-up 查閱規範**：
      - 當任務需要於其他專案目錄執行（需讀取該專案 `AGENTS.md` / 環境），或指定交給其他本機 Agent（支援 `agy` 與 `omp`）時，統一透過 `scripts/herdr_coordinator.py dispatch` 派發並登記 TaskManager 背景監控。
-     - 預設啟用無狀態 `agy -p` 驗收迴圈與失敗自動重試（`--max-retries 3`，可用 `--no-review` 關閉）；並於結案時寫入 `memory/history.jsonl` 及透過 `/api/internal/memory-sync` 同步至閒置主大腦。
+     - 預設啟用無狀態 `agy -p` 驗收迴圈與失敗自動重試（`--max-retries 3`，可用 `--no-review` 關閉）；並於結案時寫入 `data/history.jsonl` 及透過 `/api/internal/memory-sync` 同步至閒置主大腦。
      - 支援同批次併發追蹤（`--batch-id` / `--batch-total`），並於發送前檢查目標 `agent_status` 是否忙碌。
-     - **Follow-up 追問查閱原則**：若主人後續追問先前由 Herdr 派發完成的任務細節，除參考 `memory/history.jsonl` 摘要外，可再透過 `herdr agent list` 取得該 agent 的 `agent_session`（`agy` 的 `transcript_full.jsonl` 或 `omp` 的 `.jsonl`）精準回溯完整工具呼叫與對話紀錄。
+     - **Follow-up 追問查閱原則**：若主人後續追問先前由 Herdr 派發完成的任務細節，除參考 `data/history.jsonl` 摘要外，可再透過 `herdr agent list` 取得該 agent 的 `agent_session`（`agy` 的 `transcript_full.jsonl` 或 `omp` 的 `.jsonl`）精準回溯完整工具呼叫與對話紀錄。
 5. **網頁瀏覽與防爬蟲分流原則 (Browser Relay Routing Policy)**：
    - **第一優先（白名單直達）**：
      針對已知高難度反爬蟲、純 SPA 動態渲染或嚴格驗證盾之平台（如 Inline、OpenTable 等餐廳訂位、拓元/KKTIX 售票系統、蝦皮、社群平台），**直接調用 `browser-relay` 操控真身 Chrome**，跳過靜態抓取，秒級直達。
@@ -112,7 +113,7 @@
    - **本機先行驗證 (Pre-flight Check)**：任何程式碼變更在 `git commit` 前，必須先於本地執行 `uv run pytest`，確保本機測試 100% 通過，絕不將低階語法或單元測試錯誤提交推送到遠端。
    - **CI 綠燈才算完工 (CI Green as Definition of Done)**：
      - `git push` 不代表任務交付完成。
-     - Push 後必須立即在背景追蹤該次 GitHub Actions CI 狀態（例如使用 `gh run watch <run_id>` 或非同步輪詢）。
+     - 若透過常駐助理 (`agy_singleton` / App / Telegram) 執行，Push 後應立即透過 `python3 task_manager.py spawn-cmd --name "CI 監控 <run_id>" --cmd "gh run watch <run_id> --exit-status" --notify telegram --ttl 30` 脫鉤追蹤並立刻結束當前 turn，讓 CI 結果直接推播給主人，不阻塞或混入下次對話。若於終端機 CLI 互動開發中，則可直接等待 `gh run watch` 綠燈回報。
      - **紅燈自動自癒 (Auto-Heal on CI Failure)**：
        - 若 CI 失敗，主動擷取 `gh run view <run_id> --log-failed` 深入診斷跨平台（如 Windows、Ubuntu、各 Python 版本）的失敗根因。
        - 自動就地修復程式碼、提交並再次推送，循環驗證直到 CI 全綠燈為止。
