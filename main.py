@@ -24,6 +24,11 @@ from telegram_service import (
     send_formatted_telegram_reply
 )
 from memory_scheduler import run_memory_scheduler, sync_and_commit_memory
+from task_supervisor import (
+    run_task_supervisor,
+    enqueue_memory_sync,
+    try_inject_memory_sync,
+)
 
 # 語音朗讀專用：全面清除 Emoji 表情符號與 Markdown 標記，避免 Siri 唸出「笑臉」等雜音
 EMOJI_PATTERN = re.compile(r"[\U00010000-\U0010ffff\u2600-\u27bf\u2300-\u23ff\u2b50\u200d\ufe0f]", flags=re.UNICODE)
@@ -150,6 +155,7 @@ async def startup_event():
     if settings.TELEGRAM_BOT_TOKEN:
         asyncio.create_task(start_telegram_bot())
     asyncio.create_task(run_memory_scheduler())
+    asyncio.create_task(run_task_supervisor())
     # 背景預熱轉錄模型（lazy 載入，首次請求不用等模型載入）
     asyncio.create_task(asyncio.to_thread(warm_transcriber))
 
@@ -965,40 +971,19 @@ async def internal_memory_sync(
     payload: InternalMemorySyncRequest,
     _authorized: bool = Depends(verify_token),
 ):
-    """背景任務完工後，趁主大腦閒置時靜默注入 3 行摘要，讓主人 Follow-up 可無縫接話"""
+    """背景任務完工後，趁主大腦閒置時靜默注入 3 行摘要；若主大腦忙碌則排入待送佇列"""
     summary = (payload.summary or "").strip()
     if not summary:
         return {"status": "ignored", "synced": False, "reason": "empty_summary"}
 
-    worker = agy_singleton.brain_pool.primary_worker
-    if not worker.lock.acquire(blocking=False):
-        return {"status": "busy", "synced": False, "reason": "brain_busy"}
-    worker.lock.release()
-
-    def _inject_silent_memo() -> bool:
-        if not worker._is_ready or worker.proc is None or worker.proc.poll() is not None:
-            return False
-        memo_prompt = (
-            f"[系統背景備忘（來源: {payload.source}），請僅回覆「收到」兩字，勿呼叫任何工具]\n"
-            f"{summary}"
-        )
-        gen = worker.send_query_stream(memo_prompt, target_model=None)
-        try:
-            for _ in gen:
-                pass
-            return True
-        except Exception as ex:
-            print(f"[internal_memory_sync] Failed: {ex}")
-            return False
-        finally:
-            try:
-                gen.close()
-            except Exception:
-                pass
-
     loop = asyncio.get_running_loop()
-    ok = await loop.run_in_executor(None, _inject_silent_memo)
-    return {"status": "ok" if ok else "skipped", "synced": ok}
+    ok, reason = await loop.run_in_executor(None, try_inject_memory_sync, summary, payload.source)
+    if ok:
+        return {"status": "ok", "synced": True}
+    if reason in ("brain_busy", "worker_not_ready"):
+        q_len = enqueue_memory_sync(summary, payload.source)
+        return {"status": "queued", "synced": False, "reason": reason, "queued_count": q_len}
+    return {"status": "skipped", "synced": False, "reason": reason}
 
 @app.get("/api/status")
 @app.get("/api/usage")

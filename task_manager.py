@@ -24,6 +24,7 @@ import json
 import time
 import signal
 import argparse
+import tempfile
 import threading
 import subprocess
 import urllib.request
@@ -353,6 +354,10 @@ def is_pid_alive(pid: int) -> bool:
     except OSError:
         return False
 
+class TaskStoreError(Exception):
+    """任務登記檔讀取或解析異常（避免以空清單覆寫原檔）"""
+
+
 class TaskManager:
     def __init__(self):
         TASK_LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -361,37 +366,68 @@ class TaskManager:
 
     def _load_tasks(self) -> List[Dict[str, Any]]:
         with _TASK_JSON_LOCK:
+            if not TASKS_JSON_PATH.exists():
+                return []
             try:
-                if TASKS_JSON_PATH.exists():
-                    with open(TASKS_JSON_PATH, "r", encoding="utf-8") as f:
-                        if _fcntl is not None:
-                            _fcntl.flock(f.fileno(), _fcntl.LOCK_SH)
-                        try:
-                            return json.load(f)
-                        finally:
-                            if _fcntl is not None:
-                                _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
-            except Exception as e:
-                print(f"[TaskManager] 讀取 tasks.json 失敗: {e}", file=sys.stderr)
-            return []
-
-    def _save_tasks(self, tasks: List[Dict[str, Any]]) -> None:
-        with _TASK_JSON_LOCK:
-            try:
-                TASKS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-                with open(TASKS_JSON_PATH, "a+", encoding="utf-8") as f:
+                with open(TASKS_JSON_PATH, "r", encoding="utf-8") as f:
                     if _fcntl is not None:
-                        _fcntl.flock(f.fileno(), _fcntl.LOCK_EX)
+                        _fcntl.flock(f.fileno(), _fcntl.LOCK_SH)
                     try:
-                        f.seek(0)
-                        f.truncate()
-                        json.dump(tasks, f, ensure_ascii=False, indent=2)
-                        f.flush()
+                        raw = f.read()
                     finally:
                         if _fcntl is not None:
                             _fcntl.flock(f.fileno(), _fcntl.LOCK_UN)
+                if not raw.strip():
+                    return []
+                data = json.loads(raw)
+                if not isinstance(data, list):
+                    raise TaskStoreError(f"tasks.json 格式非 list: {type(data).__name__}")
+                return data
+            except TaskStoreError:
+                raise
+            except Exception as e:
+                print(f"[TaskManager] 讀取 tasks.json 失敗: {e}", file=sys.stderr)
+                raise TaskStoreError(str(e)) from e
+
+    def _save_tasks(self, tasks: List[Dict[str, Any]]) -> None:
+        with _TASK_JSON_LOCK:
+            tmp_path: Optional[Path] = None
+            lock_fp = None
+            try:
+                TASKS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+                if _fcntl is not None:
+                    lock_path = TASKS_JSON_PATH.with_suffix(".lock")
+                    lock_fp = open(lock_path, "a+", encoding="utf-8")
+                    _fcntl.flock(lock_fp.fileno(), _fcntl.LOCK_EX)
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=str(TASKS_JSON_PATH.parent),
+                    prefix=".tasks_",
+                    suffix=".tmp",
+                    delete=False,
+                ) as tmp:
+                    tmp_path = Path(tmp.name)
+                    json.dump(tasks, tmp, ensure_ascii=False, indent=2)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                os.replace(tmp_path, TASKS_JSON_PATH)
+                tmp_path = None
             except Exception as e:
                 print(f"[TaskManager] 儲存 tasks.json 失敗: {e}", file=sys.stderr)
+            finally:
+                if tmp_path is not None and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                if lock_fp is not None:
+                    try:
+                        if _fcntl is not None:
+                            _fcntl.flock(lock_fp.fileno(), _fcntl.LOCK_UN)
+                        lock_fp.close()
+                    except Exception:
+                        pass
 
     def _generate_task_id(self) -> str:
         base = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -411,6 +447,7 @@ class TaskManager:
         log_file_path: Path,
         ttl_minutes: int,
         cwd: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         log_fp = open(log_file_path, "a", encoding="utf-8")
         log_fp.write(f"=== 任務啟動: {name} (ID: {task_id}) ===\n")
@@ -449,8 +486,20 @@ class TaskManager:
             "ttl_minutes": ttl_minutes,
             "status": "RUNNING",
         }
+        if extra_fields:
+            record.update(extra_fields)
 
-        tasks = self._load_tasks()
+        try:
+            tasks = self._load_tasks()
+        except TaskStoreError:
+            # 損壞時先備份再重建，避免靜默遺失既有狀態
+            if TASKS_JSON_PATH.exists():
+                backup = TASKS_JSON_PATH.with_suffix(f".corrupt.{int(time.time())}.json")
+                try:
+                    TASKS_JSON_PATH.replace(backup)
+                except Exception:
+                    pass
+            tasks = []
         tasks.append(record)
         self._save_tasks(tasks)
 
@@ -463,6 +512,48 @@ class TaskManager:
             "ttl_minutes": ttl_minutes,
         }
 
+    def adopt_task(
+        self,
+        task_id: str,
+        pid: int,
+        name: str,
+        script: str,
+        log_file: str,
+        started_at: str,
+        ttl_minutes: int,
+        auto_restart: bool = False,
+        restart_spec: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """將已存活於 OS 中的脫鉤背景進程補登回任務名冊（不重啟進程）"""
+        if not is_pid_alive(pid):
+            return {"success": False, "error": f"PID {pid} 未存活，無法補登"}
+        try:
+            tasks = self._load_tasks()
+        except TaskStoreError as e:
+            return {"success": False, "error": str(e)}
+
+        for t in tasks:
+            if t.get("task_id") == task_id or t.get("pid") == pid:
+                return {"success": True, "already_registered": True, "task_id": t.get("task_id")}
+
+        record: Dict[str, Any] = {
+            "task_id": task_id,
+            "pid": pid,
+            "name": name,
+            "script": script,
+            "log_file": log_file,
+            "started_at": started_at,
+            "ttl_minutes": ttl_minutes,
+            "status": "RUNNING",
+        }
+        if auto_restart:
+            record["auto_restart"] = True
+        if restart_spec:
+            record["restart_spec"] = restart_spec
+        tasks.append(record)
+        self._save_tasks(tasks)
+        return {"success": True, "task_id": task_id, "pid": pid}
+
     def spawn(
         self,
         name: str,
@@ -473,6 +564,7 @@ class TaskManager:
         sync_memory: bool = False,
         on_success_cmd: Optional[str] = None,
         on_fail_cmd: Optional[str] = None,
+        auto_restart: bool = False,
     ) -> Dict[str, Any]:
         """
         以完全脫鉤 (Detached) 方式啟動背景長任務腳本；
@@ -516,7 +608,24 @@ class TaskManager:
             if on_fail_cmd:
                 cmd.extend(["--on-fail-cmd", on_fail_cmd])
 
-        return self._spawn_detached(task_id, name, target_label, cmd, log_file_path, ttl_minutes)
+        extra_fields: Dict[str, Any] = {}
+        if auto_restart:
+            extra_fields["auto_restart"] = True
+            extra_fields["restart_spec"] = {
+                "kind": "spawn",
+                "name": name,
+                "script": str(script_path),
+                "args": list(args or []),
+                "ttl_minutes": ttl_minutes,
+                "notify": notify,
+                "sync_memory": sync_memory,
+                "on_success_cmd": on_success_cmd,
+                "on_fail_cmd": on_fail_cmd,
+            }
+
+        return self._spawn_detached(
+            task_id, name, target_label, cmd, log_file_path, ttl_minutes, extra_fields=extra_fields or None
+        )
 
     def spawn_cmd(
         self,
@@ -561,7 +670,11 @@ class TaskManager:
         """
         查詢當前任務清單，並自動執行生命週期檢查與自動修剪 (Pruning)
         """
-        tasks = self._load_tasks()
+        try:
+            tasks = self._load_tasks()
+        except TaskStoreError:
+            # 讀取失敗時絕不覆寫原檔，回傳空清單供呼叫端安全降級
+            return []
         now = datetime.now()
         updated_tasks = []
 
@@ -755,6 +868,7 @@ def main():
     sp_spawn.add_argument("--sync-memory", action="store_true", help="完成時寫入 history.jsonl 並靜默同步主大腦")
     sp_spawn.add_argument("--on-success-cmd", default=None, help="成功時執行的鉤子指令")
     sp_spawn.add_argument("--on-fail-cmd", default=None, help="失敗/逾時時執行的鉤子指令")
+    sp_spawn.add_argument("--auto-restart", action="store_true", help="異常退出時由中控自動重啟")
     sp_spawn.add_argument("--args", nargs=argparse.REMAINDER, default=[], help="傳入腳本之參數 (請置於指令最後)")
 
     # spawn-cmd
@@ -811,6 +925,7 @@ def main():
             sync_memory=args.sync_memory,
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
+            auto_restart=args.auto_restart,
         )
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.command == "spawn-cmd":
@@ -823,6 +938,7 @@ def main():
             sync_memory=not args.no_sync_memory,
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
+            auto_restart=args.auto_restart,
         )
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.command == "_wrap":
@@ -839,6 +955,7 @@ def main():
             script_args_json=args.script_args_json,
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
+            auto_restart=args.auto_restart,
         )
         sys.exit(rc)
     elif args.command == "list":
