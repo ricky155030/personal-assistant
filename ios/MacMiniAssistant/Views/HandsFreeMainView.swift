@@ -1568,6 +1568,19 @@ struct GeminiMessageRow: View {
         !message.thoughtProcess.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var bubbleTimestampText: String {
+        let cal = Calendar.current
+        let timeStr = message.timestamp.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(message.timestamp) {
+            return "今天 \(timeStr)"
+        } else if cal.isDateInYesterday(message.timestamp) {
+            return "昨天 \(timeStr)"
+        } else {
+            let dateStr = message.timestamp.formatted(.dateTime.month(.defaultDigits).day(.defaultDigits))
+            return "\(dateStr) \(timeStr)"
+        }
+    }
+
     var body: some View {
         if isUser {
             // 使用者訊息：右側深灰藍圓角氣泡（含附加照片縮圖）
@@ -1613,6 +1626,11 @@ struct GeminiMessageRow: View {
                                 .fill(Color(red: 0.16, green: 0.18, blue: 0.24))
                         )
                         .textSelection(.enabled)
+
+                    Text(bubbleTimestampText)
+                        .font(.caption2)
+                        .foregroundColor(Color(white: 0.48))
+                        .padding(.trailing, 4)
                 }
             }
             .fullScreenCover(item: $previewPhoto) { item in
@@ -1646,6 +1664,10 @@ struct GeminiMessageRow: View {
                     }
 
                     Spacer()
+
+                    Text(bubbleTimestampText)
+                        .font(.caption2)
+                        .foregroundColor(Color(white: 0.48))
 
                     // 語音朗讀 / 停止按鈕
                     if !message.content.isEmpty {
