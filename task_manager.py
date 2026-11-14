@@ -938,7 +938,6 @@ def main():
             sync_memory=not args.no_sync_memory,
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
-            auto_restart=args.auto_restart,
         )
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.command == "_wrap":
@@ -955,7 +954,6 @@ def main():
             script_args_json=args.script_args_json,
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
-            auto_restart=args.auto_restart,
         )
         sys.exit(rc)
     elif args.command == "list":
