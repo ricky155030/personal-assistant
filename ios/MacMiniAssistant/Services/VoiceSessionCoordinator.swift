@@ -833,6 +833,25 @@ public final class VoiceSessionCoordinator: ObservableObject {
         try? data.write(to: unifiedTimelineURL, options: .atomic)
     }
 
+    private func parseServerTimestamp(_ raw: String) -> Date {
+        let isoWithFrac = ISO8601DateFormatter()
+        isoWithFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = isoWithFrac.date(from: raw) { return d }
+
+        let isoPlain = ISO8601DateFormatter()
+        if let d = isoPlain.date(from: raw) { return d }
+
+        // 後端 data/history.jsonl 使用 datetime.now().isoformat()（無時區後綴），依序以微秒/秒解析
+        for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSSSS", "yyyy-MM-dd'T'HH:mm:ss"] {
+            let df = DateFormatter()
+            df.locale = Locale(identifier: "en_US_POSIX")
+            df.timeZone = TimeZone(identifier: "Asia/Taipei") ?? .current
+            df.dateFormat = fmt
+            if let d = df.date(from: raw) { return d }
+        }
+        return Date()
+    }
+
     public func rebuildTimelineFromServer(limit: Int = 40) async {
         guard !isSyncingHistory else { return }
         isSyncingHistory = true
@@ -841,19 +860,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let items = await apiClient.fetchHistory(limit: limit, since: nil)
         guard !items.isEmpty else { return }
 
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-
         // 保留本機既有的照片附件與工具/思考軌跡，避免重建時遺失
         let existingSnapshot = messages
         var rebuilt: [ChatMessage] = []
         var latestTs: String? = nil
 
         for item in items {
-            let parsedDate = isoFormatter.date(from: item.timestamp)
-                ?? fallbackFormatter.date(from: item.timestamp)
-                ?? Date()
+            let parsedDate = parseServerTimestamp(item.timestamp)
             let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
             let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -913,15 +926,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let items = await apiClient.fetchHistory(limit: limit, since: lastSyncedHistoryTimestamp)
         guard !items.isEmpty else { return }
 
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let fallbackFormatter = ISO8601DateFormatter()
-
         var changed = false
         for item in items {
-            let parsedDate = isoFormatter.date(from: item.timestamp)
-                ?? fallbackFormatter.date(from: item.timestamp)
-                ?? Date()
+            let parsedDate = parseServerTimestamp(item.timestamp)
 
             let qText = item.query.trimmingCharacters(in: .whitespacesAndNewlines)
             let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
