@@ -185,60 +185,67 @@ def format_tool_status(tool_name: str, tool_info: Optional[dict] = None) -> str:
     return f"⚙️ 正在執行 {tool_name}..."
 
 
-def extract_quick_replies(reply_text: str) -> List[str]:
+def _parse_quick_replies_json(raw_text: str) -> List[str]:
+    """從 LLM 回應中解析並清洗候選快速回覆選項（最多 4 個，長度 2~18 字）。"""
+    if not raw_text:
+        return []
+    match = re.search(r"\{[\s\S]*\}", raw_text)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except Exception:
+        return []
+    raw_opts = data.get("options")
+    if not isinstance(raw_opts, list):
+        return []
+    cleaned: List[str] = []
+    for item in raw_opts:
+        opt = str(item or "").strip().strip("。！？!?、，\"'「」『』 ")
+        if 1 < len(opt) <= 18 and opt not in cleaned:
+            cleaned.append(opt)
+        if len(cleaned) >= 4:
+            break
+    return cleaned if len(cleaned) >= 2 else []
+
+
+def extract_quick_replies(reply_text: str, user_query: str = "") -> List[str]:
     """
-    從助理回覆中智慧提取「快速回覆選項 (Quick-Reply Chips)」：
-    當助理遵照「先問再查」原則反問主人（例如提供分店、時間、規格選項，或是非確認題）時，
-    自動萃取最多 4 個精簡可點選膠囊，供 iOS App 與 Telegram 一鍵點選回覆。
+    透過輕量 LLM 語意判斷助理回覆是否真的在向主人徵詢選擇或確認，
+    並精準生成最多 4 個可直接點選的候選快速回覆膠囊 (Quick-Reply Chips)。
     """
     if not reply_text:
         return []
     text = reply_text.strip()
-    if "？" not in text and "?" not in text:
+    if len(text) < 6 or ("？" not in text and "?" not in text):
         return []
 
-    options: List[str] = []
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-
-    # 1. 偵測條列或編號選項（例如：1. 屋馬文心店、- 12:00、1️⃣ 方案 A）
-    bullet_pat = re.compile(
-        r"^(?:[1-6][\.\、\)]|[1-6]️⃣|[-•▪▫▸▹]|選項\s*[1-6A-D]|方案\s*[A-D1-6])\s*(.+)$"
+    agy_bin = getattr(settings, "AGY_BIN", "") or "agy"
+    query_ctx = (user_query or "").strip()[:300]
+    reply_ctx = text[:1200]
+    prompt = (
+        "你是行動裝置快速回覆按鈕生成器。請根據以下對話判斷「助理回覆」是否真的在向主人提出選擇題、反問缺漏參數或請求確認執行。\n"
+        "判斷規則：\n"
+        "1. 若只是單純陳述事實、教學、或禮貌性結尾問句（例如「還有什麼需要幫忙的嗎？」「這樣清楚嗎？」），請回傳空陣列 {\"options\": []}。\n"
+        "2. 只有當助理真的在等主人挑選分店、時間、方案、規格，或確認是否執行時，才生成 2 到 4 個主人會直接點擊送出的簡短自然口語選項（每個 2~14 字）。\n"
+        "3. 若為明確的是非/執行確認，可回傳例如 [\"好，請執行\", \"先不用\"]。\n"
+        "4. 嚴禁把一般說明條列或專有名詞硬湊成選項；只輸出合法 JSON，格式為 {\"options\": [...]}。\n\n"
+        f"主人提問：{query_ctx or '(未提供)'}\n"
+        f"助理回覆：{reply_ctx}\n"
     )
-    for ln in lines:
-        if ln.startswith("📝 秘書備忘") or ln.startswith("───"):
-            continue
-        m = bullet_pat.match(ln)
-        if m:
-            item = m.group(1).strip()
-            item = re.sub(r"\*\*(.+?)\*\*", r"\1", item)
-            item = re.split(r"\s*(?:[—–\-:：\(（]|，)", item)[0].strip()
-            item = item.strip("。！？!?、， ")
-            if 1 < len(item) <= 18 and item not in options:
-                options.append(item)
-
-    if 2 <= len(options) <= 5:
-        return options[:4]
-
-    # 2. 偵測句內引號並列選項（例如：「文心店」、「國安店」或「崇德店」）
-    tail_text = "\n".join(lines[-4:])
-    quoted = re.findall(r"[「『]([^」』]{2,16})[」』]", tail_text)
-    clean_quoted = []
-    for q in quoted:
-        q_clean = q.strip()
-        if q_clean and q_clean not in clean_quoted and not q_clean.startswith("http"):
-            clean_quoted.append(q_clean)
-    if 2 <= len(clean_quoted) <= 4:
-        return clean_quoted[:4]
-
-    # 3. 偵測常見是非 / 執行確認反問句
-    last_two = " ".join(lines[-2:])
-    confirm_patterns = (
-        r"(要幫您|需要我|是否要|要不要|確定要|要現在|需要幫您|請問要|可以嗎|好嗎|對嗎|要繼續嗎).*?[？\?]",
-    )
-    for pat in confirm_patterns:
-        if re.search(pat, last_two):
-            return ["好，請執行", "先不用"]
-
+    try:
+        res = subprocess.run(
+            [agy_bin, "-p", prompt, "--model", "gemini-3.8-flash-low"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=8,
+            cwd=str(settings.BASE_DIR),
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return _parse_quick_replies_json(res.stdout.strip())
+    except Exception as e:
+        print(f"[QuickReplies] ⚠️ LLM 語意判斷略過: {e}")
     return []
 
 
@@ -1127,7 +1134,7 @@ class AgyWorker:
 
                 turn_result["clean_reply"] = clean_reply
                 turn_result["thought"] = full_thought
-                turn_result["quick_replies"] = [] if was_cancelled else extract_quick_replies(clean_reply)
+                turn_result["quick_replies"] = [] if was_cancelled else extract_quick_replies(clean_reply, user_query=query)
                 turn_result["cancelled"] = was_cancelled or turn_result.get("cancelled", False)
                 turn_result["time_to_first_token"] = first_token_time or total_latency
                 turn_result["total_latency"] = total_latency
