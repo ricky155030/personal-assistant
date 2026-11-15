@@ -1392,11 +1392,13 @@ class AgyBrainPool:
                 }
                 turn_result["metadata"] = metadata
                 actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
+                saved_images = memory_manager.save_compressed_history_images(media)
                 memory_manager.log_interaction(
                     query,
                     clean_reply_text or turn_result.get("clean_reply", ""),
                     [actions_str],
                     metadata=metadata,
+                    images=saved_images,
                 )
                 logged = True
             if not logged:

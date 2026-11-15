@@ -448,6 +448,7 @@ public final class MacMiniAPIClient {
         public let reply: String
         public let source: String?
         public let metadata: TurnMetadata?
+        public let images: [String]?
     }
 
     public struct ActiveTurnSnapshot: Codable {
@@ -493,6 +494,26 @@ public final class MacMiniAPIClient {
             return (decoded.history, decoded.active_turn)
         } catch {
             return ([], nil)
+        }
+    }
+
+    public func fetchHistoryImageData(filename: String) async -> Data? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let encoded = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(cleanBase)/api/history/images/\(encoded)") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200, !data.isEmpty else {
+                return nil
+            }
+            return data
+        } catch {
+            return nil
         }
     }
 }

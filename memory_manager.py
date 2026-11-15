@@ -228,12 +228,50 @@ class MemoryManager:
                     if fcntl is not None:
                         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
+    def save_compressed_history_images(
+        self,
+        media: Optional[List[dict]],
+        max_size: int = 720,
+        quality: int = 65,
+    ) -> List[str]:
+        """將對話附帶的圖片壓縮存至 data/history_images/，回傳相對檔名列表以供歷史同步顯示。"""
+        if not media:
+            return []
+        import uuid
+        from pathlib import Path
+        out_dir = settings.DATA_DIR / "history_images"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        saved_names: List[str] = []
+        for item in media:
+            if not isinstance(item, dict):
+                continue
+            mime = str(item.get("mime_type", ""))
+            uri = str(item.get("uri", ""))
+            if not uri or (mime and not mime.startswith("image/")):
+                continue
+            src = Path(uri)
+            if not src.exists():
+                continue
+            filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.jpg"
+            dst = out_dir / filename
+            try:
+                from PIL import Image
+                with Image.open(src) as img:
+                    rgb = img.convert("RGB")
+                    rgb.thumbnail((max_size, max_size))
+                    rgb.save(dst, format="JPEG", quality=quality, optimize=True)
+                saved_names.append(filename)
+            except Exception as e:
+                print(f"[MemoryManager] ⚠️ 壓縮歷史圖片失敗 ({src.name}): {e}")
+        return saved_names
+
     def log_interaction(
         self,
         query: str,
         reply: str,
         actions: List[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        images: Optional[List[str]] = None,
     ):
         """記錄每筆語音對話紀錄與執行的動作及花費 Metadata"""
         record = {
@@ -244,6 +282,8 @@ class MemoryManager:
         }
         if metadata:
             record["metadata"] = metadata
+        if images:
+            record["images"] = list(images)
         self._append_jsonl_locked(settings.HISTORY_LOG_PATH, record)
 
     def _log_audit(self, event_type: str, data: Dict[str, Any]):

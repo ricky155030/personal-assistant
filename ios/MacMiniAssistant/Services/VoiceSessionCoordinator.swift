@@ -901,6 +901,17 @@ public final class VoiceSessionCoordinator: ObservableObject {
         return Date()
     }
 
+    private func fetchImagesForHistoryItem(_ filenames: [String]?) async -> [Data] {
+        guard let names = filenames, !names.isEmpty else { return [] }
+        var result: [Data] = []
+        for name in names {
+            if let data = await apiClient.fetchHistoryImageData(filename: name) {
+                result.append(data)
+            }
+        }
+        return result
+    }
+
     public func rebuildTimelineFromServer(limit: Int = 40) async {
         guard !isSyncingHistory else { return }
         isSyncingHistory = true
@@ -922,13 +933,18 @@ public final class VoiceSessionCoordinator: ObservableObject {
             if !qText.isEmpty {
                 let normQ = normalizeForDedup(qText)
                 let oldUser = existingSnapshot.last(where: { $0.role == .user && normalizeForDedup($0.content) == normQ })
+                var imgList = oldUser?.attachedImagesData
+                if (imgList == nil || imgList?.isEmpty == true), oldUser?.attachedImageData == nil {
+                    let fetched = await fetchImagesForHistoryItem(item.images)
+                    if !fetched.isEmpty { imgList = fetched }
+                }
                 rebuilt.append(ChatMessage(
                     role: .user,
                     content: qText,
                     timestamp: parsedDate,
                     status: .completed,
-                    attachedImageData: oldUser?.attachedImageData,
-                    attachedImagesData: oldUser?.attachedImagesData
+                    attachedImageData: oldUser?.attachedImageData ?? imgList?.first,
+                    attachedImagesData: imgList
                 ))
             }
 
@@ -1046,7 +1062,15 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
             // 僅追加真正來自其他裝置/頻道（或本地遺漏）的新對話輪次
             if !qText.isEmpty {
-                messages.append(ChatMessage(role: .user, content: qText, timestamp: parsedDate, status: .completed))
+                let fetched = await fetchImagesForHistoryItem(item.images)
+                messages.append(ChatMessage(
+                    role: .user,
+                    content: qText,
+                    timestamp: parsedDate,
+                    status: .completed,
+                    attachedImageData: fetched.first,
+                    attachedImagesData: fetched.isEmpty ? nil : fetched
+                ))
                 changed = true
             }
             if !rText.isEmpty {
