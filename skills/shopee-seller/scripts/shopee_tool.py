@@ -1347,13 +1347,18 @@ def ensure_chrome_assistant(port: int = 9223, timeout: float = 10.0) -> None:
 def handle_shopee_login(page, timeout: float = 15.0) -> bool:
     """若頁面處於蝦皮賣家登入頁，使用環境變數帳密自動登入"""
     import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
     username = os.getenv("SHOPEE_USERNAME")
     password = os.getenv("SHOPEE_PASSWORD")
     if not username or not password:
         return False
     try:
-        user_input = page.locator('input[placeholder*="Email"], input[type="text"]').first
-        pwd_input = page.locator('input[placeholder*="密碼"], input[type="password"]').first
+        user_input = page.locator('input[name="loginKey"], input[placeholder*="Email"], input[type="text"]').first
+        pwd_input = page.locator('input[name="password"], input[placeholder*="密碼"], input[type="password"]').first
         if user_input.count() > 0 and pwd_input.count() > 0:
             user_input.fill(username)
             pwd_input.fill(password)
@@ -1361,8 +1366,14 @@ def handle_shopee_login(page, timeout: float = 15.0) -> bool:
             btn = page.locator('button').filter(has_text="登入").first
             if btn.count() > 0:
                 btn.click()
-                time.sleep(2.5)
-                return True
+                # 等待跳離登入頁（最多 timeout 秒）
+                deadline = time.perf_counter() + timeout
+                while time.perf_counter() < deadline:
+                    time.sleep(0.8)
+                    cur_path = urllib.parse.urlparse(page.url).path
+                    if "/seller/login" not in cur_path and not cur_path.rstrip("/").endswith("/login"):
+                        return True
+                return False
     except Exception as e:
         print(f"[handle_shopee_login] 自動登入嘗試失敗: {e}")
     return False
@@ -1467,9 +1478,15 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
         # 精確比對路徑是否為登入頁（避免 URL query 帶有 is_from_login=true 造成誤判）
         parsed_path = urllib.parse.urlparse(upload_page.url).path
         if "/seller/login" in parsed_path or parsed_path.rstrip("/").endswith("/login"):
-            handle_shopee_login(upload_page)
+            logged_in = handle_shopee_login(upload_page)
+            if not logged_in:
+                cur_url = upload_page.url
+                raise RuntimeError(f"蝦皮賣家中心未登入且自動登入未完成（可能需 OTP / 驗證碼或未設定帳密），目前頁面: {cur_url}")
             upload_page.goto("https://seller.shopee.tw/portal/product-mass/import/upload", wait_until="domcontentloaded", timeout=30000)
             upload_page.wait_for_timeout(2000)
+            parsed_path_after = urllib.parse.urlparse(upload_page.url).path
+            if "/seller/login" in parsed_path_after or parsed_path_after.rstrip("/").endswith("/login"):
+                raise RuntimeError(f"蝦皮賣家登入後仍被導回登入頁，請於 Chrome-Assistant 手動完成登入驗證: {upload_page.url}")
 
         # 確保處於「上傳檔案」頁籤
         upload_tab = upload_page.get_by_text("上傳檔案", exact=True)
