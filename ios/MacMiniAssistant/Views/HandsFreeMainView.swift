@@ -858,6 +858,21 @@ struct HandsFreeMainView: View {
                     hasUnseenUpdates = true
                 }
             }
+            .onChange(of: coordinator.messages.last?.content) { _, _ in
+                if isAtBottom {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+                }
+            }
+            .onChange(of: coordinator.messages.last?.status) { _, newStatus in
+                if newStatus == .completed {
+                    hasUnseenUpdates = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                        scrollToBottom(proxy: proxy, animated: true)
+                    }
+                }
+            }
             .onChange(of: coordinator.liveTranscript) { _, _ in
                 if isAtBottom {
                     scrollToBottom(proxy: proxy, animated: false)
