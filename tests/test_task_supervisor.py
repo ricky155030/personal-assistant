@@ -108,3 +108,28 @@ def test_patrol_tasks_restarts_only_completed_auto_restart():
     mock_mgr.spawn.assert_called_once()
     assert fake_tasks[0]["status"] == "RESTARTED"
     assert fake_tasks[0]["auto_restart"] is False
+
+
+def test_try_inject_memory_sync_uses_primary_worker():
+    import agy_singleton as agy_mod
+
+    fake_worker = MagicMock()
+    fake_worker.lock.acquire.return_value = True
+    fake_worker._is_ready = True
+    fake_worker.proc = MagicMock()
+    fake_worker.proc.poll.return_value = None
+    fake_worker.send_query_stream.return_value = iter([("text", "CI 已綠燈通過")])
+
+    fake_pool = MagicMock(spec=["primary_worker"])
+    fake_pool.primary_worker = fake_worker
+
+    with patch.object(agy_mod, "agy_singleton", fake_pool), \
+         patch("memory_manager.memory_manager.log_interaction") as mock_log:
+        ok, reason = ts.try_inject_memory_sync("CI 輸出", "task:ci_99", report_to_user=True)
+
+    assert ok is True
+    assert reason == "ok"
+    fake_worker.send_query_stream.assert_called_once()
+    mock_log.assert_called_once()
+    assert mock_log.call_args[0][0] == ""
+    assert "CI 已綠燈通過" in mock_log.call_args[0][1]

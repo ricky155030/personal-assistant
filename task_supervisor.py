@@ -47,7 +47,7 @@ def try_inject_memory_sync(
     """嘗試趁主大腦閒置時注入備忘；若 report_to_user=True 則由大腦釐清後寫入純助理回報紀錄"""
     from agy_singleton import agy_singleton
 
-    worker = agy_singleton.brain_pool.primary_worker
+    worker = agy_singleton.primary_worker
     if not worker.lock.acquire(blocking=False):
         return False, "brain_busy"
     worker.lock.release()
