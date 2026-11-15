@@ -174,8 +174,9 @@ def test_submit_herdr_prompt(mock_cmd):
     mock_cmd.assert_called_with(["agent", "prompt", "agy", "執行單元測試"])
 
 
+@patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None)
 @patch("scripts.herdr_coordinator.submit_herdr_prompt")
-def test_dispatch_task_no_watch(mock_submit):
+def test_dispatch_task_no_watch(mock_submit, _mock_get):
     mock_submit.return_value = {"success": True}
 
     res = dispatch_task(
@@ -190,9 +191,10 @@ def test_dispatch_task_no_watch(mock_submit):
     assert COORDINATION_RULE in prompt_arg
 
 
+@patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None)
 @patch("task_manager.TaskManager.spawn")
 @patch("scripts.herdr_coordinator.submit_herdr_prompt")
-def test_dispatch_task_with_watch(mock_submit, mock_spawn):
+def test_dispatch_task_with_watch(mock_submit, mock_spawn, _mock_get):
     mock_submit.return_value = {"success": True}
     mock_spawn.return_value = {"task_id": "task_20261111_120000", "pid": 12345}
 
@@ -224,8 +226,9 @@ def test_relay_answer(mock_send_keys, mock_submit_prompt):
     mock_send_keys.assert_called_once_with("agy", "Enter")
 
 
+@patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None)
 @patch("scripts.herdr_coordinator.send_telegram_alert")
-def test_notify_question_and_completion(mock_tg):
+def test_notify_question_and_completion(mock_tg, _mock_get):
     mock_tg.return_value = True
 
     # 測試發送提問卡片
@@ -368,7 +371,8 @@ def test_read_session_turns_agy_baseline(tmp_path):
     ]
     log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    with patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("agy", log_file)):
+    with patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None), \
+         patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("agy", log_file)):
         res = read_session_turns("agy", baseline_lines=2)
 
     assert res["agent_kind"] == "agy"
@@ -408,7 +412,8 @@ def test_read_session_turns_omp_baseline(tmp_path):
     ]
     log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    with patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("omp", log_file)):
+    with patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None), \
+         patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("omp", log_file)):
         res = read_session_turns("omp-worker", baseline_lines=1)
 
     assert res["agent_kind"] == "omp"
