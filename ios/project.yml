@@ -88,6 +88,8 @@ targets:
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
           NSExtensionAttributes:
             NSExtensionActivationRule:
+              NSExtensionActivationSupportsImageWithMaxCount: 9
+              NSExtensionActivationSupportsFileWithMaxCount: 9
               NSExtensionActivationSupportsWebURLWithMaxCount: 1
               NSExtensionActivationSupportsWebPageWithMaxCount: 1
               NSExtensionActivationSupportsText: true
