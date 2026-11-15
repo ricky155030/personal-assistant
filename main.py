@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, Header, HTTPException, Depends, status, File, Form, UploadFile
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -1002,12 +1002,14 @@ def chat_task_result(task_id: str, _authorized: bool = Depends(verify_token)):
 
 
 def _clean_history_query(raw_query: str) -> str:
-    """移除 iOS/Watch/HomePod 的系統前綴規範，還原純淨使用者對話文字"""
+    """移除 iOS/Watch/HomePod 的系統前綴規範，完整保留多段使用者對話文字"""
     q = (raw_query or "").strip()
-    if any(marker in q for marker in ("[來源管道:", "【語音輸出嚴格規範】", "【回覆長度約束")):
+    prefix_markers = ("[來源管道:", "【語音輸出嚴格規範】", "【回覆長度約束")
+    if any(marker in q for marker in prefix_markers):
         parts = q.split("\n\n")
-        if len(parts) > 1:
-            q = parts[-1].strip()
+        while len(parts) > 1 and any(marker in parts[0] for marker in prefix_markers):
+            parts.pop(0)
+        q = "\n\n".join(parts).strip()
     return q
 
 
@@ -1059,6 +1061,7 @@ def chat_history(
                     "source": item.get("source") or _infer_history_source(raw_q, item.get("actions")),
                     "actions": item.get("actions", []),
                     "metadata": item.get("metadata"),
+                    "images": item.get("images", []),
                 })
     except FileNotFoundError:
         pass
@@ -1066,6 +1069,22 @@ def chat_history(
         "history": entries[-limit:],
         "active_turn": _get_active_turn_snapshot(),
     }
+
+
+@app.get("/api/history/images/{filename}")
+def get_history_image(
+    filename: str,
+    _authorized: bool = Depends(verify_token),
+):
+    """安全讀取伺服器保存的壓縮歷史對話圖片"""
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name != filename or ".." in safe_name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    img_dir = (settings.DATA_DIR / "history_images").resolve()
+    img_path = (img_dir / safe_name).resolve()
+    if img_path.parent != img_dir or not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(str(img_path), media_type="image/jpeg")
 
 
 @app.post("/api/memory/sync-now")
