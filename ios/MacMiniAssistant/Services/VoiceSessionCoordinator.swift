@@ -139,8 +139,26 @@ public final class VoiceSessionCoordinator: ObservableObject {
         setupCallbacks()
         setupAudioNotifications()
         startHealthMonitoring()
+        startAutoHistoryPolling()
         Task {
             await self.syncRemoteHistory()
+        }
+    }
+
+    private func startAutoHistoryPolling() {
+        Task { @MainActor [weak self] in
+            while let self = self {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard !Task.isCancelled else { break }
+                guard UIApplication.shared.applicationState == .active else { continue }
+                guard !self.isSyncingHistory, self.messages.last?.status != .streaming else { continue }
+                switch self.state {
+                case .transcribing, .thinkingAndStreaming, .speaking:
+                    continue
+                default:
+                    await self.syncRemoteHistory()
+                }
+            }
         }
     }
 
