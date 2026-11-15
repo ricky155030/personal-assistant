@@ -42,6 +42,7 @@ final class ShareViewController: UIViewController {
         var foundURL: String = ""
         var foundText: String = ""
         var foundTitle: String = ""
+        var foundImages: [UIImage] = []
 
         for item in items {
             if let title = item.attributedTitle?.string, !title.isEmpty, foundTitle.isEmpty {
@@ -52,6 +53,11 @@ final class ShareViewController: UIViewController {
             }
             guard let providers = item.attachments else { continue }
             for provider in providers {
+                if foundImages.count < 9 && provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                    if let img = await loadImage(from: provider) {
+                        foundImages.append(downscaleImage(img, maxDimension: 1280))
+                    }
+                }
                 if foundURL.isEmpty && provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
                     if let url = await loadURL(from: provider) {
                         foundURL = url.absoluteString
@@ -66,12 +72,40 @@ final class ShareViewController: UIViewController {
         }
 
         // 若 text 本身就是網址且尚未取得 URL，順手補齊
-        if foundURL.isEmpty, let candidate = URL(string: foundText.trimmingCharacters(in: .whitespacesAndNewlines)),
+        if foundURL.isEmpty, let candidate = URL(string: foundText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)),
            candidate.scheme == "http" || candidate.scheme == "https" {
             foundURL = candidate.absoluteString
         }
 
-        return SharedPayload(title: foundTitle, url: foundURL, text: foundText)
+        return SharedPayload(title: foundTitle, url: foundURL, text: foundText, images: foundImages)
+    }
+
+    private func loadImage(from provider: NSItemProvider) async -> UIImage? {
+        await withCheckedContinuation { cont in
+            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+                if let image = item as? UIImage {
+                    cont.resume(returning: image)
+                } else if let url = item as? URL, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
+                    cont.resume(returning: image)
+                } else if let data = item as? Data, let image = UIImage(data: data) {
+                    cont.resume(returning: image)
+                } else {
+                    cont.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func downscaleImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let size = image.size
+        let maxSide = max(size.width, size.height)
+        guard maxSide > maxDimension, maxSide > 0 else { return image }
+        let scale = maxDimension / maxSide
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: newSize))
+        }
     }
 
     private func loadURL(from provider: NSItemProvider) async -> URL? {
@@ -101,18 +135,29 @@ private struct SharedPayload {
     var title: String = ""
     var url: String = ""
     var text: String = ""
+    var images: [UIImage] = []
 
     var isEmpty: Bool {
-        title.isEmpty && url.isEmpty && text.isEmpty
+        title.isEmpty && url.isEmpty && text.isEmpty && images.isEmpty
     }
 
     var previewText: String {
+        if !images.isEmpty && title.isEmpty && url.isEmpty && text.isEmpty {
+            return "已選取 \(images.count) 張照片"
+        }
         if !title.isEmpty && !url.isEmpty {
             return "\(title)\n\(url)"
         }
         return [title, url, text].first(where: { !$0.isEmpty }) ?? "正在讀取分享內容..."
     }
 }
+
+private let imageSharePresets: [SharePromptPreset] = [
+    SharePromptPreset(title: "蝦皮上架", prompt: "幫我用蝦皮賣家技能辨識這些商品照片並上架", icon: "bag.fill"),
+    SharePromptPreset(title: "嬰兒備品", prompt: "幫我把這些實品照片新增到嬰幼兒備品清單", icon: "stroller.fill"),
+    SharePromptPreset(title: "記帳憑證", prompt: "幫我辨識這張收據或帳單明細並記錄", icon: "doc.text.viewfinder"),
+    SharePromptPreset(title: "看圖分析", prompt: "請幫我詳細辨識並分析這些圖片內容", icon: "eye.fill"),
+]
 
 private struct ShareExtensionView: View {
     let loadSharedPayload: () async -> SharedPayload
@@ -167,6 +212,24 @@ private struct ShareExtensionView: View {
                                         .foregroundColor(.secondary)
                                 }
                             } else {
+                                if !payload.images.isEmpty {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 8) {
+                                            ForEach(Array(payload.images.enumerated()), id: \.offset) { _, img in
+                                                Image(uiImage: img)
+                                                    .resizable()
+                                                    .scaledToFill()
+                                                    .frame(width: 68, height: 68)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                                    )
+                                            }
+                                        }
+                                    }
+                                    .padding(.bottom, 2)
+                                }
                                 Text(payload.previewText)
                                     .font(.subheadline)
                                     .foregroundColor(.white)
@@ -240,7 +303,7 @@ private struct ShareExtensionView: View {
                                 .foregroundColor(.secondary)
 
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                ForEach(presets) { preset in
+                                ForEach(payload.images.isEmpty ? presets : imageSharePresets) { preset in
                                     Button(action: {
                                         sendShare(prompt: preset.prompt)
                                     }) {
@@ -352,18 +415,25 @@ private struct ShareExtensionView: View {
         Task {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.timeoutInterval = 10.0
+            request.timeoutInterval = payload.images.isEmpty ? 10.0 : 30.0
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             if !apiKey.isEmpty {
                 request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
             }
 
-            let body: [String: String] = [
+            let imagesBase64 = payload.images.compactMap { img -> String? in
+                img.jpegData(compressionQuality: 0.72)?.base64EncodedString()
+            }
+
+            var body: [String: Any] = [
                 "prompt": prompt,
                 "url": payload.url,
                 "text": payload.text,
                 "title": payload.title,
             ]
+            if !imagesBase64.isEmpty {
+                body["images_base64"] = imagesBase64
+            }
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
             do {

@@ -14,11 +14,14 @@
 		194D633A7D096FC9475C561D /* MarkdownMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */; };
 		2859F062EE454D94C27BE9D5 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */; };
 		28FAFDA2EBEBAF446629FFF8 /* AssistantIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B062E93276233E7C7607CC9F /* AssistantIntents.swift */; };
+		29AC55C091BA4643B0712B4F /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8698A4936B34827490B2B14 /* ShareViewController.swift */; };
 		2AA208B1BFE4D49D99E44DE3 /* VisionCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */; };
 		5CF5EE3FBEB32167C82FD014 /* AssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */; };
+		638941A114F939B59684F173 /* MacMiniAssistantShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE24F695E22BBDFA8119C838 /* MacMiniAssistantShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6A6A8170008C85920BE624CB /* MacMiniAssistantWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */; };
 		722749E618BC2FA5FF592C90 /* MacMiniAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2D748E148C7EFD04499D0B /* MacMiniAssistantApp.swift */; };
 		75CDDBAD30056EA47783F285 /* MacMiniAssistantWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D6B8E552E830C18B0A686BFF /* MacMiniAssistantWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		8BA7039DD0EE062E0AD5F7F2 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		AB28EDDD724D6502361ACA37 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		D6E5AC665BF3AFF54F0077F5 /* AudioRecorderVAD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5BC48D556979CF989B7E12 /* AudioRecorderVAD.swift */; };
 		E92D5C6322450C278CB1C903 /* NativeSpeechPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E3BF0D3B8802C1B5F3975F0 /* NativeSpeechPlayer.swift */; };
@@ -28,6 +31,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		14FAAF556450AE975B44BE14 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1422CB7CF988623BBF6C45CF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BB8A2BBF2F156F7D7BF7EFEF;
+			remoteInfo = MacMiniAssistantShare;
+		};
 		B19C0003A997AB49A15A9680 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 1422CB7CF988623BBF6C45CF /* Project object */;
@@ -45,6 +55,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				75CDDBAD30056EA47783F285 /* MacMiniAssistantWidget.appex in Embed Foundation Extensions */,
+				638941A114F939B59684F173 /* MacMiniAssistantShare.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -62,14 +73,20 @@
 		4CC36A28C8617C294FB5D57E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5E3BF0D3B8802C1B5F3975F0 /* NativeSpeechPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechPlayer.swift; sourceTree = "<group>"; };
 		6C09085774DDCD3C95C4D9D3 /* MacMiniAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAPIClient.swift; sourceTree = "<group>"; };
+		76787B20330917235ABB0C96 /* MacMiniAssistantWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantWidget.entitlements; sourceTree = "<group>"; };
 		815F160EDEE010517FB3EB21 /* VoiceSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionCoordinator.swift; sourceTree = "<group>"; };
 		B062E93276233E7C7607CC9F /* AssistantIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantIntents.swift; sourceTree = "<group>"; };
+		B7007DAC8D78AFC8839F1A92 /* MacMiniAssistantShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantShare.entitlements; sourceTree = "<group>"; };
+		B9589953B700A71598816FBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BC682F40718E207BA5BCD1F7 /* MacMiniAssistant.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistant.entitlements; sourceTree = "<group>"; };
 		BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetViews.swift; sourceTree = "<group>"; };
 		C186D121BCBAC23402331AF0 /* AppGroupStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStore.swift; sourceTree = "<group>"; };
 		D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionCameraView.swift; sourceTree = "<group>"; };
 		D6B8E552E830C18B0A686BFF /* MacMiniAssistantWidget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MacMiniAssistantWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8698A4936B34827490B2B14 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAssistantWidgetBundle.swift; sourceTree = "<group>"; };
 		E884E50467FF246C5E4A31BB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EE24F695E22BBDFA8119C838 /* MacMiniAssistantShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MacMiniAssistantShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE604B41E9ECCB8CC93B4494 /* MacMiniAssistant.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MacMiniAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -79,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				E884E50467FF246C5E4A31BB /* Info.plist */,
+				76787B20330917235ABB0C96 /* MacMiniAssistantWidget.entitlements */,
 				49E2934B8427DE9E5F82FA1E /* MacMiniAssistantWidget.swift */,
 				E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */,
 				BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */,
@@ -91,6 +109,7 @@
 			children = (
 				4A41A7AA54B96AC2F085BFF2 /* Assets.xcassets */,
 				4CC36A28C8617C294FB5D57E /* Info.plist */,
+				BC682F40718E207BA5BCD1F7 /* MacMiniAssistant.entitlements */,
 				0B2D748E148C7EFD04499D0B /* MacMiniAssistantApp.swift */,
 				C9F8DC6C4ACDEA416C240B30 /* Models */,
 				8C4F6EDCF430023AD07FC555 /* Services */,
@@ -125,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				EE604B41E9ECCB8CC93B4494 /* MacMiniAssistant.app */,
+				EE24F695E22BBDFA8119C838 /* MacMiniAssistantShare.appex */,
 				D6B8E552E830C18B0A686BFF /* MacMiniAssistantWidget.appex */,
 			);
 			name = Products;
@@ -140,10 +160,21 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		F3CF20C2E238A0D637E2F293 /* MacMiniAssistantShare */ = {
+			isa = PBXGroup;
+			children = (
+				B9589953B700A71598816FBB /* Info.plist */,
+				B7007DAC8D78AFC8839F1A92 /* MacMiniAssistantShare.entitlements */,
+				D8698A4936B34827490B2B14 /* ShareViewController.swift */,
+			);
+			path = MacMiniAssistantShare;
+			sourceTree = "<group>";
+		};
 		F3E362FB362D5A9F8D748F72 = {
 			isa = PBXGroup;
 			children = (
 				52F5E8F510C9D2DD694CA844 /* MacMiniAssistant */,
+				F3CF20C2E238A0D637E2F293 /* MacMiniAssistantShare */,
 				033F2A99B253C898F47FDCE7 /* MacMiniAssistantWidget */,
 				9CA44174691DB516C9F1DA84 /* Products */,
 			);
@@ -152,6 +183,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		BB8A2BBF2F156F7D7BF7EFEF /* MacMiniAssistantShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2803CBC11F6B753E03480C25 /* Build configuration list for PBXNativeTarget "MacMiniAssistantShare" */;
+			buildPhases = (
+				0836AC1726FA02F0B894FEFA /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MacMiniAssistantShare;
+			packageProductDependencies = (
+			);
+			productName = MacMiniAssistantShare;
+			productReference = EE24F695E22BBDFA8119C838 /* MacMiniAssistantShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		DB580F5C533D6CB2AD0ABFE9 /* MacMiniAssistantWidget */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 982560ED6D26D015DF7C3520 /* Build configuration list for PBXNativeTarget "MacMiniAssistantWidget" */;
@@ -181,6 +229,7 @@
 			);
 			dependencies = (
 				91F726B747C74A99DB31BE95 /* PBXTargetDependency */,
+				0FF558692CE1DF3430B3D1D5 /* PBXTargetDependency */,
 			);
 			name = MacMiniAssistant;
 			packageProductDependencies = (
@@ -198,6 +247,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
+					BB8A2BBF2F156F7D7BF7EFEF = {
+						DevelopmentTeam = T25G5Y2426;
+						ProvisioningStyle = Automatic;
+					};
 					DB580F5C533D6CB2AD0ABFE9 = {
 						DevelopmentTeam = T25G5Y2426;
 						ProvisioningStyle = Automatic;
@@ -224,6 +277,7 @@
 			targets = (
 				F90FB58ABF3FB31FBF8BF07A /* MacMiniAssistant */,
 				DB580F5C533D6CB2AD0ABFE9 /* MacMiniAssistantWidget */,
+				BB8A2BBF2F156F7D7BF7EFEF /* MacMiniAssistantShare */,
 			);
 		};
 /* End PBXProject section */
@@ -259,6 +313,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		0836AC1726FA02F0B894FEFA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BA7039DD0EE062E0AD5F7F2 /* AppGroupStore.swift in Sources */,
+				29AC55C091BA4643B0712B4F /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F42EA88518F9CFC43C621486 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -273,6 +336,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0FF558692CE1DF3430B3D1D5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BB8A2BBF2F156F7D7BF7EFEF /* MacMiniAssistantShare */;
+			targetProxy = 14FAAF556450AE975B44BE14 /* PBXContainerItemProxy */;
+		};
 		91F726B747C74A99DB31BE95 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = DB580F5C533D6CB2AD0ABFE9 /* MacMiniAssistantWidget */;
@@ -285,6 +353,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistant/MacMiniAssistant.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -303,6 +372,7 @@
 		7029984B4EAC866690ED6351 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistantWidget/MacMiniAssistantWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MacMiniAssistantWidget/Info.plist;
@@ -322,6 +392,7 @@
 		749288FA89091E91C78D78BA /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistantWidget/MacMiniAssistantWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MacMiniAssistantWidget/Info.plist;
@@ -338,10 +409,51 @@
 			};
 			name = Release;
 		};
+		873C451047A904D8D01AF9AD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistantShare/MacMiniAssistantShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MacMiniAssistantShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant.Share;
+				PRODUCT_NAME = MacMiniAssistantShare;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		9E08F887BBFCD1B76C963057 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistantShare/MacMiniAssistantShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MacMiniAssistantShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hungwei.MacMiniAssistant.Share;
+				PRODUCT_NAME = MacMiniAssistantShare;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 		A1307098AFBA0E1352492BBB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = MacMiniAssistant/MacMiniAssistant.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -481,6 +593,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2803CBC11F6B753E03480C25 /* Build configuration list for PBXNativeTarget "MacMiniAssistantShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				873C451047A904D8D01AF9AD /* Debug */,
+				9E08F887BBFCD1B76C963057 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		334D9A33DBB4FC4A5717C940 /* Build configuration list for PBXNativeTarget "MacMiniAssistant" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

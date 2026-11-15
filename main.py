@@ -1132,6 +1132,7 @@ class SharePayload(BaseModel):
     url: Optional[str] = None
     text: Optional[str] = None
     title: Optional[str] = None
+    images_base64: Optional[List[str]] = None
 
 
 def _process_share_payload_sync(
@@ -1139,8 +1140,9 @@ def _process_share_payload_sync(
     url: str,
     text: str,
     title: str,
+    media: Optional[List[dict]] = None,
 ) -> None:
-    """背景處理 iOS Share Extension 傳來的網址或文字，完畢後寫入對話紀錄並推播 Telegram"""
+    """背景處理 iOS Share Extension 傳來的網址、文字或圖片，完畢後寫入對話紀錄並推播 Telegram"""
     parts = []
     if title:
         parts.append(f"標題：{title}")
@@ -1148,9 +1150,11 @@ def _process_share_payload_sync(
         parts.append(f"網址：{url}")
     if text and text != url:
         parts.append(f"內容：{text[:2000]}")
+    if media:
+        parts.append(f"附帶圖片數量：{len(media)} 張")
     shared_block = "\n".join(parts)
 
-    display_target = url or title or text[:120]
+    display_target = url or title or text[:120] or (f"📷 {len(media)} 張圖片" if media else "")
     display_query = f"📤 {prompt}\n{display_target}".strip()
 
     full_prompt = (
@@ -1160,7 +1164,7 @@ def _process_share_payload_sync(
     )
 
     try:
-        clean_reply, actions, _, _ = agy_singleton.send_query(full_prompt)
+        clean_reply, actions, _, _ = agy_singleton.send_query(full_prompt, media=media)
     except Exception as ex:
         clean_reply = f"分享內容處理失敗：{ex}"
         actions = ["share_extension_error"]
@@ -1170,6 +1174,7 @@ def _process_share_payload_sync(
             display_query,
             clean_reply,
             actions=actions or ["share_extension"],
+            image_paths=[m["uri"] for m in media if m.get("uri")] if media else None,
         )
     except Exception as log_ex:
         print(f"[Share] 寫入對話紀錄失敗: {log_ex}")
@@ -1187,18 +1192,47 @@ async def receive_ios_share(
     payload: SharePayload,
     _authorized: bool = Depends(verify_token),
 ):
-    """接收 iOS Share Extension 傳來的連結/文字與自訂 Prompt，秒級回傳並於背景處理"""
+    """接收 iOS Share Extension 傳來的連結/文字/多張圖片與自訂 Prompt，秒級回傳並於背景處理"""
+    import base64
+    import time
+    import uuid
+
     prompt = (payload.prompt or "").strip() or "幫我快速摘要重點"
     url = (payload.url or "").strip()
     text = (payload.text or "").strip()
     title = (payload.title or "").strip()
+    raw_images = [img for img in (payload.images_base64 or []) if img and img.strip()][:9]
 
-    if not (url or text or title):
+    if not (url or text or title or raw_images):
         raise HTTPException(status_code=400, detail="分享內容不能為空")
 
+    effective_media: List[dict] = []
+    if raw_images:
+        upload_dir = settings.BASE_DIR / "data" / "ios_uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        for img_b64 in raw_images:
+            try:
+                raw_bytes = base64.b64decode(img_b64)
+                saved_file = upload_dir / f"share_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+                saved_file.write_bytes(raw_bytes)
+                effective_media.append({
+                    "mime_type": "image/jpeg",
+                    "uri": str(saved_file.resolve()),
+                })
+            except Exception as ex:
+                print(f"[Share] Failed to decode shared image: {ex}")
+
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(None, _process_share_payload_sync, prompt, url, text, title)
-    return {"status": "accepted", "message": "已交由 Mac mini 背景處理"}
+    loop.run_in_executor(
+        None,
+        _process_share_payload_sync,
+        prompt,
+        url,
+        text,
+        title,
+        effective_media or None,
+    )
+    return {"status": "accepted", "message": "已交由 Mac mini 背景處理", "image_count": len(effective_media)}
 
 @app.get("/api/tasks/tracked")
 def get_tracked_tasks(_authorized: bool = Depends(verify_token)):
