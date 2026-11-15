@@ -34,6 +34,7 @@ echo "⚙️ 正在重新生成 Xcode 專案檔..."
 # 3. 將新 Build 寫入 Info.plist (主 App 與 Widget 必須嚴格同步，否則 IXPlaceholder 會報錯)
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" "$DIR/ios/MacMiniAssistant/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" "$DIR/ios/MacMiniAssistantWidget/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT_BUILD" "$DIR/ios/MacMiniAssistantShare/Info.plist" 2>/dev/null || true
 
 echo "🔨 正在編譯 MacMiniAssistant (Build $NEXT_BUILD)..."
 cd "$DIR/ios"

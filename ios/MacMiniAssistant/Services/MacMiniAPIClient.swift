@@ -13,6 +13,7 @@ public final class MacMiniAPIClient {
         }
         set {
             defaults.set(newValue, forKey: serverURLKey)
+            AppGroupStore.shared.serverURL = newValue
         }
     }
 
@@ -22,6 +23,7 @@ public final class MacMiniAPIClient {
         }
         set {
             defaults.set(newValue, forKey: apiKeyKey)
+            AppGroupStore.shared.apiKey = newValue
         }
     }
 
@@ -34,6 +36,14 @@ public final class MacMiniAPIClient {
         config.waitsForConnectivity = true
         config.httpShouldUsePipelining = false
         self.session = URLSession(configuration: config)
+
+        // 啟動時同步既有設定至 AppGroupStore，供 Share Extension 直接取用
+        if let url = defaults.string(forKey: serverURLKey), !url.isEmpty {
+            AppGroupStore.shared.serverURL = url
+        }
+        if let key = defaults.string(forKey: apiKeyKey), !key.isEmpty {
+            AppGroupStore.shared.apiKey = key
+        }
     }
 
     public func checkHealth() async -> (Bool, Int, String) {

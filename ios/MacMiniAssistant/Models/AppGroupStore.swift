@@ -1,6 +1,28 @@
 import Foundation
 
-/// 跨 App 與 Widget 的共享資料庫
+/// 系統分享擴充 (Share Extension) 自訂快捷指令項目
+public struct SharePromptPreset: Identifiable, Codable, Equatable {
+    public let id: UUID
+    public var title: String
+    public var prompt: String
+    public var icon: String
+
+    public init(id: UUID = UUID(), title: String, prompt: String, icon: String = "sparkles") {
+        self.id = id
+        self.title = title
+        self.prompt = prompt
+        self.icon = icon
+    }
+
+    public static let defaultPresets: [SharePromptPreset] = [
+        SharePromptPreset(title: "摘要重點", prompt: "幫我快速摘要這篇內容的核心重點與結論", icon: "doc.text.magnifyingglass"),
+        SharePromptPreset(title: "比價追蹤", prompt: "幫我評估這個商品，查詢合理價格或提供追蹤建議", icon: "tag.fill"),
+        SharePromptPreset(title: "記到待辦", prompt: "幫我把這件事記到 Google Calendar 待辦事項", icon: "checklist"),
+        SharePromptPreset(title: "翻譯重點", prompt: "幫我翻譯成流暢的繁體中文並整理重點", icon: "character.bubble"),
+    ]
+}
+
+/// 跨 App 與 Widget / Share Extension 的共享資料庫
 public final class AppGroupStore {
     public static let shared = AppGroupStore()
 
@@ -21,6 +43,33 @@ public final class AppGroupStore {
         static let lastUpdatedTime = "shared_last_updated_time"
         static let baseURL = "macmini_server_url"
         static let apiKey = "macmini_api_key"
+        static let sharePrompts = "shared_share_prompts"
+    }
+
+    public var serverURL: String {
+        get { defaults.string(forKey: Keys.baseURL) ?? "" }
+        set { defaults.set(newValue, forKey: Keys.baseURL) }
+    }
+
+    public var apiKey: String {
+        get { defaults.string(forKey: Keys.apiKey) ?? "" }
+        set { defaults.set(newValue, forKey: Keys.apiKey) }
+    }
+
+    public var sharePrompts: [SharePromptPreset] {
+        get {
+            guard let data = defaults.data(forKey: Keys.sharePrompts),
+                  let decoded = try? JSONDecoder().decode([SharePromptPreset].self, from: data),
+                  !decoded.isEmpty else {
+                return SharePromptPreset.defaultPresets
+            }
+            return decoded
+        }
+        set {
+            if let encoded = try? JSONEncoder().encode(newValue) {
+                defaults.set(encoded, forKey: Keys.sharePrompts)
+            }
+        }
     }
 
     public var isServerReachable: Bool {

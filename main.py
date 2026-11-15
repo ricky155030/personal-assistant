@@ -997,6 +997,80 @@ async def internal_memory_sync(
         return {"status": "queued", "synced": False, "reason": reason, "queued_count": q_len}
     return {"status": "skipped", "synced": False, "reason": reason}
 
+
+class SharePayload(BaseModel):
+    prompt: str = "幫我快速摘要重點"
+    url: Optional[str] = None
+    text: Optional[str] = None
+    title: Optional[str] = None
+
+
+def _process_share_payload_sync(
+    prompt: str,
+    url: str,
+    text: str,
+    title: str,
+) -> None:
+    """背景處理 iOS Share Extension 傳來的網址或文字，完畢後寫入對話紀錄並推播 Telegram"""
+    parts = []
+    if title:
+        parts.append(f"標題：{title}")
+    if url:
+        parts.append(f"網址：{url}")
+    if text and text != url:
+        parts.append(f"內容：{text[:2000]}")
+    shared_block = "\n".join(parts)
+
+    display_target = url or title or text[:120]
+    display_query = f"📤 {prompt}\n{display_target}".strip()
+
+    full_prompt = (
+        f"[來源管道: iOS 分享擴充]\n"
+        f"【回覆風格】簡明扼要、重點條列，使用完整 Markdown 格式。\n\n"
+        f"{prompt}\n\n{shared_block}"
+    )
+
+    try:
+        clean_reply, actions, _, _ = agy_singleton.send_query(full_prompt)
+    except Exception as ex:
+        clean_reply = f"分享內容處理失敗：{ex}"
+        actions = ["share_extension_error"]
+
+    try:
+        memory_manager.log_interaction(
+            display_query,
+            clean_reply,
+            actions=actions or ["share_extension"],
+        )
+    except Exception as log_ex:
+        print(f"[Share] 寫入對話紀錄失敗: {log_ex}")
+
+    try:
+        send_formatted_telegram_reply(
+            f"📤 分享任務完成｜{prompt}\n\n{clean_reply}"
+        )
+    except Exception as tg_ex:
+        print(f"[Share] Telegram 推播失敗: {tg_ex}")
+
+
+@app.post("/api/share")
+async def receive_ios_share(
+    payload: SharePayload,
+    _authorized: bool = Depends(verify_token),
+):
+    """接收 iOS Share Extension 傳來的連結/文字與自訂 Prompt，秒級回傳並於背景處理"""
+    prompt = (payload.prompt or "").strip() or "幫我快速摘要重點"
+    url = (payload.url or "").strip()
+    text = (payload.text or "").strip()
+    title = (payload.title or "").strip()
+
+    if not (url or text or title):
+        raise HTTPException(status_code=400, detail="分享內容不能為空")
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _process_share_payload_sync, prompt, url, text, title)
+    return {"status": "accepted", "message": "已交由 Mac mini 背景處理"}
+
 @app.get("/api/status")
 @app.get("/api/usage")
 @app.get("/api/quota")

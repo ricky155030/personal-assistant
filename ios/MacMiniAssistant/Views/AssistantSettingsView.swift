@@ -11,6 +11,11 @@ struct AssistantSettingsView: View {
     @State private var isTestingConnection: Bool = false
     @State private var selectedEdgeVoice: String = UserDefaults.standard.string(forKey: "macmini_edge_tts_voice") ?? "zh-TW-HsiaoChenNeural"
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
+    @State private var sharePrompts: [SharePromptPreset] = AppGroupStore.shared.sharePrompts
+    @State private var isAddingSharePrompt: Bool = false
+    @State private var newPromptTitle: String = ""
+    @State private var newPromptBody: String = ""
+    @State private var newPromptIcon: String = "sparkles"
 
     private var availableVoices: [AVSpeechSynthesisVoice] {
         NativeSpeechPlayer.getAvailableVoices()
@@ -242,6 +247,45 @@ struct AssistantSettingsView: View {
                         .foregroundColor(.secondary)
                 }
 
+                Section("系統分享快捷指令 (Share Extension)") {
+                    ForEach(sharePrompts) { preset in
+                        HStack(spacing: 10) {
+                            Image(systemName: preset.icon)
+                                .foregroundColor(.cyan)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(preset.title)
+                                    .font(.body)
+                                Text(preset.prompt)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                    .onDelete { indexSet in
+                        sharePrompts.remove(atOffsets: indexSet)
+                        AppGroupStore.shared.sharePrompts = sharePrompts
+                    }
+
+                    Button(action: {
+                        newPromptTitle = ""
+                        newPromptBody = ""
+                        newPromptIcon = "sparkles"
+                        isAddingSharePrompt = true
+                    }) {
+                        Label("新增分享快捷 Prompt", systemImage: "plus.circle.fill")
+                    }
+
+                    Button(action: {
+                        sharePrompts = SharePromptPreset.defaultPresets
+                        AppGroupStore.shared.sharePrompts = sharePrompts
+                    }) {
+                        Text("恢復預設快捷指令")
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 Section("關於本 App") {
                     HStack {
                         Text("版本")
@@ -267,6 +311,21 @@ struct AssistantSettingsView: View {
             }
             .navigationTitle("助理設定")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $isAddingSharePrompt) {
+                AddSharePromptSheet(
+                    title: $newPromptTitle,
+                    prompt: $newPromptBody,
+                    icon: $newPromptIcon,
+                    onSave: {
+                        let t = newPromptTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let p = newPromptBody.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !t.isEmpty, !p.isEmpty else { return }
+                        sharePrompts.append(SharePromptPreset(title: t, prompt: p, icon: newPromptIcon))
+                        AppGroupStore.shared.sharePrompts = sharePrompts
+                        isAddingSharePrompt = false
+                    }
+                )
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("儲存") {
@@ -330,6 +389,64 @@ struct AssistantSettingsView: View {
             return .secondary
         @unknown default:
             return .secondary
+        }
+    }
+}
+
+private struct AddSharePromptSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var title: String
+    @Binding var prompt: String
+    @Binding var icon: String
+    let onSave: () -> Void
+
+    private let iconOptions = [
+        "sparkles", "doc.text.magnifyingglass", "tag.fill",
+        "checklist", "character.bubble", "bookmark.fill",
+        "cart.fill", "paperplane.fill"
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("按鈕名稱") {
+                    TextField("例如：整理成筆記", text: $title)
+                }
+                Section("給助理的 Prompt 指令") {
+                    TextEditor(text: $prompt)
+                        .frame(minHeight: 90)
+                }
+                Section("選擇圖示") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(iconOptions, id: \.self) { sym in
+                                Button(action: { icon = sym }) {
+                                    Image(systemName: sym)
+                                        .font(.system(size: 18))
+                                        .foregroundColor(icon == sym ? .white : .secondary)
+                                        .frame(width: 40, height: 40)
+                                        .background(icon == sym ? Color.blue : Color.secondary.opacity(0.15))
+                                        .clipShape(Circle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle("新增分享快捷指令")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("新增") { onSave() }
+                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
         }
     }
 }

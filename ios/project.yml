@@ -19,6 +19,7 @@ targets:
       - path: MacMiniAssistant
     dependencies:
       - target: MacMiniAssistantWidget
+      - target: MacMiniAssistantShare
     info:
       path: MacMiniAssistant/Info.plist
       properties:
@@ -43,6 +44,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: MacMiniAssistant/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacMiniAssistant/MacMiniAssistant.entitlements
         GENERATE_INFOPLIST_FILE: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
@@ -66,4 +68,36 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         CODE_SIGN_STYLE: Automatic
         INFOPLIST_FILE: MacMiniAssistantWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacMiniAssistantWidget/MacMiniAssistantWidget.entitlements
+        GENERATE_INFOPLIST_FILE: false
+
+  MacMiniAssistantShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MacMiniAssistantShare
+      - path: MacMiniAssistant/Models/AppGroupStore.swift
+    info:
+      path: MacMiniAssistantShare/Info.plist
+      properties:
+        CFBundleDisplayName: "MacMini 助理"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).ShareViewController"
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_NAME: MacMiniAssistantShare
+        PRODUCT_BUNDLE_IDENTIFIER: com.hungwei.MacMiniAssistant.Share
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        CODE_SIGN_STYLE: Automatic
+        INFOPLIST_FILE: MacMiniAssistantShare/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacMiniAssistantShare/MacMiniAssistantShare.entitlements
         GENERATE_INFOPLIST_FILE: false
