@@ -119,42 +119,42 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
 }
 
 public enum ResponseLengthOption: String, CaseIterable, Identifiable, Codable {
-    case concise = "concise"    // ⚡ 極簡俐落 (30~60字)
-    case balanced = "balanced"  // ⚖️ 標準均衡 (80~150字，預設)
-    case detailed = "detailed"  // 📚 完整詳解 (無字數限制)
+    case balanced = "balanced"  // ⚖️ 第一階段：標準均衡 (80~150字，預設)
+    case moderate = "moderate"  // 📝 第二階段：細節說明 (250~350字)
+    case detailed = "detailed"  // 📚 第三階段：完整詳解 (無字數限制)
 
     public var id: String { rawValue }
 
     public var title: String {
         switch self {
-        case .concise: return "極簡俐落 (30~60字)"
         case .balanced: return "標準均衡 (80~150字)"
+        case .moderate: return "細節說明 (250~350字)"
         case .detailed: return "完整詳解 (深度完整)"
         }
     }
 
     public var shortTag: String {
         switch self {
-        case .concise: return "極簡"
         case .balanced: return "標準"
+        case .moderate: return "細節"
         case .detailed: return "詳解"
         }
     }
 
     public var icon: String {
         switch self {
-        case .concise: return "bolt.fill"
         case .balanced: return "scalemass.fill"
+        case .moderate: return "text.alignleft"
         case .detailed: return "book.fill"
         }
     }
 
     public var promptInstruction: String {
         switch self {
-        case .concise:
-            return "【回覆長度約束：極簡模式】嚴格控制在 50 字以內，直奔核心結論，禁止多餘寒暄與鋪陳。"
         case .balanced:
-            return "【回覆長度約束：標準模式】以結構化條理分明方式回覆，嚴格控制在 120 字以內，重點突出，適合語音聆聽。"
+            return "【回覆長度約束：標準模式】以結構化條理分明方式回覆，嚴格控制在 80~150 字以內，重點突出，適合語音聆聽。"
+        case .moderate:
+            return "【回覆長度約束：細節模式】以結構化條理分明方式回覆，控制在 250~350 字左右，講清架構設計與方案重點，同時保持語音聆聽流暢。"
         case .detailed:
             return "【回覆長度約束：深度模式】解除字數限制，提供深入、完整、條理分明的詳細解答與具體步驟。"
         }

@@ -794,12 +794,12 @@ struct HandsFreeMainView: View {
                                 .frame(width: 38, height: 38)
                                 .background(
                                     Circle()
-                                        .fill(Color(white: 0.16).opacity(0.95))
+                                        .fill(.ultraThinMaterial)
                                         .overlay(
                                             Circle()
-                                                .stroke(hasUnseenUpdates ? Color.cyan.opacity(0.6) : Color.white.opacity(0.18), lineWidth: 1)
+                                                .stroke(hasUnseenUpdates ? Color.cyan.opacity(0.6) : Color.white.opacity(0.20), lineWidth: 1)
                                         )
-                                        .shadow(color: .black.opacity(0.35), radius: 5, x: 0, y: 2)
+                                        .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 2)
                                 )
 
                             if hasUnseenUpdates {
@@ -812,7 +812,7 @@ struct HandsFreeMainView: View {
                     }
                     .accessibilityLabel("回到底部")
                     .padding(.trailing, 16)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, coordinator.voiceInputMode == .liveContinuous ? 72 : 16)
                     .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -1260,31 +1260,16 @@ struct HandsFreeMainView: View {
                 }
             }
 
-            // 思考或說話中：提供單鍵 ⏹️ 中止本輪回應按鈕（不退出 Live 模式）
-            if coordinator.isProcessingOrSpeaking {
-                Button(action: {
-                    haptic.impactOccurred()
-                    coordinator.cancelCurrentTurn()
-                }) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Color.orange.opacity(0.85))
-                        .clipShape(Circle())
-                }
-            }
-
             // 暫停/恢復收音按鈕
             Button(action: {
                 haptic.impactOccurred()
                 coordinator.togglePause()
             }) {
                 Image(systemName: coordinator.state == .paused ? "mic.slash.fill" : "pause.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(coordinator.state == .paused ? .orange : .white.opacity(0.85))
                     .frame(width: 32, height: 32)
-                    .background(Color.white.opacity(0.1))
+                    .background(Color.white.opacity(0.12))
                     .clipShape(Circle())
             }
 
@@ -1296,7 +1281,7 @@ struct HandsFreeMainView: View {
                 }
             }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.white)
                     .frame(width: 32, height: 32)
                     .background(Color.red.opacity(0.75))
@@ -1307,11 +1292,12 @@ struct HandsFreeMainView: View {
         .padding(.vertical, 10)
         .background(
             Capsule()
-                .fill(Color(red: 0.08, green: 0.13, blue: 0.26).opacity(0.95))
+                .fill(.ultraThinMaterial)
                 .overlay(
                     Capsule()
                         .stroke(liveStateColor.opacity(0.45), lineWidth: 1)
                 )
+                .shadow(color: .black.opacity(0.35), radius: 8, x: 0, y: 3)
         )
     }
 
@@ -1335,7 +1321,8 @@ struct HandsFreeMainView: View {
         case .transcribing:
             return "正在辨識語音..."
         case .thinkingAndStreaming(let tool):
-            return tool ?? "Gemini 思考處理中..."
+            let cleanTool = tool?.replacingOccurrences(of: "⚙️ ", with: "").replacingOccurrences(of: "⚙️", with: "").trimmingCharacters(in: .whitespaces)
+            return (cleanTool?.isEmpty == false) ? cleanTool! : "Gemini 思考處理中..."
         case .speaking:
             return "助理語音回答中"
         case .paused:
@@ -1727,7 +1714,8 @@ struct GeminiMessageRow: View {
 
                 // 1. 工具呼叫軌跡（預設摺疊僅顯示最新一筆，點擊可展開完整步驟）
                 if !message.toolHistory.isEmpty {
-                    let latestTool = message.toolHistory.last ?? ""
+                    let rawTool = message.toolHistory.last ?? ""
+                    let latestTool = rawTool.replacingOccurrences(of: "⚙️ ", with: "").replacingOccurrences(of: "⚙️", with: "").trimmingCharacters(in: .whitespaces)
                     let extraCount = max(0, message.toolHistory.count - 1)
                     VStack(alignment: .leading, spacing: 6) {
                         Button(action: {
@@ -1741,7 +1729,7 @@ struct GeminiMessageRow: View {
                                     .foregroundColor(.cyan.opacity(0.9))
                                 Text(latestTool)
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(Color(white: 0.80))
+                                    .foregroundColor(Color(white: 0.85))
                                     .lineLimit(1)
                                 if extraCount > 0 {
                                     Text("(\(message.toolHistory.count))")
@@ -1754,9 +1742,9 @@ struct GeminiMessageRow: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.07))
+                            .background(.ultraThinMaterial)
                             .overlay(
-                                Capsule().stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                                Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.8)
                             )
                             .clipShape(Capsule())
                         }

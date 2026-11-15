@@ -1078,17 +1078,28 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 if !hasRecentSameUser && !active.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     messages.append(ChatMessage(role: .user, content: active.query, timestamp: parsedDate, status: .completed))
                 }
-                let astMsg = ChatMessage(
-                    role: .assistant,
-                    content: active.reply,
-                    timestamp: parsedDate,
-                    status: .streaming,
-                    toolHistory: active.tools,
-                    thoughtProcess: active.thought
-                )
-                messages.append(astMsg)
-                activeRemoteTurnId = active.turn_id
-                activeRemoteAssistantMessageId = astMsg.id
+                // 若最後一則已是尚未完成的本機佔位氣泡，直接沿用更新，避免重開 App 時出現第二個「正在思考...」氣泡
+                if let reuseIdx = messages.indices.last,
+                   messages[reuseIdx].role == .assistant,
+                   messages[reuseIdx].status == .streaming {
+                    messages[reuseIdx].content = active.reply
+                    messages[reuseIdx].thoughtProcess = active.thought
+                    messages[reuseIdx].toolHistory = active.tools
+                    activeRemoteTurnId = active.turn_id
+                    activeRemoteAssistantMessageId = messages[reuseIdx].id
+                } else {
+                    let astMsg = ChatMessage(
+                        role: .assistant,
+                        content: active.reply,
+                        timestamp: parsedDate,
+                        status: .streaming,
+                        toolHistory: active.tools,
+                        thoughtProcess: active.thought
+                    )
+                    messages.append(astMsg)
+                    activeRemoteTurnId = active.turn_id
+                    activeRemoteAssistantMessageId = astMsg.id
+                }
             }
         }
     }
