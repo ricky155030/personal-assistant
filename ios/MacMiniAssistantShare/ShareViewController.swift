@@ -1,6 +1,7 @@
 import UIKit
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 
 @objc(ShareViewController)
 final class ShareViewController: UIViewController {
@@ -81,19 +82,62 @@ final class ShareViewController: UIViewController {
     }
 
     private func loadImage(from provider: NSItemProvider) async -> UIImage? {
-        await withCheckedContinuation { cont in
-            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
-                if let image = item as? UIImage {
-                    cont.resume(returning: image)
-                } else if let url = item as? URL, let data = try? Data(contentsOf: url), let image = UIImage(data: data) {
-                    cont.resume(returning: image)
-                } else if let data = item as? Data, let image = UIImage(data: data) {
+        // 優先使用 loadFileRepresentation + ImageIO 直接產出縮圖，避免在 Share Extension (120MB 限制) 解碼完整 48MP 原圖導致閃退
+        if let thumb = await loadThumbnailViaFileRepresentation(from: provider, maxPixelSize: 1280) {
+            return thumb
+        }
+        return await withCheckedContinuation { cont in
+            let options: [AnyHashable: Any] = [
+                NSItemProviderPreferredImageSizeKey: NSValue(cgSize: CGSize(width: 1280, height: 1280))
+            ]
+            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: options) { item, _ in
+                if let url = item as? URL, let thumb = Self.thumbnailImage(fromURL: url, maxPixelSize: 1280) {
+                    cont.resume(returning: thumb)
+                } else if let data = item as? Data, let thumb = Self.thumbnailImage(fromData: data, maxPixelSize: 1280) {
+                    cont.resume(returning: thumb)
+                } else if let image = item as? UIImage {
                     cont.resume(returning: image)
                 } else {
                     cont.resume(returning: nil)
                 }
             }
         }
+    }
+
+    private func loadThumbnailViaFileRepresentation(from provider: NSItemProvider, maxPixelSize: CGFloat) async -> UIImage? {
+        await withCheckedContinuation { cont in
+            provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+                guard let url = url else {
+                    cont.resume(returning: nil)
+                    return
+                }
+                let thumb = Self.thumbnailImage(fromURL: url, maxPixelSize: maxPixelSize)
+                cont.resume(returning: thumb)
+            }
+        }
+    }
+
+    private static func thumbnailImage(fromURL url: URL, maxPixelSize: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return thumbnailImage(fromSource: source, maxPixelSize: maxPixelSize)
+    }
+
+    private static func thumbnailImage(fromData data: Data, maxPixelSize: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return thumbnailImage(fromSource: source, maxPixelSize: maxPixelSize)
+    }
+
+    private static func thumbnailImage(fromSource source: CGImageSource, maxPixelSize: CGFloat) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: false,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 
     private func downscaleImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
