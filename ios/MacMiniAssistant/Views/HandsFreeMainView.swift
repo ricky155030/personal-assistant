@@ -868,11 +868,21 @@ struct HandsFreeMainView: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        let performSnap = {
+            if let lastId = coordinator.messages.last?.id {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+            proxy.scrollTo("bottom_anchor", anchor: .bottom)
+        }
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                performSnap()
             }
         } else {
+            performSnap()
+        }
+        // LazyVStack 展開底部長訊息後實際高度會變動，延遲一幀二次對齊避免捲過頭全空
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             proxy.scrollTo("bottom_anchor", anchor: .bottom)
         }
     }
