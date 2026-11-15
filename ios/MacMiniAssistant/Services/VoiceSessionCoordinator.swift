@@ -917,8 +917,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let items = await apiClient.fetchHistory(limit: limit, since: nil)
-        guard !items.isEmpty else { return }
+        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: nil)
+        guard !items.isEmpty || activeTurn != nil else { return }
 
         // 保留本機既有的照片附件與工具/思考軌跡，避免重建時遺失
         let existingSnapshot = messages
@@ -968,6 +968,49 @@ public final class VoiceSessionCoordinator: ObservableObject {
             if !item.timestamp.isEmpty {
                 latestTs = item.timestamp
             }
+        }
+
+        // 保留目前正在進行中的本地串流對話，或從伺服器接回 activeTurn
+        if activeStreamTask != nil,
+           let streamingIdx = existingSnapshot.lastIndex(where: { $0.role == .assistant && $0.status == .streaming }) {
+            let startIdx = (streamingIdx > 0 && existingSnapshot[streamingIdx - 1].role == .user) ? (streamingIdx - 1) : streamingIdx
+            for msg in existingSnapshot[startIdx...] {
+                if msg.role == .user {
+                    let normU = normalizeForDedup(msg.content)
+                    if rebuilt.suffix(4).contains(where: { $0.role == .user && normalizeForDedup($0.content) == normU }) {
+                        continue
+                    }
+                }
+                rebuilt.append(msg)
+            }
+        } else if let active = activeTurn {
+            let parsedDate = parseServerTimestamp(active.timestamp)
+            let normActiveQ = normalizeForDedup(active.query)
+            let hasRecentSameUser = !normActiveQ.isEmpty && rebuilt.suffix(6).contains(where: {
+                $0.role == .user && normalizeForDedup($0.content) == normActiveQ
+            })
+            if !hasRecentSameUser && !active.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let oldUser = existingSnapshot.last(where: { $0.role == .user && normalizeForDedup($0.content) == normActiveQ })
+                rebuilt.append(ChatMessage(
+                    role: .user,
+                    content: active.query,
+                    timestamp: parsedDate,
+                    status: .completed,
+                    attachedImageData: oldUser?.attachedImageData,
+                    attachedImagesData: oldUser?.attachedImagesData
+                ))
+            }
+            let astMsg = ChatMessage(
+                role: .assistant,
+                content: active.reply,
+                timestamp: parsedDate,
+                status: .streaming,
+                toolHistory: active.tools,
+                thoughtProcess: active.thought
+            )
+            rebuilt.append(astMsg)
+            activeRemoteTurnId = active.turn_id
+            activeRemoteAssistantMessageId = astMsg.id
         }
 
         messages = rebuilt
