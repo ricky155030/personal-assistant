@@ -33,11 +33,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest pytest-asyncio
 
-      - name: Run Platform Compatibility Integration Tests
+      - name: Run Full Unit & Compatibility Test Suite
         run: |
-          pytest tests/test_platform_compat.py -v
+          pytest -v
 
       - name: Test Setup Wizard CLI
         run: |

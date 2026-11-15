@@ -129,3 +129,10 @@
    - **Commit 前強制防護查驗 (Pre-Commit Zero-Leak Gate)**：
      - 在執行 `git commit` 前，除了 `uv run pytest` 本機綠燈外，**必須主動執行機敏關鍵字與 IP 模式掃描**（檢查 `git diff --cached` 是否含有 IP、人名、實體硬體標識或真實金鑰）。
      - 若檢測到任何非 Dummy 假資料的真實私有標識，**嚴禁 Commit**，必須就地脫敏抽離至未追蹤的本機配置後方可提交。
+9. **本機開發與交付核心原則 (Local Development & Delivery Discipline)**：
+   - **小步原子推進 (Small Atomic Commits)**：一次只完成單一功能或修復單一 Bug，絕不將重構與新功能混成一大包一次提交，確保每筆改動都能獨立測試與快速回滾。
+   - **改動必補測試 (Test-With-Change)**：新增業務邏輯或修復 Bug 時，必須同步補上對應單元測試與邊界條件，避免後續回歸破壞。
+   - **本機先驗再推送 (Local Pre-Push Gate)**：每次 Commit 與 Push 前，Python 必跑全量 `uv run pytest`，修改 `ios/` 必執行 `./package_ios.sh` 驗證編譯無誤與無新增警告，並通過機敏資訊掃描。
+   - **嚴守修改範圍 (Minimal Diff & Scope Discipline)**：只改當前任務相關程式碼，不順手重構無關模組或刪除既有防呆與註解；發現其他問題應另外排單處理。
+   - **前後端契約相容 (Contract-First Compatibility)**：後端 API 與 iOS App 有欄位連動時，必須保留向下相容性，確保舊版 App 尚未更新也不會閃退。
+   - **服務安全重啟 (Safe Service Reload)**：修改常駐後端後，嚴禁在語音串流進行中直接強殺服務，應改用延遲重載或待對話結束後再行套用。
