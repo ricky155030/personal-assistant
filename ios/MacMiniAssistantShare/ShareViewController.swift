@@ -125,13 +125,21 @@ private struct ShareExtensionView: View {
     @State private var isSending = false
     @State private var statusText: String? = nil
     @State private var didSucceed = false
+    @State private var localServerURL: String = UserDefaults.standard.string(forKey: "share_ext_server_url") ?? ""
+    @State private var localAPIKey: String = UserDefaults.standard.string(forKey: "share_ext_api_key") ?? ""
+    @State private var inputServerURL: String = ""
+    @State private var inputAPIKey: String = ""
 
     private var serverURL: String {
-        AppGroupStore.shared.serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        let shared = AppGroupStore.shared.serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        if !shared.isEmpty { return shared }
+        return localServerURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
     }
 
     private var apiKey: String {
-        AppGroupStore.shared.apiKey
+        let shared = AppGroupStore.shared.apiKey
+        if !shared.isEmpty { return shared }
+        return localAPIKey
     }
 
     var body: some View {
@@ -177,12 +185,52 @@ private struct ShareExtensionView: View {
                         )
 
                         if serverURL.isEmpty {
-                            Text("尚未偵測到 Mac mini 伺服器設定，請先開啟一次 MacMiniAssistant 主 App 完成同步。")
-                                .font(.footnote)
-                                .foregroundColor(.orange)
-                                .padding(12)
-                                .background(Color.orange.opacity(0.12))
-                                .cornerRadius(10)
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("尚未偵測到共享伺服器設定（SideStore 免費簽名可能隔離了 App Group），請在此輸入一次即可永久記住：")
+                                    .font(.footnote)
+                                    .foregroundColor(.orange)
+
+                                TextField("伺服器網址（例如 http://...ts.net:8899）", text: $inputServerURL)
+                                    .textFieldStyle(.plain)
+                                    .keyboardType(.URL)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .foregroundColor(.white)
+                                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
+
+                                SecureField("API Key（選填）", text: $inputAPIKey)
+                                    .textFieldStyle(.plain)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .foregroundColor(.white)
+                                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
+
+                                Button(action: {
+                                    let trimmedURL = inputServerURL.trimmingCharacters(in: CharacterSet(charactersIn: "/ \n"))
+                                    let trimmedKey = inputAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !trimmedURL.isEmpty else { return }
+                                    UserDefaults.standard.set(trimmedURL, forKey: "share_ext_server_url")
+                                    UserDefaults.standard.set(trimmedKey, forKey: "share_ext_api_key")
+                                    localServerURL = trimmedURL
+                                    localAPIKey = trimmedKey
+                                }) {
+                                    Text("儲存伺服器設定")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                        .background(Color.orange)
+                                        .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(12)
+                            .background(Color.orange.opacity(0.12))
+                            .cornerRadius(10)
                         }
 
                         // 快捷 Prompt 按鈕區（點擊直接送出）
