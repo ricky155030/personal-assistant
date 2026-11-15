@@ -494,6 +494,102 @@ def cancel_voice_chat(
     }
 
 
+# 進行中語音/文字對話之純記憶體狀態緩衝區（不寫入磁碟，支援 App 重開斷線續接與超時自清）
+_ACTIVE_TURN_LOCK = _threading.Lock()
+_ACTIVE_TURN: Optional[dict] = None
+_ACTIVE_TURN_STALE_SEC = 120.0
+
+
+def _start_active_turn(user_query: str) -> str:
+    global _ACTIVE_TURN
+    import uuid
+    import time as _t
+    turn_id = uuid.uuid4().hex[:12]
+    clean_q = _clean_history_query(user_query)
+    with _ACTIVE_TURN_LOCK:
+        _ACTIVE_TURN = {
+            "turn_id": turn_id,
+            "timestamp": datetime.now().isoformat(),
+            "query": clean_q,
+            "thought": "",
+            "tools": [],
+            "reply": "",
+            "status": "thinking",
+            "updated_at": _t.time(),
+        }
+    return turn_id
+
+
+def _update_active_turn(
+    turn_id: str,
+    *,
+    thought_delta: Optional[str] = None,
+    tool_status: Optional[str] = None,
+    text_delta: Optional[str] = None,
+) -> None:
+    import time as _t
+    with _ACTIVE_TURN_LOCK:
+        if not _ACTIVE_TURN or _ACTIVE_TURN.get("turn_id") != turn_id:
+            return
+        if thought_delta:
+            _ACTIVE_TURN["thought"] += thought_delta
+        if tool_status:
+            tools = _ACTIVE_TURN["tools"]
+            if not tools or tools[-1] != tool_status:
+                tools.append(tool_status)
+        if text_delta:
+            _ACTIVE_TURN["reply"] += text_delta
+            _ACTIVE_TURN["status"] = "streaming"
+        _ACTIVE_TURN["updated_at"] = _t.time()
+
+
+def _clear_active_turn(turn_id: Optional[str] = None) -> Optional[dict]:
+    global _ACTIVE_TURN
+    with _ACTIVE_TURN_LOCK:
+        if not _ACTIVE_TURN:
+            return None
+        if turn_id is not None and _ACTIVE_TURN.get("turn_id") != turn_id:
+            return None
+        prev = dict(_ACTIVE_TURN)
+        _ACTIVE_TURN = None
+        return prev
+
+
+def _get_active_turn_snapshot() -> Optional[dict]:
+    global _ACTIVE_TURN
+    import time as _t
+    stale_snapshot = None
+    with _ACTIVE_TURN_LOCK:
+        if not _ACTIVE_TURN:
+            return None
+        if _t.time() - _ACTIVE_TURN.get("updated_at", 0) > _ACTIVE_TURN_STALE_SEC:
+            stale_snapshot = dict(_ACTIVE_TURN)
+            _ACTIVE_TURN = None
+        else:
+            return {
+                "turn_id": _ACTIVE_TURN["turn_id"],
+                "timestamp": _ACTIVE_TURN["timestamp"],
+                "query": _ACTIVE_TURN["query"],
+                "thought": _ACTIVE_TURN["thought"],
+                "tools": list(_ACTIVE_TURN["tools"]),
+                "reply": _ACTIVE_TURN["reply"],
+                "status": _ACTIVE_TURN["status"],
+            }
+    # 若超過心跳時限，於鎖外補寫中斷紀錄並解除前端卡住狀態
+    if stale_snapshot:
+        try:
+            partial = (stale_snapshot.get("reply") or "").strip()
+            msg = f"{partial}\n\n[回覆逾時或連線中斷]" if partial else "[回覆逾時或大腦連線中斷]"
+            memory_manager.log_interaction(
+                stale_snapshot.get("query", ""),
+                msg,
+                actions=["interrupted_timeout"],
+            )
+        except Exception:
+            pass
+    return None
+
+
 @app.post("/api/voice-chat/stream")
 async def voice_chat_stream(
     payload: ChatRequest,
@@ -629,6 +725,7 @@ async def voice_chat_stream(
         turn_result = {}
         extractor = TTSSentenceExtractor()
         sentence_seq = 0
+        active_turn_id = _start_active_turn(user_query)
 
         try:
             gen = personal_agent.stream(
@@ -652,12 +749,14 @@ async def voice_chat_stream(
                     break
 
                 if ev_type == "thought":
+                    _update_active_turn(active_turn_id, thought_delta=ev_data)
                     loop.call_soon_threadsafe(
                         event_queue.put_nowait,
                         {"type": "thought_delta", "delta": ev_data}
                     )
                 elif ev_type == "status":
                     status_text = ev_data
+                    _update_active_turn(active_turn_id, tool_status=status_text)
                     clean_status = sanitize_for_tts(status_text)
                     actions.append(f"tool: {status_text[:30]}")
                     loop.call_soon_threadsafe(
@@ -666,6 +765,7 @@ async def voice_chat_stream(
                     )
                 elif ev_type == "text":
                     delta = ev_data
+                    _update_active_turn(active_turn_id, text_delta=delta)
                     full_reply_parts.append(delta)
                     loop.call_soon_threadsafe(
                         event_queue.put_nowait,
@@ -763,8 +863,15 @@ async def voice_chat_stream(
 
         except Exception as e:
             print(f"[voice_chat_stream] Worker exception: {e}")
+            partial = "".join(full_reply_parts).strip()
+            try:
+                err_msg = f"{partial}\n\n[大腦連線中斷：{e}]" if partial else f"[大腦連線中斷：{e}]"
+                memory_manager.log_interaction(_clean_history_query(user_query), err_msg, actions=["interrupted_error"])
+            except Exception:
+                pass
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "error": str(e)})
         finally:
+            _clear_active_turn(active_turn_id)
             worker_finished.set()
             with _VOICE_CANCEL_LOCK:
                 _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
@@ -955,7 +1062,10 @@ def chat_history(
                 })
     except FileNotFoundError:
         pass
-    return {"history": entries[-limit:]}
+    return {
+        "history": entries[-limit:],
+        "active_turn": _get_active_turn_snapshot(),
+    }
 
 
 @app.post("/api/memory/sync-now")

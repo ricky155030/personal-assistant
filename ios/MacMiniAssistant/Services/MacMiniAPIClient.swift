@@ -450,11 +450,27 @@ public final class MacMiniAPIClient {
         public let metadata: TurnMetadata?
     }
 
+    public struct ActiveTurnSnapshot: Codable {
+        public let turn_id: String
+        public let timestamp: String
+        public let query: String
+        public let thought: String
+        public let tools: [String]
+        public let reply: String
+        public let status: String
+    }
+
     private struct RemoteHistoryResponse: Codable {
         let history: [RemoteHistoryItem]
+        let active_turn: ActiveTurnSnapshot?
     }
 
     public func fetchHistory(limit: Int = 40, since: String? = nil) async -> [RemoteHistoryItem] {
+        let result = await fetchHistoryWithActiveTurn(limit: limit, since: since)
+        return result.history
+    }
+
+    public func fetchHistoryWithActiveTurn(limit: Int = 40, since: String? = nil) async -> (history: [RemoteHistoryItem], activeTurn: ActiveTurnSnapshot?) {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var components = URLComponents(string: "\(cleanBase)/api/history")
         var queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
@@ -462,7 +478,7 @@ public final class MacMiniAPIClient {
             queryItems.append(URLQueryItem(name: "since", value: since))
         }
         components?.queryItems = queryItems
-        guard let url = components?.url else { return [] }
+        guard let url = components?.url else { return ([], nil) }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 5.0
@@ -471,12 +487,12 @@ public final class MacMiniAPIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-                return []
+                return ([], nil)
             }
             let decoded = try JSONDecoder().decode(RemoteHistoryResponse.self, from: data)
-            return decoded.history
+            return (decoded.history, decoded.active_turn)
         } catch {
-            return []
+            return ([], nil)
         }
     }
 }

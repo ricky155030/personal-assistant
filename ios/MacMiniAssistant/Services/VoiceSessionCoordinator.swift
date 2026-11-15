@@ -128,6 +128,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
     private var activeStreamTask: Task<Void, Never>?
     private var healthCheckTimer: Timer?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    private var activeRemoteTurnId: String? = nil
+    private var activeRemoteAssistantMessageId: UUID? = nil
     private var silenceWarned = false
     private var shouldSpeakCurrentTurn = true
     private var dictationBaseText: String = ""
@@ -163,10 +165,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
     private func startAutoHistoryPolling() {
         Task { @MainActor [weak self] in
             while let self = self {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                let intervalNs: UInt64 = (self.activeRemoteTurnId != nil) ? 2_500_000_000 : 10_000_000_000
+                try? await Task.sleep(nanoseconds: intervalNs)
                 guard !Task.isCancelled else { break }
                 guard UIApplication.shared.applicationState == .active else { continue }
-                guard !self.isSyncingHistory, self.messages.last?.status != .streaming else { continue }
+                let isRemoteTracking = (self.activeRemoteTurnId != nil)
+                guard !self.isSyncingHistory, (isRemoteTracking || self.messages.last?.status != .streaming) else { continue }
                 switch self.state {
                 case .transcribing, .thinkingAndStreaming, .speaking:
                     continue
@@ -959,10 +963,23 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let items = await apiClient.fetchHistory(limit: limit, since: lastSyncedHistoryTimestamp)
-        guard !items.isEmpty else { return }
-
+        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: lastSyncedHistoryTimestamp)
         var changed = false
+
+        // 若遠端進行中任務已結束（activeTurn == nil 或換了新 turn），先清理舊的進行中佔位狀態避免卡在轉圈
+        if let prevAstId = activeRemoteAssistantMessageId,
+           (activeTurn == nil || activeTurn?.turn_id != activeRemoteTurnId) {
+            if let idx = messages.firstIndex(where: { $0.id == prevAstId }) {
+                if messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && items.isEmpty {
+                    messages.remove(at: idx)
+                } else {
+                    messages[idx].status = .completed
+                }
+            }
+            activeRemoteTurnId = nil
+            activeRemoteAssistantMessageId = nil
+        }
+
         for item in items {
             let parsedDate = parseServerTimestamp(item.timestamp)
 
@@ -985,19 +1002,30 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     messages[existingIdx].source = src
                     changed = true
                 }
+                if messages[existingIdx].status == .streaming {
+                    messages[existingIdx].status = .completed
+                    changed = true
+                }
                 if !item.timestamp.isEmpty {
                     lastSyncedHistoryTimestamp = item.timestamp
                 }
                 continue
             }
 
-            // 若近期已經有相同問題且緊接著也有助理回覆，同樣視為已存在於本地
+            // 若近期已經有相同問題且緊接著也有助理回覆，同樣視為已存在於本地（若本地為佔位氣泡則直接補齊回覆）
             if !normQ.isEmpty,
                let qIdx = messages.suffix(20).lastIndex(where: {
                    $0.role == .user && normalizeForDedup($0.content) == normQ
                }),
                qIdx + 1 < messages.endIndex,
                messages[qIdx + 1].role == .assistant {
+                if messages[qIdx + 1].status == .streaming || messages[qIdx + 1].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    messages[qIdx + 1].content = rText
+                    messages[qIdx + 1].status = .completed
+                    messages[qIdx + 1].metadata = item.metadata ?? messages[qIdx + 1].metadata
+                    messages[qIdx + 1].source = item.source ?? messages[qIdx + 1].source
+                    changed = true
+                }
                 if !item.timestamp.isEmpty {
                     lastSyncedHistoryTimestamp = item.timestamp
                 }
@@ -1021,6 +1049,38 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
         if changed {
             saveUnifiedTimeline()
+        }
+
+        // 若後端目前有正在進行中的對話回合，且本機沒有活躍的串流任務，立即接續顯示思考/工具進度
+        if activeStreamTask == nil, let active = activeTurn {
+            let parsedDate = parseServerTimestamp(active.timestamp)
+            if activeRemoteTurnId == active.turn_id,
+               let astId = activeRemoteAssistantMessageId,
+               let idx = messages.firstIndex(where: { $0.id == astId }) {
+                messages[idx].content = active.reply
+                messages[idx].thoughtProcess = active.thought
+                messages[idx].toolHistory = active.tools
+                messages[idx].status = .streaming
+            } else {
+                let normActiveQ = normalizeForDedup(active.query)
+                let hasRecentSameUser = !normActiveQ.isEmpty && messages.suffix(6).contains(where: {
+                    $0.role == .user && normalizeForDedup($0.content) == normActiveQ
+                })
+                if !hasRecentSameUser && !active.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    messages.append(ChatMessage(role: .user, content: active.query, timestamp: parsedDate, status: .completed))
+                }
+                let astMsg = ChatMessage(
+                    role: .assistant,
+                    content: active.reply,
+                    timestamp: parsedDate,
+                    status: .streaming,
+                    toolHistory: active.tools,
+                    thoughtProcess: active.thought
+                )
+                messages.append(astMsg)
+                activeRemoteTurnId = active.turn_id
+                activeRemoteAssistantMessageId = astMsg.id
+            }
         }
     }
 
