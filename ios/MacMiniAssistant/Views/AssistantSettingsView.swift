@@ -16,10 +16,7 @@ struct AssistantSettingsView: View {
     @State private var newPromptTitle: String = ""
     @State private var newPromptBody: String = ""
     @State private var newPromptIcon: String = "sparkles"
-
-    private var availableVoices: [AVSpeechSynthesisVoice] {
-        NativeSpeechPlayer.getAvailableVoices()
-    }
+    @State private var availableVoices: [AVSpeechSynthesisVoice] = []
 
     var body: some View {
         NavigationStack {
@@ -311,6 +308,14 @@ struct AssistantSettingsView: View {
             }
             .navigationTitle("助理設定")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                if availableVoices.isEmpty {
+                    let loaded = await Task.detached(priority: .userInitiated) {
+                        NativeSpeechPlayer.getAvailableVoices()
+                    }.value
+                    availableVoices = loaded
+                }
+            }
             .sheet(isPresented: $isAddingSharePrompt) {
                 AddSharePromptSheet(
                     title: $newPromptTitle,

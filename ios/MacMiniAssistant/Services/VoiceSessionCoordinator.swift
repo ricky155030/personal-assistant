@@ -94,13 +94,28 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var textInput: String = ""
     @Published public var currentStreamingText: String = ""
     @Published public var currentToolStatus: String? = nil
-    @Published public var speakToolStatusEnabled: Bool = true
+    @Published public var speakToolStatusEnabled: Bool = {
+        if UserDefaults.standard.object(forKey: "macmini_speak_tool_status_enabled") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "macmini_speak_tool_status_enabled")
+    }() {
+        didSet {
+            UserDefaults.standard.set(speakToolStatusEnabled, forKey: "macmini_speak_tool_status_enabled")
+        }
+    }
     @Published public var errorMessage: String? = nil
 
     // 伺服器健康診斷與 AGY 配額快照
     @Published public var isServerReachable: Bool = false
     @Published public var serverStatusText: String = "連線檢查中..."
-    @Published public var showDebugHUD: Bool = false
+    @Published public var showDebugHUD: Bool = {
+        UserDefaults.standard.bool(forKey: "macmini_show_debug_hud")
+    }() {
+        didSet {
+            UserDefaults.standard.set(showDebugHUD, forKey: "macmini_show_debug_hud")
+        }
+    }
     @Published public var quotaSnapshot: QuotaSnapshot? = nil
     @Published public var isRefreshingQuota: Bool = false
     @Published public var isCompactingContext: Bool = false
