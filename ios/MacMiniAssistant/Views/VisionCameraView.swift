@@ -12,6 +12,7 @@ struct VisionCameraView: View {
     @State private var selectedPresetId: String = "builtin_general" // 預設高亮選中「萬物百科」
     @State private var isVoiceFollowUpEnabled: Bool = VisionPresetStore.isVoiceFollowUpEnabled // 拍後是否自動開啟麥克風聽補充語音
     @State private var capturedImages: [Data] = []
+    @State private var preEncodedBase64: [String] = []
     @State private var showPresetManager: Bool = false
     @State private var showAddPresetSheet: Bool = false
     @State private var showTrayDrawer: Bool = false
@@ -103,17 +104,22 @@ struct VisionCameraView: View {
         .photosPicker(isPresented: $showPhotoPicker, selection: $selectedPhotos, matching: .images)
         .onChange(of: selectedPhotos) { _, newItems in
             guard !newItems.isEmpty else { return }
-            Task {
-                var loaded: [Data] = []
-                for item in newItems {
-                    if let data = try? await item.loadTransferable(type: Data.self),
-                       let uiImg = UIImage(data: data),
-                       let jpeg = HandsFreeMainView.compressImage(uiImg) {
-                        loaded.append(jpeg)
+            let items = newItems
+            Task.detached(priority: .userInitiated) {
+                var loadedData: [Data] = []
+                var loadedBase64: [String] = []
+                for item in items {
+                    if let rawData = try? await item.loadTransferable(type: Data.self),
+                       let jpeg = HandsFreeMainView.compressImageData(rawData) {
+                        loadedData.append(jpeg)
+                        loadedBase64.append(jpeg.base64EncodedString())
                     }
                 }
+                let finalData = loadedData
+                let finalBase64 = loadedBase64
                 await MainActor.run {
-                    capturedImages.append(contentsOf: loaded)
+                    capturedImages.append(contentsOf: finalData)
+                    preEncodedBase64.append(contentsOf: finalBase64)
                     selectedPhotos.removeAll()
                     haptic.impactOccurred()
                     if isVoiceFollowUpEnabled {
@@ -334,10 +340,11 @@ struct VisionCameraView: View {
             // 中央：白色大快門圓鈕 (⚪)
             Button(action: {
                 haptic.impactOccurred()
-                cameraModel.capturePhoto { jpegData in
-                    guard let data = jpegData else { return }
+                cameraModel.capturePhoto { jpegData, base64 in
+                    guard let data = jpegData, let b64 = base64 else { return }
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
                         capturedImages.append(data)
+                        preEncodedBase64.append(b64)
                     }
                     if isVoiceFollowUpEnabled {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -472,10 +479,11 @@ struct VisionCameraView: View {
             HStack(spacing: 16) {
                 Button(action: {
                     haptic.impactOccurred()
-                    cameraModel.capturePhoto { jpegData in
-                        guard let data = jpegData else { return }
+                    cameraModel.capturePhoto { jpegData, base64 in
+                        guard let data = jpegData, let b64 = base64 else { return }
                         withAnimation {
                             capturedImages.append(data)
+                            preEncodedBase64.append(b64)
                         }
                     }
                 }) {
@@ -495,6 +503,7 @@ struct VisionCameraView: View {
                     stopDictation()
                     withAnimation {
                         capturedImages.removeAll()
+                        preEncodedBase64.removeAll()
                         questionText = ""
                         showTrayDrawer = false
                     }
@@ -547,18 +556,21 @@ struct VisionCameraView: View {
             extra = flushedLive
         }
         let imagesToSend = capturedImages
+        let base64ToSend = preEncodedBase64.count == imagesToSend.count ? preEncodedBase64 : nil
 
         // 重置相機內部狀態並關閉
         capturedImages.removeAll()
+        preEncodedBase64.removeAll()
         questionText = ""
         dismiss()
 
         // 唯一送出！絕不發送兩次！
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             coordinator.sendVisionRequest(
                 prompt: preset.prompt,
                 imagesData: imagesToSend,
-                extraVoiceNote: extra.isEmpty ? nil : extra
+                extraVoiceNote: extra.isEmpty ? nil : extra,
+                preEncodedBase64: base64ToSend
             )
         }
     }
@@ -602,6 +614,9 @@ struct VisionCameraView: View {
                                         haptic.impactOccurred()
                                         withAnimation {
                                             capturedImages.remove(at: idx)
+                                            if idx < preEncodedBase64.count {
+                                                preEncodedBase64.remove(at: idx)
+                                            }
                                             if capturedImages.isEmpty {
                                                 showTrayDrawer = false
                                             }
@@ -714,7 +729,7 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
     @Published var focusPoint: CGPoint? = nil
 
     private let photoOutput = AVCapturePhotoOutput()
-    private var photoCompletion: ((Data?) -> Void)?
+    private var photoCompletion: ((Data?, String?) -> Void)?
     private var videoDevice: AVCaptureDevice?
 
     func checkPermissionAndStart() {
@@ -790,7 +805,7 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
         }
     }
 
-    func capturePhoto(completion: @escaping (Data?) -> Void) {
+    func capturePhoto(completion: @escaping (Data?, String?) -> Void) {
         self.photoCompletion = completion
         let settings = AVCapturePhotoSettings()
         if photoOutput.supportedFlashModes.contains(.on) {
@@ -800,14 +815,21 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        let completion = photoCompletion
+        photoCompletion = nil
         guard error == nil, let fileData = photo.fileDataRepresentation() else {
-            photoCompletion?(nil)
+            DispatchQueue.main.async {
+                completion?(nil, nil)
+            }
             return
         }
-        if let uiImg = UIImage(data: fileData), let compressed = HandsFreeMainView.compressImage(uiImg) {
-            photoCompletion?(compressed)
-        } else {
-            photoCompletion?(fileData)
+        // 背景執行緒立即以 ImageIO 縮圖預壓縮並預先編碼 Base64，送出時零延遲
+        DispatchQueue.global(qos: .userInitiated).async {
+            let compressed = HandsFreeMainView.compressImageData(fileData) ?? fileData
+            let base64 = compressed.base64EncodedString()
+            DispatchQueue.main.async {
+                completion?(compressed, base64)
+            }
         }
     }
 }

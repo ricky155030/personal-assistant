@@ -637,7 +637,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
     public func sendVisionRequest(
         prompt: String,
         imagesData: [Data],
-        extraVoiceNote: String? = nil
+        extraVoiceNote: String? = nil,
+        preEncodedBase64: [String]? = nil
     ) {
         guard !imagesData.isEmpty else { return }
         let fullQuery: String
@@ -659,7 +660,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
         speechPlayer.stopImmediately()
         shouldSpeakCurrentTurn = true // 隨身眼睛拍完一律用語音回覆主人
 
-        let imagesBase64 = imagesData.map { $0.base64EncodedString() }
+        let imagesBase64: [String]
+        if let pre = preEncodedBase64, pre.count == imagesData.count {
+            imagesBase64 = pre
+        } else {
+            imagesBase64 = imagesData.map { $0.base64EncodedString() }
+        }
         let userMessage = ChatMessage(
             role: .user,
             content: fullQuery,

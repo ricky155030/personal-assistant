@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import AVKit
+import ImageIO
 
 // MARK: - Gemini 標誌性四色四角星芒 Shape
 struct GeminiSparkleShape: Shape {
@@ -1406,6 +1407,23 @@ struct HandsFreeMainView: View {
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
         return resized.jpegData(compressionQuality: 0.78)
+    }
+
+    // 高效能 ImageIO 直接縮圖壓縮（不解碼完整高畫素 Bitmap，大幅降低記憶體與延遲）
+    nonisolated static func compressImageData(_ rawData: Data, maxDim: Int = 1280, quality: CGFloat = 0.78) -> Data? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        if let source = CGImageSourceCreateWithData(rawData as CFData, sourceOptions) {
+            let thumbOptions: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: false,
+                kCGImageSourceThumbnailMaxPixelSize: maxDim
+            ]
+            if let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) {
+                return UIImage(cgImage: cgImage).jpegData(compressionQuality: quality)
+            }
+        }
+        return nil
     }
 }
 
