@@ -11,6 +11,7 @@ import html
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from typing import Deque, Dict, Any, Tuple
 
 from task_manager import task_manager
@@ -126,11 +127,58 @@ def flush_memory_sync_queue() -> int:
 
 
 def patrol_tasks_once() -> Dict[str, Any]:
-    """執行單次背景任務巡檢：檢查 TTL 與異常退出之 auto_restart 任務"""
+    """執行單次背景任務巡檢：檢查 TTL、Log 心跳逾時與異常退出之 auto_restart 任務"""
     tasks = task_manager.list_tasks(include_finished=True)
     restarted: list[str] = []
+    heartbeat_killed: list[str] = []
     now_ts = time.time()
 
+    # 1. 檢查 RUNNING 任務之 Log 心跳逾時（依 log_file 最後修改時間判定是否卡死）
+    dirty_hb = False
+    for t in tasks:
+        if t.get("status") != "RUNNING":
+            continue
+        hb_min = int(t.get("heartbeat_timeout_minutes", 0) or 0)
+        if hb_min <= 0:
+            continue
+        log_rel = t.get("log_file", "")
+        log_path = (Path(log_rel) if Path(log_rel).is_absolute() else (task_manager.BASE_DIR if hasattr(task_manager, "BASE_DIR") else Path(__file__).resolve().parent) / log_rel) if log_rel else None
+        last_active_ts: Optional[float] = None
+        if log_path and log_path.exists():
+            try:
+                last_active_ts = log_path.stat().st_mtime
+            except Exception:
+                pass
+        if last_active_ts is None and t.get("started_at"):
+            try:
+                from datetime import datetime
+                last_active_ts = datetime.strptime(t["started_at"], "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                pass
+        if last_active_ts is not None and (now_ts - last_active_ts) > hb_min * 60:
+            pid = int(t.get("pid", 0) or 0)
+            task_id = t.get("task_id", "")
+            if pid > 0:
+                task_manager._terminate_process(pid)
+            t["status"] = "HEARTBEAT_TIMEOUT"
+            from datetime import datetime
+            t["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            dirty_hb = True
+            heartbeat_killed.append(task_id)
+            try:
+                from telegram_service import send_telegram_sync
+                send_telegram_sync(
+                    f"🚨 <b>背景任務心跳逾時已終止</b>\n"
+                    f"• 任務：<code>{html.escape(str(t.get('name', task_id)))}</code>\n"
+                    f"• ID：<code>{html.escape(task_id)}</code>（Log 超過 {hb_min} 分鐘無更新）",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+    if dirty_hb:
+        task_manager._save_tasks(tasks)
+
+    # 2. 檢查異常退出之 auto_restart 任務
     for t in tasks:
         if not t.get("auto_restart"):
             continue
@@ -161,6 +209,7 @@ def patrol_tasks_once() -> Dict[str, Any]:
             on_success_cmd=spec.get("on_success_cmd"),
             on_fail_cmd=spec.get("on_fail_cmd"),
             auto_restart=True,
+            heartbeat_timeout_minutes=int(spec.get("heartbeat_timeout_minutes", 0) or 0),
         )
         if res.get("success"):
             new_id = res.get("task_id", "")
@@ -177,7 +226,7 @@ def patrol_tasks_once() -> Dict[str, Any]:
                 pass
 
     running_count = sum(1 for t in tasks if t.get("status") == "RUNNING")
-    return {"running_count": running_count, "restarted": restarted}
+    return {"running_count": running_count, "restarted": restarted, "heartbeat_killed": heartbeat_killed}
 
 
 async def run_task_supervisor(interval_sec: int = 60) -> None:

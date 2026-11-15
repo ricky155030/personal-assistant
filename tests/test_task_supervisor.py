@@ -110,6 +110,39 @@ def test_patrol_tasks_restarts_only_completed_auto_restart():
     assert fake_tasks[0]["auto_restart"] is False
 
 
+def test_patrol_kills_stale_heartbeat_task(tmp_path):
+    import os
+    import time as time_mod
+
+    stale_log = tmp_path / "stale.log"
+    stale_log.write_text("old heartbeat\n", encoding="utf-8")
+    old_ts = time_mod.time() - 3600  # 60 分鐘前
+    os.utime(stale_log, (old_ts, old_ts))
+
+    fake_tasks = [
+        {
+            "task_id": "task_stale_1",
+            "name": "Stale Watchdog",
+            "pid": 43210,
+            "status": "RUNNING",
+            "log_file": str(stale_log),
+            "heartbeat_timeout_minutes": 15,
+        }
+    ]
+    mock_mgr = MagicMock()
+    mock_mgr.list_tasks.return_value = fake_tasks
+
+    with patch.object(ts, "task_manager", mock_mgr), \
+         patch("telegram_service.send_telegram_sync") as mock_tg:
+        report = ts.patrol_tasks_once()
+
+    assert report["heartbeat_killed"] == ["task_stale_1"]
+    assert fake_tasks[0]["status"] == "HEARTBEAT_TIMEOUT"
+    mock_mgr._terminate_process.assert_called_once_with(43210)
+    mock_mgr._save_tasks.assert_called_once()
+    mock_tg.assert_called_once()
+
+
 def test_try_inject_memory_sync_uses_primary_worker():
     import agy_singleton as agy_mod
 

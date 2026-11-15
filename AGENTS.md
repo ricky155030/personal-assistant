@@ -85,8 +85,8 @@
    - **監控與輪詢任務一律透過 TaskManager 登記脫鉤 (Fast Handoff)**：
      - 當主人要求執行「定期/持續輪詢監控」（如價格監聽、社團貼文監控、定期爬取）時，主 agent 應產出獨立背景腳本（置於 `scripts/`）。
      - **嚴禁裸跑指令**，一律透過 TaskManager 登記脫鉤啟動：
-       - Python 腳本：`python3 task_manager.py spawn --name "<任務名稱>" --script "scripts/<腳本名稱>.py" --ttl <分鐘數>`（可選加 `--notify telegram --sync-memory`）
-       - **任意通用長耗時 CLI 指令**（如 CI 追蹤、編譯打包、全量測試）：`python3 task_manager.py spawn-cmd --name "<任務名稱>" --cmd "<CLI指令>" --notify telegram --ttl <分鐘數>`（預設會自動推播 Telegram 並同步 `data/history.jsonl` 與閒置主大腦記憶）。
+       - **永久常駐守護任務**（如全屋巡檢、酷澎盯價、FB 社團、Zigbee 守護）：一律設 `--ttl 0`（永久不限時）搭配 `--heartbeat-timeout <分鐘數>`（如 `30`），且腳本每輪巡檢必須吐出一行 Log；中控監督者 (`task_supervisor.py`) 依 Log 最後更新時間判定健康度，超時即終止並通知主人。
+       - **短期/單次任務**（如 CI 追蹤、編譯打包、一次性定時提醒）：`python3 task_manager.py spawn-cmd --name "<任務名稱>" --cmd "<CLI指令>" --notify telegram --ttl <分鐘數>`（預設會自動推播 Telegram 並同步 `data/history.jsonl` 與閒置主大腦記憶；TTL 到期時會自動終止並通知）。
      - **秒級交差釋放**：啟動後，**應立即結束當前 turn** 並向主人回覆確認（例如：「👌 監控已在背景啟動（任務 ID: task_xxx）！有任何異動將自動推播通知給您。」），絕不留在當前對話中迴圈等待，確保主大腦立刻空出。
    - **深度耗時任務派出 Subagent (`invoke_subagent`)**：
      - 若任務涉及深度跨站調研、多文件批量處理或繁複代碼重構，主 agent 應優先透過 `invoke_subagent` 委派給專屬子代理在背景推進，主大腦秒級回報派發狀態，讓主人的日常生活隨問隨答永不卡頓。

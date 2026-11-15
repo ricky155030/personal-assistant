@@ -573,6 +573,7 @@ class TaskManager:
         on_success_cmd: Optional[str] = None,
         on_fail_cmd: Optional[str] = None,
         auto_restart: bool = False,
+        heartbeat_timeout_minutes: int = 0,
     ) -> Dict[str, Any]:
         """
         以完全脫鉤 (Detached) 方式啟動背景長任務腳本；
@@ -617,6 +618,8 @@ class TaskManager:
                 cmd.extend(["--on-fail-cmd", on_fail_cmd])
 
         extra_fields: Dict[str, Any] = {}
+        if heartbeat_timeout_minutes and heartbeat_timeout_minutes > 0:
+            extra_fields["heartbeat_timeout_minutes"] = int(heartbeat_timeout_minutes)
         if auto_restart:
             extra_fields["auto_restart"] = True
             extra_fields["restart_spec"] = {
@@ -629,6 +632,7 @@ class TaskManager:
                 "sync_memory": sync_memory,
                 "on_success_cmd": on_success_cmd,
                 "on_fail_cmd": on_fail_cmd,
+                "heartbeat_timeout_minutes": heartbeat_timeout_minutes,
             }
 
         return self._spawn_detached(
@@ -696,16 +700,20 @@ class TaskManager:
                     t["status"] = "COMPLETED"
                     t["finished_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
                 else:
-                    # 檢查 TTL 是否超時
+                    # 檢查 TTL 是否超時（ttl_minutes <= 0 代表永久常駐不限時）
                     try:
-                        started = datetime.strptime(t["started_at"], "%Y-%m-%d %H:%M:%S")
-                        ttl = timedelta(minutes=t.get("ttl_minutes", 120))
-                        if now - started > ttl:
-                            # 超時強制終止
-                            print(f"[TaskManager] ⚠️ 任務 {t['task_id']} (PID: {pid}) 超過 TTL ({t.get('ttl_minutes')}m)，強制終止！")
-                            self._terminate_process(pid)
-                            t["status"] = "TTL_EXPIRED"
-                            t["finished_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                        ttl_val = int(t.get("ttl_minutes", 120) or 0)
+                        if ttl_val > 0:
+                            started = datetime.strptime(t["started_at"], "%Y-%m-%d %H:%M:%S")
+                            if now - started > timedelta(minutes=ttl_val):
+                                # 超時強制終止並通知
+                                print(f"[TaskManager] ⚠️ 任務 {t['task_id']} (PID: {pid}) 超過 TTL ({ttl_val}m)，強制終止！")
+                                self._terminate_process(pid)
+                                t["status"] = "TTL_EXPIRED"
+                                t["finished_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                                _send_telegram_notification(
+                                    f"⏱️ 背景任務到期已終止：{t.get('name', t['task_id'])} (`{t['task_id']}`)\n已達 TTL 上限 {ttl_val} 分鐘。"
+                                )
                     except Exception as e:
                         print(f"[TaskManager] TTL 檢查異常: {e}", file=sys.stderr)
 
@@ -871,7 +879,8 @@ def main():
     sp_spawn = subparsers.add_parser("spawn", help="啟動獨立背景 Python 腳本任務")
     sp_spawn.add_argument("--name", required=True, help="任務名稱")
     sp_spawn.add_argument("--script", required=True, help="腳本路徑")
-    sp_spawn.add_argument("--ttl", type=int, default=120, help="生命週期 (分鐘，預設 120)")
+    sp_spawn.add_argument("--ttl", type=int, default=120, help="生命週期 (分鐘，預設 120；設 0 代表永久常駐不限時)")
+    sp_spawn.add_argument("--heartbeat-timeout", type=int, default=0, help="Log 靜默超時分鐘數 (預設 0 不檢查；常駐任務建議設 30)")
     sp_spawn.add_argument("--notify", default=None, help="完成通知通道 (例如 telegram 或 telegram,ios)")
     sp_spawn.add_argument("--sync-memory", action="store_true", help="完成時寫入 history.jsonl 並靜默同步主大腦")
     sp_spawn.add_argument("--on-success-cmd", default=None, help="成功時執行的鉤子指令")
@@ -934,6 +943,7 @@ def main():
             on_success_cmd=args.on_success_cmd,
             on_fail_cmd=args.on_fail_cmd,
             auto_restart=args.auto_restart,
+            heartbeat_timeout_minutes=args.heartbeat_timeout,
         )
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.command == "spawn-cmd":
