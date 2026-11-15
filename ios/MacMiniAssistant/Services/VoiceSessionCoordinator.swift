@@ -126,6 +126,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     public let apiClient = MacMiniAPIClient.shared
 
     private var activeStreamTask: Task<Void, Never>?
+    private var thinkingPulseTask: Task<Void, Never>?
     private var healthCheckTimer: Timer?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var activeRemoteTurnId: String? = nil
@@ -678,6 +679,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         currentToolStatus = nil
         speechPlayer.resetForNewTurn()
         state = .thinkingAndStreaming(toolStatus: nil)
+        startThinkingPulseTask()
 
         let assistantMessageId = UUID()
         let assistantMessage = ChatMessage(id: assistantMessageId, role: .assistant, content: "", status: .streaming)
@@ -780,6 +782,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         if !messages.isEmpty {
             syncCurrentSessionToHistory()
         }
+        stopThinkingPulseTask()
         activeStreamTask?.cancel()
         activeStreamTask = nil
         speechPlayer.stopImmediately()
@@ -1203,6 +1206,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     public func stopSession() {
+        stopThinkingPulseTask()
         activeStreamTask?.cancel()
         activeStreamTask = nil
         endBackgroundExecutionTask()
@@ -1368,6 +1372,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         currentToolStatus = nil
         speechPlayer.resetForNewTurn()
         state = .thinkingAndStreaming(toolStatus: nil)
+        startThinkingPulseTask()
         if voiceInputMode == .liveContinuous && !vad.isBargeInMonitoring {
             vad.startBargeInMonitoring()
         }
@@ -1452,6 +1457,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
         case .ttsSentence(let sentence):
             self.currentToolStatus = nil
+            self.stopThinkingPulseTask()
             if speakThisTurn {
                 if case .thinkingAndStreaming = self.state {
                     self.state = .speaking(currentSentence: sentence)
@@ -1461,6 +1467,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
         case .audioChunk(let seq, let sentence, let audioData):
             self.currentToolStatus = nil
+            self.stopThinkingPulseTask()
             if speakThisTurn {
                 if case .thinkingAndStreaming = self.state {
                     self.state = .speaking(currentSentence: sentence)
@@ -1470,6 +1477,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
         case .done(let fullReply, _, _, let reportUrl, let quickReplies, let metadata):
             self.currentToolStatus = nil
+            self.stopThinkingPulseTask()
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
                 self.messages[idx].content = fullReply.isEmpty ? self.currentStreamingText : fullReply
                 self.messages[idx].status = .completed
@@ -1537,6 +1545,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     private func handleQueueFinished() {
+        stopThinkingPulseTask()
         currentStreamingText = ""
         currentToolStatus = nil
 
@@ -1552,9 +1561,38 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 try? vad.startListening()
             }
         } else {
+            if earconSoundEnabled && shouldSpeakCurrentTurn {
+                speechPlayer.playListeningReadyEarcon()
+            }
             vad.stopListening()
             state = .idle
         }
+    }
+
+    private func startThinkingPulseTask() {
+        stopThinkingPulseTask()
+        guard earconSoundEnabled && shouldSpeakCurrentTurn else { return }
+        thinkingPulseTask = Task { [weak self] in
+            // 思考超過 2 秒尚未開口時，每 3 秒播放一次柔和脈衝音
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            while !Task.isCancelled {
+                let shouldPulse = await MainActor.run { () -> Bool in
+                    guard let self = self, self.earconSoundEnabled else { return false }
+                    if case .thinkingAndStreaming = self.state {
+                        self.speechPlayer.playThinkingPulseEarcon()
+                        return true
+                    }
+                    return false
+                }
+                if !shouldPulse { break }
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
+    }
+
+    private func stopThinkingPulseTask() {
+        thinkingPulseTask?.cancel()
+        thinkingPulseTask = nil
     }
 
     // 相容舊手勢呼叫

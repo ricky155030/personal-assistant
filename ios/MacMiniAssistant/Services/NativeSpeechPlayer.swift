@@ -381,6 +381,11 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         playSynthesizedTwoTone(freq1: 659.25, freq2: 440.00, duration1: 0.075, duration2: 0.110, volume: 0.22)
     }
 
+    /// 思考脈衝音（極輕柔低音雙點）：代表大腦仍在思考或執行工具中
+    public func playThinkingPulseEarcon() {
+        playSynthesizedTwoTone(freq1: 392.00, freq2: 440.00, duration1: 0.045, duration2: 0.055, volume: 0.11)
+    }
+
     private func playSynthesizedTwoTone(freq1: Double, freq2: Double, duration1: Double, duration2: Double, volume: Float) {
         let sampleRate: Double = 24000
         let count1 = Int(sampleRate * duration1)
