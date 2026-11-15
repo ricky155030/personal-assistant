@@ -88,6 +88,7 @@ struct HandsFreeMainView: View {
     @State private var showPhotoLibraryPicker: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
+    @AppStorage("showQuickSkillBar") private var showQuickSkillBar: Bool = true
     @FocusState private var isInputFocused: Bool
 
     /// 單則訊息最多可附加的照片張數
@@ -393,11 +394,12 @@ struct HandsFreeMainView: View {
         !coordinator.isServerReachable && coordinator.serverStatusText.hasPrefix("離線")
     }
 
-    // MARK: - 合併式用量膠囊（Context ◔ + 配額 ◑）
+    // MARK: - 合併式用量膠囊（Context ◔ + 配額 ◑ + 背景任務 ⚡）
     private var usageCapsuleButton: some View {
         let ctx = latestContextUsage
         let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
         let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+        let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
 
         return Button(action: {
             haptic.impactOccurred()
@@ -443,17 +445,33 @@ struct HandsFreeMainView: View {
                         .foregroundColor(.white)
                         .monospacedDigit()
                 }
+
+                if activeTasks > 0 {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 1, height: 16)
+
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.cyan)
+                        Text("\(activeTasks)")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.cyan)
+                            .monospacedDigit()
+                    }
+                }
             }
             .padding(.horizontal, 12)
-            .frame(height: 42)
+            .frame(height: 44)
             .background(
                 Capsule()
-                    .fill(Color(white: 0.11))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+                    .fill(.ultraThinMaterial)
+                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("用量：Context \(ctx.pctText)，配額剩餘 \(quotaText)")
+        .accessibilityLabel("用量：Context \(ctx.pctText)，配額剩餘 \(quotaText)\(activeTasks > 0 ? "，執行中任務 \(activeTasks) 個" : "")")
     }
 
     // MARK: - Context 佔比圓形填充指示器 (與 ACP 統一大腦 Context 用量同步，點擊檢視明細 / 切換音訊)
@@ -630,6 +648,10 @@ struct HandsFreeMainView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(spacing: 20) {
+                        if coordinator.messages.isEmpty {
+                            zeroStateDashboard
+                                .padding(.top, 12)
+                        }
                         ForEach(Array(coordinator.messages.enumerated()), id: \.element.id) { idx, msg in
                             if shouldShowTimestampSeparator(at: idx) {
                                 Text(formatMessageTimestamp(msg.timestamp))
@@ -956,6 +978,142 @@ struct HandsFreeMainView: View {
         }
     }
 
+    private var quickSkillChips: [(title: String, icon: String, prompt: String?)] {
+        [
+            ("今日簡報", "calendar.badge.clock", "請給我今日簡報與待辦事項"),
+            ("待買清單", "cart.fill", "查詢目前待買清單"),
+            ("酷澎盯價", "tag.fill", "查詢酷澎最新追蹤價格與狀態"),
+            ("家電狀態", "house.fill", "查詢目前家裡電器與溫濕度狀態"),
+            ("任務狀態", "bolt.fill", nil),
+        ]
+    }
+
+    private var zeroStateDashboard: some View {
+        let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
+        let ctx = latestContextUsage
+        let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
+        let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Mac mini 隨時待命")
+                    .font(.title2.weight(.bold))
+                    .foregroundColor(.primary)
+                Text("點選下方卡片快速查看狀態，或直接開口交談")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 4)
+
+            // 1. 今日簡報與待辦卡片
+            Button(action: {
+                haptic.impactOccurred()
+                coordinator.sendQuickReply("請給我今日簡報與待辦事項")
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.title3)
+                        .foregroundColor(.cyan)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill(Color.cyan.opacity(0.14)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("今日簡報與待辦")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text("一鍵彙整行事曆行程與近期專案進度")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                )
+            }
+            .buttonStyle(.plain)
+
+            // 2. 背景任務與系統狀態卡片
+            Button(action: {
+                haptic.impactOccurred()
+                coordinator.refreshQuotaStatus(force: true)
+                showQuotaSheet = true
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "bolt.shield.fill")
+                        .font(.title3)
+                        .foregroundColor(activeTasks > 0 ? .cyan : .green)
+                        .frame(width: 40, height: 40)
+                        .background(Circle().fill((activeTasks > 0 ? Color.cyan : Color.green).opacity(0.14)))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("背景任務與系統狀態")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text("執行中 \(activeTasks) 項 · Context \(ctx.pctText) · 配額 \(quotaText)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                )
+            }
+            .buttonStyle(.plain)
+
+            // 3. 居家與採買快查
+            HStack(spacing: 10) {
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.sendQuickReply("查詢目前待買清單")
+                }) {
+                    Label("待買清單", systemImage: "cart.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.sendQuickReply("查詢酷澎最新追蹤價格與狀態")
+                }) {
+                    Label("酷澎盯價", systemImage: "tag.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    haptic.impactOccurred()
+                    coordinator.sendQuickReply("查詢目前家裡電器與溫濕度狀態")
+                }) {
+                    Label("家電狀態", systemImage: "house.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.ultraThinMaterial))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
     // MARK: - 4. 底部 Gemini 膠囊輸入列與 Live 狀態控制
     private var bottomInputSection: some View {
         VStack(spacing: 10) {
@@ -963,6 +1121,36 @@ struct HandsFreeMainView: View {
             if coordinator.isLiveMode {
                 liveVoiceFloatingBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if showQuickSkillBar && coordinator.pendingImagesData.isEmpty && coordinator.pendingImageData == nil {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(quickSkillChips, id: \.title) { chip in
+                            Button(action: {
+                                haptic.impactOccurred()
+                                isInputFocused = false
+                                if let prompt = chip.prompt {
+                                    coordinator.sendQuickReply(prompt)
+                                } else {
+                                    coordinator.refreshQuotaStatus(force: true)
+                                    showQuotaSheet = true
+                                }
+                            }) {
+                                Label(chip.title, systemImage: chip.icon)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(.primary)
+                                    .padding(.horizontal, 12)
+                                    .frame(minHeight: 34)
+                                    .background(
+                                        Capsule()
+                                            .fill(.ultraThinMaterial)
+                                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
             }
 
             // 若有附加圖片（支援單張與多張），於輸入列上方顯示橫向縮圖預覽列
@@ -1083,7 +1271,7 @@ struct HandsFreeMainView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 21, weight: .medium))
                         .foregroundColor(.white.opacity(0.88))
-                        .frame(width: 36, height: 44)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .accessibilityLabel("附加圖片或拍照")
 
@@ -1112,7 +1300,7 @@ struct HandsFreeMainView: View {
                         Image(systemName: "camera.fill")
                             .font(.system(size: 19, weight: .medium))
                             .foregroundColor(.white.opacity(0.88))
-                            .frame(width: 38, height: 44)
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .accessibilityLabel("隨身眼睛拍照")
 
@@ -1197,13 +1385,13 @@ struct HandsFreeMainView: View {
             .padding(.vertical, 9)
             .background(
                 RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(Color(red: 0.11, green: 0.12, blue: 0.15))
+                    .fill(.ultraThinMaterial)
                     .overlay(
                         RoundedRectangle(cornerRadius: 30, style: .continuous)
                             .stroke(
                                 coordinator.isSingleDictationMode
                                     ? Color.red.opacity(0.45)
-                                    : (coordinator.isLiveMode ? Color.blue.opacity(0.45) : Color.white.opacity(0.07)),
+                                    : (coordinator.isLiveMode ? Color.blue.opacity(0.45) : Color.white.opacity(0.12)),
                                 lineWidth: 1
                             )
                     )
