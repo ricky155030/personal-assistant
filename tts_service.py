@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover - optional in minimal CI environments
 import httpx
 
 DEFAULT_VOICE = "zh-TW-HsiaoChenNeural"
-DEFAULT_GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts"
-DEFAULT_GEMINI_TTS_VOICE = "Kore"
+DEFAULT_GEMINI_TTS_MODEL = "gemini-3.8-flash-tts"
+DEFAULT_GEMINI_TTS_VOICE = "Cleo"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
 # 簡易 LRU 快取（以 md5(provider+voice+rate+text) 為 key，避免重複合成短語）
@@ -52,19 +52,20 @@ def _parse_pcm_rate(mime_type: str, default: int = 24000) -> int:
     return int(match.group(1)) if match else default
 
 
-async def _pcm_to_mp3(pcm_bytes: bytes, sample_rate: int = 24000) -> bytes:
-    """透過 ffmpeg 將原始 16-bit PCM 音訊轉為 MP3"""
+async def _audio_to_mp3(audio_bytes: bytes, mime_type: str = "") -> bytes:
+    """透過 ffmpeg 將 WAV 或原始 16-bit PCM 音訊轉為 MP3"""
+    if "wav" in (mime_type or "").lower():
+        input_args = ["-f", "wav"]
+    else:
+        sample_rate = _parse_pcm_rate(mime_type)
+        input_args = ["-f", "s16le", "-ar", str(sample_rate), "-ac", "1"]
+
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
         "error",
-        "-f",
-        "s16le",
-        "-ar",
-        str(sample_rate),
-        "-ac",
-        "1",
+        *input_args,
         "-i",
         "pipe:0",
         "-f",
@@ -76,9 +77,9 @@ async def _pcm_to_mp3(pcm_bytes: bytes, sample_rate: int = 24000) -> bytes:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate(input=pcm_bytes)
+    stdout, stderr = await proc.communicate(input=audio_bytes)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg pcm->mp3 failed: {stderr.decode(errors='ignore').strip()}")
+        raise RuntimeError(f"ffmpeg audio->mp3 failed: {stderr.decode(errors='ignore').strip()}")
     return stdout
 
 
@@ -114,9 +115,9 @@ async def _synthesize_gemini_bytes(clean_text: str, voice: Optional[str] = None)
     )
 
     url = f"{GEMINI_API_BASE}/{model}:generateContent"
-    prompt_text = f"請逐字朗讀以下內容，不要回覆或補充任何多餘文字：\n{clean_text}"
+    prompt_text = f"## Transcript:\n{clean_text}\n\n"
     payload = {
-        "contents": [{"parts": [{"text": prompt_text}]}],
+        "contents": [{"role": "user", "parts": [{"text": prompt_text}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
             "speechConfig": {
@@ -146,8 +147,7 @@ async def _synthesize_gemini_bytes(clean_text: str, voice: Optional[str] = None)
     mime_type = inline.get("mimeType", "")
     if "mp3" in mime_type or "mpeg" in mime_type:
         return raw_bytes
-    sample_rate = _parse_pcm_rate(mime_type)
-    return await _pcm_to_mp3(raw_bytes, sample_rate=sample_rate)
+    return await _audio_to_mp3(raw_bytes, mime_type=mime_type)
 
 
 async def synthesize_to_bytes(

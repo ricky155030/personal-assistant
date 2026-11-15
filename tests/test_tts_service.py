@@ -72,18 +72,77 @@ async def test_synthesize_to_bytes_gemini_success(monkeypatch):
 
         async def post(self, url, headers=None, json=None):
             assert headers == {"x-goog-api-key": "dummy-test-key"}
-            assert "請逐字朗讀以下內容" in json["contents"][0]["parts"][0]["text"]
+            assert "## Transcript:" in json["contents"][0]["parts"][0]["text"]
             return FakeResponse()
 
-    async def fake_pcm_to_mp3(pcm_bytes, sample_rate=24000):
-        assert pcm_bytes == fake_pcm
-        assert sample_rate == 24000
+    async def fake_audio_to_mp3(audio_bytes, mime_type=""):
+        assert audio_bytes == fake_pcm
+        assert mime_type == "audio/L16;codec=pcm;rate=24000"
         return fake_mp3
 
     monkeypatch.setattr(tts_service.httpx, "AsyncClient", FakeAsyncClient)
-    monkeypatch.setattr(tts_service, "_pcm_to_mp3", fake_pcm_to_mp3)
+    monkeypatch.setattr(tts_service, "_audio_to_mp3", fake_audio_to_mp3)
 
     out = await tts_service.synthesize_to_bytes("測試語音")
+    assert out == fake_mp3
+
+
+@pytest.mark.asyncio
+async def test_synthesize_to_bytes_gemini_wav_success(monkeypatch):
+    monkeypatch.setenv("TTS_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "dummy-test-key")
+    monkeypatch.setenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+    monkeypatch.setenv("GEMINI_TTS_VOICE", "Cleo")
+
+    fake_wav = b"RIFF\x00\x00\x00\x00WAVEfmt "
+    fake_mp3 = b"ID3-wav-mp3"
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "audio/wav",
+                                        "data": base64.b64encode(fake_wav).decode("ascii"),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            assert "gemini-3.8-flash-tts" in url
+            assert json["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Cleo"
+            return FakeResponse()
+
+    async def fake_audio_to_mp3(audio_bytes, mime_type=""):
+        assert audio_bytes == fake_wav
+        assert mime_type == "audio/wav"
+        return fake_mp3
+
+    monkeypatch.setattr(tts_service.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(tts_service, "_audio_to_mp3", fake_audio_to_mp3)
+
+    out = await tts_service.synthesize_to_bytes("測試 3.8 語音")
     assert out == fake_mp3
 
 
