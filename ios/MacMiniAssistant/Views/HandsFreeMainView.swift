@@ -581,21 +581,6 @@ struct HandsFreeMainView: View {
                         showModelPopover = false
                     }
                 }
-
-                Divider().opacity(0.25).padding(.vertical, 3)
-                popoverSectionHeader("音訊輸出（目前：\(coordinator.currentAudioRouteName)）")
-                popoverOptionRow(title: "手機底部揚聲器 (擴音)", icon: "speaker.wave.3.fill", isSelected: coordinator.isForcedSpeaker) {
-                    coordinator.setAudioRoute(forceSpeaker: true)
-                    showModelPopover = false
-                }
-                popoverOptionRow(title: "車機 / 藍牙設備優先", icon: "car.fill", isSelected: coordinator.isBluetoothOrCarConnected) {
-                    coordinator.setAudioRoute(forceSpeaker: false)
-                    showModelPopover = false
-                }
-                popoverOptionRow(title: "手機頂部聽筒 (私密)", icon: "ear", isSelected: false) {
-                    coordinator.setAudioRouteToReceiver()
-                    showModelPopover = false
-                }
             }
             .padding(.vertical, 10)
         }

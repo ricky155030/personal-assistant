@@ -78,11 +78,7 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
         preferredVoice = voice
         UserDefaults.standard.set(voice.identifier, forKey: voiceIdKey)
 
-        try? AVAudioSession.sharedInstance().setCategory(
-            .playAndRecord,
-            mode: .default,
-            options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .mixWithOthers]
-        )
+        NativeSpeechPlayer.ensureOptimalAudioRoute()
         let utterance = AVSpeechUtterance(string: "你好，我是你的 Mac mini 隨身助理。")
         utterance.rate = speechRate
         utterance.pitchMultiplier = speechPitch
@@ -207,21 +203,14 @@ public final class NativeSpeechPlayer: NSObject, AVSpeechSynthesizerDelegate, AV
     public static func ensureOptimalAudioRoute() {
         let session = AVAudioSession.sharedInstance()
         do {
+            // 僅啟用 HFP 免持雙向通道（移除 A2DP），避免車機/藍牙耳機出現輸出走媒體通道卻收不到麥克風的衝突
             try session.setCategory(
                 .playAndRecord,
                 mode: .voiceChat,
-                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
+                options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]
             )
-            let hasExternalRoute = session.currentRoute.outputs.contains { desc in
-                let port = desc.portType
-                return port == .bluetoothHFP || port == .bluetoothA2DP || port == .bluetoothLE
-                    || port == .headphones || port == .airPlay || port == .carAudio
-            }
-            if hasExternalRoute {
-                try? session.overrideOutputAudioPort(.none)
-            } else {
-                try? session.overrideOutputAudioPort(.speaker)
-            }
+            // 交由 iOS 系統自動決定外接車機/藍牙或預設揚聲器，不再手動強制覆寫輸出埠
+            try? session.overrideOutputAudioPort(.none)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             print("[NativeSpeechPlayer] ensureOptimalAudioRoute error: \(error)")

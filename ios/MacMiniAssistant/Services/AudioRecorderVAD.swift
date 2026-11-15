@@ -136,23 +136,7 @@ public final class AudioRecorderVAD: NSObject {
 
         stopListening()
 
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
-        )
-        let hasExternalRoute = audioSession.currentRoute.outputs.contains { desc in
-            let port = desc.portType
-            return port == .bluetoothHFP || port == .bluetoothA2DP || port == .bluetoothLE
-                || port == .headphones || port == .airPlay || port == .carAudio
-        }
-        if hasExternalRoute {
-            try? audioSession.overrideOutputAudioPort(.none)
-        } else {
-            try? audioSession.overrideOutputAudioPort(.speaker)
-        }
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        NativeSpeechPlayer.ensureOptimalAudioRoute()
 
         let inputNode = audioEngine.inputNode
         try? inputNode.setVoiceProcessingEnabled(true)

@@ -29,27 +29,7 @@ struct MacMiniAssistantApp: App {
     }
 
     private func configureAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,
-                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers]
-            )
-            let hasExternalRoute = session.currentRoute.outputs.contains { desc in
-                let port = desc.portType
-                return port == .bluetoothHFP || port == .bluetoothA2DP || port == .bluetoothLE
-                    || port == .headphones || port == .airPlay || port == .carAudio
-            }
-            if hasExternalRoute {
-                try? session.overrideOutputAudioPort(.none)
-            } else {
-                try? session.overrideOutputAudioPort(.speaker)
-            }
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("Failed to configure AVAudioSession category: \(error)")
-        }
+        NativeSpeechPlayer.ensureOptimalAudioRoute()
     }
 
     // MARK: - Deep Link / URL Scheme 處理
