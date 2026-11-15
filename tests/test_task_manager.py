@@ -95,8 +95,8 @@ def test_run_wrapped_task_success_notify_and_sync(tmp_path):
     assert "wrapped success output" in log_file.read_text(encoding="utf-8")
     mock_tg.assert_called_once()
     assert "執行完成" in mock_tg.call_args[0][0]
-    mock_log_interaction.assert_called_once()
     mock_urlopen.assert_called_once()
+    mock_log_interaction.assert_not_called()
     assert hook_marker.read_text(encoding="utf-8") == "0"
 
 

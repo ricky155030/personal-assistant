@@ -940,9 +940,10 @@ def chat_history(
                 if before and ts >= before:
                     continue
                 raw_q = item.get("query", "")
+                clean_q = "" if raw_q.startswith("[背景任務 · ") else _clean_history_query(raw_q)
                 entries.append({
                     "timestamp": ts,
-                    "query": _clean_history_query(raw_q),
+                    "query": clean_q,
                     "reply": item.get("reply", ""),
                     "source": item.get("source") or _infer_history_source(raw_q),
                     "actions": item.get("actions", []),
@@ -964,6 +965,7 @@ async def trigger_memory_sync():
 class InternalMemorySyncRequest(BaseModel):
     summary: str
     source: str = "herdr-coordinator"
+    report_to_user: bool = False
 
 
 @app.post("/api/internal/memory-sync")
@@ -971,17 +973,23 @@ async def internal_memory_sync(
     payload: InternalMemorySyncRequest,
     _authorized: bool = Depends(verify_token),
 ):
-    """背景任務完工後，趁主大腦閒置時靜默注入 3 行摘要；若主大腦忙碌則排入待送佇列"""
+    """背景任務完工後，趁主大腦閒置時靜默注入摘要（或由大腦整理後寫入純助理回報）；忙碌則入列"""
     summary = (payload.summary or "").strip()
     if not summary:
         return {"status": "ignored", "synced": False, "reason": "empty_summary"}
 
     loop = asyncio.get_running_loop()
-    ok, reason = await loop.run_in_executor(None, try_inject_memory_sync, summary, payload.source)
+    ok, reason = await loop.run_in_executor(
+        None,
+        try_inject_memory_sync,
+        summary,
+        payload.source,
+        payload.report_to_user,
+    )
     if ok:
         return {"status": "ok", "synced": True}
     if reason in ("brain_busy", "worker_not_ready"):
-        q_len = enqueue_memory_sync(summary, payload.source)
+        q_len = enqueue_memory_sync(summary, payload.source, report_to_user=payload.report_to_user)
         return {"status": "queued", "synced": False, "reason": reason, "queued_count": q_len}
     return {"status": "skipped", "synced": False, "reason": reason}
 

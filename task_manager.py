@@ -159,24 +159,16 @@ def _sync_task_result_to_memory(
     elapsed_sec: float,
     tail_text: str,
 ) -> None:
-    """寫入 data/history.jsonl 並於主大腦閒置時靜默同步 3 行摘要"""
+    """通知主大腦釐清本次任務內容與結果並寫入純助理回報紀錄；若主大腦離線則降級本地留底"""
     dur_str = _format_duration(elapsed_sec)
     status_str = "逾時終止" if timed_out else ("成功完成" if returncode == 0 else f"失敗 (exit={returncode})")
+    snippet = tail_text[-800:].strip() if tail_text else "無輸出"
     summary = f"背景任務「{name}」（{task_id}）{status_str}，耗時 {dur_str}。"
     if tail_text:
         last_line = tail_text.splitlines()[-1][:220]
         summary += f" 最後輸出：{last_line}"
 
-    try:
-        from memory_manager import memory_manager
-        memory_manager.log_interaction(
-            f"[背景任務 · {name}]",
-            summary,
-            actions=[f"task_manager ({task_id})", f"status={status_str}"],
-        )
-    except Exception as e:
-        print(f"[TaskManager] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
-
+    synced_via_brain = False
     try:
         port = getattr(settings, "PORT", 8899)
         api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
@@ -184,17 +176,33 @@ def _sync_task_result_to_memory(
         memo = (
             f"背景任務：{name}（{task_id}）\n"
             f"執行結果：{status_str}（耗時 {dur_str}）\n"
-            f"摘要輸出：{(tail_text.splitlines()[-1] if tail_text else '無輸出')[:220]}"
+            f"執行輸出節錄：\n{snippet}"
         )
-        req_data = json.dumps({"summary": memo, "source": f"task:{task_id}"}).encode("utf-8")
+        req_data = json.dumps({
+            "summary": memo,
+            "source": f"task:{task_id}",
+            "report_to_user": True,
+        }).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["X-Agent-Key"] = api_key
         req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
+        with urllib.request.urlopen(req, timeout=20.0) as resp:
             resp.read()
+        synced_via_brain = True
     except Exception as e:
-        print(f"[TaskManager] ℹ️ 主大腦靜默記憶同步略過: {e}", file=sys.stderr)
+        print(f"[TaskManager] ℹ️ 主大腦任務回報略過，改為本地留底: {e}", file=sys.stderr)
+
+    if not synced_via_brain:
+        try:
+            from memory_manager import memory_manager
+            memory_manager.log_interaction(
+                "",
+                summary,
+                actions=[f"task_manager ({task_id})", f"status={status_str}"],
+            )
+        except Exception as e:
+            print(f"[TaskManager] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
 
 
 def _run_lifecycle_hook(

@@ -27,19 +27,24 @@ def get_pending_memo_count() -> int:
         return len(_PENDING_MEMOS)
 
 
-def enqueue_memory_sync(summary: str, source: str) -> int:
+def enqueue_memory_sync(summary: str, source: str, report_to_user: bool = False) -> int:
     """將主大腦忙碌時無法即時注入的備忘加入待送佇列，回傳目前佇列長度"""
     with _MEMO_QUEUE_LOCK:
         _PENDING_MEMOS.append({
             "summary": summary,
             "source": source,
+            "report_to_user": report_to_user,
             "queued_at": time.time(),
         })
         return len(_PENDING_MEMOS)
 
 
-def try_inject_memory_sync(summary: str, source: str) -> Tuple[bool, str]:
-    """嘗試趁主大腦閒置時靜默注入備忘；回傳 (是否成功, 狀態碼)"""
+def try_inject_memory_sync(
+    summary: str,
+    source: str,
+    report_to_user: bool = False,
+) -> Tuple[bool, str]:
+    """嘗試趁主大腦閒置時注入備忘；若 report_to_user=True 則由大腦釐清後寫入純助理回報紀錄"""
     from agy_singleton import agy_singleton
 
     worker = agy_singleton.brain_pool.primary_worker
@@ -50,14 +55,35 @@ def try_inject_memory_sync(summary: str, source: str) -> Tuple[bool, str]:
     if not worker._is_ready or worker.proc is None or worker.proc.poll() is not None:
         return False, "worker_not_ready"
 
-    memo_prompt = (
-        f"[系統背景備忘（來源: {source}），請僅回覆「收到」兩字，勿呼叫任何工具]\n"
-        f"{summary}"
-    )
+    if report_to_user:
+        memo_prompt = (
+            f"[系統背景任務回報（來源: {source}），請勿呼叫任何工具]\n"
+            f"請根據對話上下文與以下執行紀錄，用 1~3 句簡明自然的繁體中文直接向主人回報"
+            f"「這次任務具體做了什麼、最終結果如何、有無需要注意的重點」：\n{summary}"
+        )
+    else:
+        memo_prompt = (
+            f"[系統背景備忘（來源: {source}），請僅回覆「收到」兩字，勿呼叫任何工具]\n"
+            f"{summary}"
+        )
+
     gen = worker.send_query_stream(memo_prompt, target_model=None)
+    reply_parts = []
     try:
-        for _ in gen:
-            pass
+        for kind, chunk in gen:
+            if kind == "text" and chunk:
+                reply_parts.append(chunk)
+        if report_to_user:
+            report_text = "".join(reply_parts).strip() or summary
+            try:
+                from memory_manager import memory_manager
+                memory_manager.log_interaction(
+                    "",
+                    report_text,
+                    actions=[f"task_report ({source})"],
+                )
+            except Exception as log_ex:
+                print(f"[TaskSupervisor] 寫入任務回報紀錄失敗: {log_ex}")
         return True, "ok"
     except Exception as ex:
         print(f"[TaskSupervisor] memory-sync 注入失敗: {ex}")
@@ -78,7 +104,11 @@ def flush_memory_sync_queue() -> int:
                 break
             item = _PENDING_MEMOS[0]
 
-        ok, reason = try_inject_memory_sync(item["summary"], item["source"])
+        ok, reason = try_inject_memory_sync(
+            item["summary"],
+            item["source"],
+            report_to_user=bool(item.get("report_to_user", False)),
+        )
         if ok:
             with _MEMO_QUEUE_LOCK:
                 if _PENDING_MEMOS and _PENDING_MEMOS[0] is item:
