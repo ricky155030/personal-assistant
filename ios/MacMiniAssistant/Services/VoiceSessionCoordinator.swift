@@ -913,7 +913,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     thoughtProcess: oldAst?.thoughtProcess ?? "",
                     quickReplies: oldAst?.quickReplies ?? [],
                     reportUrl: oldAst?.reportUrl,
-                    metadata: item.metadata ?? oldAst?.metadata
+                    metadata: item.metadata ?? oldAst?.metadata,
+                    source: item.source ?? oldAst?.source
                 ))
             }
 
@@ -930,10 +931,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     public func syncRemoteHistory(limit: Int = 40) async {
-        // 初次升級至伺服器為準架構時，自動以 Mac mini 最新紀錄重建乾淨時間軸（清理舊版殘留重複）
-        if !UserDefaults.standard.bool(forKey: "macmini_timeline_v2_rebuilt") {
+        // 初次升級至伺服器為準架構（或補充背景回報來源標記）時，自動以 Mac mini 最新紀錄重建乾淨時間軸
+        if !UserDefaults.standard.bool(forKey: "macmini_timeline_v2_rebuilt") ||
+           !UserDefaults.standard.bool(forKey: "macmini_timeline_v3_source_backfill") {
             await rebuildTimelineFromServer(limit: limit)
             UserDefaults.standard.set(true, forKey: "macmini_timeline_v2_rebuilt")
+            UserDefaults.standard.set(true, forKey: "macmini_timeline_v3_source_backfill")
             return
         }
 
@@ -958,9 +961,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
                let existingIdx = messages.lastIndex(where: {
                    $0.role == .assistant && normalizeForDedup($0.content) == normR
                }) {
-                // 若本地訊息尚未補上後端 metadata，順便補齊
+                // 若本地訊息尚未補上後端 metadata 或 source，順便補齊
                 if messages[existingIdx].metadata == nil, let meta = item.metadata {
                     messages[existingIdx].metadata = meta
+                    changed = true
+                }
+                if messages[existingIdx].source == nil, let src = item.source {
+                    messages[existingIdx].source = src
                     changed = true
                 }
                 if !item.timestamp.isEmpty {
@@ -988,7 +995,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 changed = true
             }
             if !rText.isEmpty {
-                messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed, metadata: item.metadata))
+                messages.append(ChatMessage(role: .assistant, content: rText, timestamp: parsedDate, status: .completed, metadata: item.metadata, source: item.source))
                 changed = true
             }
 

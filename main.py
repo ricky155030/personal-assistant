@@ -904,7 +904,11 @@ def _clean_history_query(raw_query: str) -> str:
     return q
 
 
-def _infer_history_source(raw_query: str) -> str:
+def _infer_history_source(raw_query: str, actions: Optional[List[str]] = None) -> str:
+    if raw_query.startswith("[背景任務 · ") or any(
+        str(a).startswith("task_report") for a in (actions or [])
+    ):
+        return "background_report"
     if "[來源管道: iOS" in raw_query:
         return "ios"
     if "[來源管道: Apple Watch" in raw_query:
@@ -945,7 +949,7 @@ def chat_history(
                     "timestamp": ts,
                     "query": clean_q,
                     "reply": item.get("reply", ""),
-                    "source": item.get("source") or _infer_history_source(raw_q),
+                    "source": item.get("source") or _infer_history_source(raw_q, item.get("actions")),
                     "actions": item.get("actions", []),
                     "metadata": item.get("metadata"),
                 })

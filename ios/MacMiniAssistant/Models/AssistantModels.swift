@@ -272,6 +272,11 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public var attachedImageData: Data?
     public var attachedImagesData: [Data]?
     public var metadata: TurnMetadata?
+    public var source: String?
+
+    public var isBackgroundReport: Bool {
+        source == "background_report"
+    }
 
     public init(
         id: UUID = UUID(),
@@ -285,7 +290,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         reportUrl: String? = nil,
         attachedImageData: Data? = nil,
         attachedImagesData: [Data]? = nil,
-        metadata: TurnMetadata? = nil
+        metadata: TurnMetadata? = nil,
+        source: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -299,10 +305,11 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.attachedImageData = attachedImageData ?? attachedImagesData?.first
         self.attachedImagesData = attachedImagesData ?? (attachedImageData != nil ? [attachedImageData!] : nil)
         self.metadata = metadata
+        self.source = source
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData, metadata
+        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData, metadata, source
     }
 
     public init(from decoder: Decoder) throws {
@@ -319,6 +326,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.attachedImageData = try container.decodeIfPresent(Data.self, forKey: .attachedImageData)
         self.attachedImagesData = try container.decodeIfPresent([Data].self, forKey: .attachedImagesData)
         self.metadata = try container.decodeIfPresent(TurnMetadata.self, forKey: .metadata)
+        self.source = try container.decodeIfPresent(String.self, forKey: .source)
     }
 }
 

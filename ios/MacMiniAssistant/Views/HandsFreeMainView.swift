@@ -1645,6 +1645,23 @@ struct GeminiMessageRow: View {
                         isAnimating: message.status == .streaming || isCurrentlySpeaking
                     )
 
+                    if message.isBackgroundReport {
+                        HStack(spacing: 4) {
+                            Image(systemName: "bell.badge.fill")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text("背景回報")
+                                .font(.system(size: 11.5, weight: .semibold))
+                        }
+                        .foregroundColor(Color(red: 0.48, green: 0.80, blue: 1.0))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.blue.opacity(0.18))
+                        .overlay(
+                            Capsule().stroke(Color.blue.opacity(0.36), lineWidth: 0.8)
+                        )
+                        .clipShape(Capsule())
+                    }
+
                     if message.status == .streaming && message.content.isEmpty && message.toolHistory.isEmpty && !hasThoughts {
                         Text("正在思考...")
                             .font(.system(size: 14, weight: .medium))
@@ -1862,6 +1879,24 @@ struct GeminiMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, message.isBackgroundReport ? 14 : 0)
+            .padding(.vertical, message.isBackgroundReport ? 12 : 0)
+            .background(
+                Group {
+                    if message.isBackgroundReport {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color(red: 0.09, green: 0.14, blue: 0.22).opacity(0.88))
+                    }
+                }
+            )
+            .overlay(
+                Group {
+                    if message.isBackgroundReport {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.blue.opacity(0.28), lineWidth: 1)
+                    }
+                }
+            )
         }
     }
 }
