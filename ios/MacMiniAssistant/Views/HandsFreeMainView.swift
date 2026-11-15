@@ -1921,6 +1921,8 @@ struct GeminiMessageRow: View {
 struct QuotaDetailSheetView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
     @Environment(\.dismiss) private var dismiss
+    @State private var trackedTasks: MacMiniAPIClient.TrackedTasksResponse? = nil
+    @State private var selectedTaskForLog: MacMiniAPIClient.TrackedTaskItem? = nil
 
     private var snap: QuotaSnapshot {
         coordinator.quotaSnapshot ?? QuotaSnapshot()
@@ -2009,6 +2011,15 @@ struct QuotaDetailSheetView: View {
                     .bold()
                 }
             }
+            .task {
+                trackedTasks = await coordinator.apiClient.fetchTrackedTasks()
+            }
+            .sheet(item: $selectedTaskForLog) { task in
+                TaskLogViewerSheet(task: task, coordinator: coordinator) {
+                    selectedTaskForLog = nil
+                    dismiss()
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -2076,30 +2087,39 @@ struct QuotaDetailSheetView: View {
     }
 
     private var backgroundTasksCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let runningItems = trackedTasks?.running ?? []
+        let failedItems = trackedTasks?.failed ?? []
+        let activeCount = max(snap.activeTaskCount, runningItems.count)
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("子代理 / 背景常駐任務", systemImage: "gearshape.2.fill")
+                Label("背景任務追蹤 (進行中 / 失敗)", systemImage: "gearshape.2.fill")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                 Spacer()
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(snap.activeTaskCount > 0 ? Color.green : Color.gray)
+                        .fill(activeCount > 0 ? Color.green : Color.gray)
                         .frame(width: 8, height: 8)
-                    Text("\(snap.activeTaskCount) 個執行中")
+                    Text("\(activeCount) 執行中")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(snap.activeTaskCount > 0 ? .green : .secondary)
+                        .foregroundColor(activeCount > 0 ? .green : .secondary)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(snap.activeTaskCount > 0 ? Color.green.opacity(0.15) : Color.white.opacity(0.05))
+                .background(activeCount > 0 ? Color.green.opacity(0.15) : Color.white.opacity(0.05))
                 .cornerRadius(6)
             }
 
-            if !snap.activeTaskNames.isEmpty {
-                Divider()
-                    .background(Color.white.opacity(0.08))
-
+            if !runningItems.isEmpty {
+                Divider().background(Color.white.opacity(0.08))
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(runningItems) { item in
+                        trackedTaskRow(item: item, isError: false)
+                    }
+                }
+            } else if !snap.activeTaskNames.isEmpty {
+                Divider().background(Color.white.opacity(0.08))
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(snap.activeTaskNames, id: \.self) { name in
                         HStack(spacing: 7) {
@@ -2114,16 +2134,61 @@ struct QuotaDetailSheetView: View {
                     }
                 }
             } else {
-                Text("目前無背景監控或長任務運行中")
+                Text("目前無執行中的背景任務")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            if !failedItems.isEmpty {
+                Divider().background(Color.white.opacity(0.08))
+                Text("近期失敗 / 異常紀錄（點擊查看日誌）")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(failedItems.prefix(15)) { item in
+                        trackedTaskRow(item: item, isError: true)
+                    }
+                }
             }
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
         )
+    }
+
+    private func trackedTaskRow(item: MacMiniAPIClient.TrackedTaskItem, isError: Bool) -> some View {
+        Button(action: {
+            selectedTaskForLog = item
+        }) {
+            HStack(spacing: 8) {
+                Image(systemName: isError ? "exclamationmark.triangle.fill" : "circle.fill")
+                    .font(.system(size: isError ? 11 : 7))
+                    .foregroundColor(isError ? .red : .green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text("\(item.status) · \(item.started_at ?? item.task_id)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var contextMemoryCard: some View {
@@ -2295,5 +2360,164 @@ struct ContextPieFillShape: Shape {
         )
         path.closeSubpath()
         return path
+    }
+}
+
+struct TaskLogViewerSheet: View {
+    let task: MacMiniAPIClient.TrackedTaskItem
+    @ObservedObject var coordinator: VoiceSessionCoordinator
+    let onAttachAndClose: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var logResp: MacMiniAPIClient.TaskLogResponse? = nil
+    @State private var isLoading = true
+    @State private var errorsOnly = false
+    @State private var wrapLines = true
+    @State private var tailCount = 200
+
+    private var displayedLines: [String] {
+        let all = (logResp?.content ?? "").components(separatedBy: "\n")
+        if !errorsOnly { return all }
+        return all.filter { line in
+            let low = line.lowercased()
+            return low.contains("error") || low.contains("fail") || low.contains("exception")
+                || low.contains("traceback") || line.contains("❌") || line.contains("⚠️")
+                || line.contains("🚨")
+        }
+    }
+
+    private func lineColor(_ line: String) -> Color {
+        let low = line.lowercased()
+        if low.contains("error") || low.contains("fail") || low.contains("traceback") || line.contains("❌") || line.contains("🚨") {
+            return Color(red: 1.0, green: 0.45, blue: 0.45)
+        }
+        if low.contains("warn") || line.contains("⚠️") {
+            return .orange
+        }
+        if line.contains("✅") || low.contains("success") || low.contains("healthy") {
+            return Color(red: 0.45, green: 0.90, blue: 0.55)
+        }
+        return Color(white: 0.86)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.05, green: 0.06, blue: 0.09).ignoresSafeArea()
+
+                VStack(spacing: 12) {
+                    // 上層摘要卡
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(task.name)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(task.status)
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundColor(task.status == "RUNNING" ? .green : .red)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background((task.status == "RUNNING" ? Color.green : Color.red).opacity(0.16))
+                                .cornerRadius(6)
+                        }
+                        Text("ID: \(task.task_id)  ·  開始: \(task.started_at ?? "-")")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        if let resp = logResp {
+                            Text("共 \(resp.total_lines) 行 · 顯示最後 \(resp.tail_lines) 行 · \(ByteCountFormatter.string(fromByteCount: Int64(resp.file_size_bytes), countStyle: .file))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+
+                    // 控制列
+                    HStack(spacing: 10) {
+                        Toggle("只看異常", isOn: $errorsOnly)
+                            .toggleStyle(.button)
+                            .font(.caption)
+                            .tint(.orange)
+                        Toggle("自動換行", isOn: $wrapLines)
+                            .toggleStyle(.button)
+                            .font(.caption)
+                            .tint(.cyan)
+                        Spacer()
+                        if logResp?.truncated == true && tailCount < 600 {
+                            Button("載入更多") {
+                                tailCount = 600
+                                Task {
+                                    isLoading = true
+                                    logResp = await coordinator.apiClient.fetchTaskLog(taskId: task.task_id, tail: tailCount)
+                                    isLoading = false
+                                }
+                            }
+                            .font(.caption.bold())
+                            .foregroundColor(.cyan)
+                        }
+                    }
+
+                    // 下層日誌檢視區
+                    if isLoading {
+                        Spacer()
+                        ProgressView("載入日誌中...")
+                        Spacer()
+                    } else if displayedLines.isEmpty {
+                        Spacer()
+                        Text(errorsOnly ? "目前尾段日誌中無異常關鍵字" : "尚無日誌內容")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    } else {
+                        ScrollView(wrapLines ? .vertical : [.vertical, .horizontal]) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(displayedLines.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(lineColor(line))
+                                        .fixedSize(horizontal: !wrapLines, vertical: true)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(0.45)))
+                    }
+
+                    // 底部 CTA：一鍵帶入對話給 AI 分析
+                    Button(action: {
+                        let tailSnippet = displayedLines.suffix(80).joined(separator: "\n")
+                        coordinator.textInput = "請幫我分析背景任務「\(task.name)」（\(task.task_id)，狀態：\(task.status)）的日誌並找出問題：\n\n\(tailSnippet)"
+                        onAttachAndClose()
+                    }) {
+                        Label("帶入對話請 AI 分析", systemImage: "sparkles")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.cyan.opacity(0.85))
+                            .cornerRadius(12)
+                    }
+                    .disabled((logResp?.content ?? "").isEmpty)
+                }
+                .padding(14)
+            }
+            .navigationTitle("任務日誌")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("關閉") { dismiss() }
+                }
+            }
+            .task {
+                isLoading = true
+                logResp = await coordinator.apiClient.fetchTaskLog(taskId: task.task_id, tail: tailCount)
+                isLoading = false
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }

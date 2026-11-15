@@ -719,6 +719,16 @@ class TaskManager:
 
             updated_tasks.append(t)
 
+        # 將異常 / 失敗 / 超時 / 重啟任務歸檔至 failed_tasks.json（保留最近 50 筆供 App 追蹤）
+        abnormal_statuses = {"FAILED", "TTL_EXPIRED", "HEARTBEAT_TIMEOUT", "RESTARTED"}
+        failed_candidates = [
+            t for t in updated_tasks
+            if t.get("status") in abnormal_statuses
+            or (t.get("exit_code") is not None and t.get("exit_code") != 0)
+        ]
+        if failed_candidates:
+            self._record_failed_tasks(failed_candidates)
+
         # 自動修剪 (Pruning)：
         # 1. 所有 RUNNING 任務必定保留
         # 2. 已結束的任務只保留最近 5 筆，過期刪除，防止 json 膨脹
@@ -730,8 +740,8 @@ class TaskManager:
         cleaned_tasks = running_tasks + pruned_finished
         self._save_tasks(cleaned_tasks)
 
-        # 定期清理 3 天前的舊日誌檔案
-        self._clean_old_logs(days=3)
+        # 保留最近 30 天日誌，並對超過 5MB 的單一常駐日誌進行尾部截斷
+        self._clean_old_logs(days=30, max_file_bytes=5 * 1024 * 1024)
 
         if include_finished:
             return cleaned_tasks
@@ -859,13 +869,97 @@ class TaskManager:
             print(f"[TaskManager] 終止進程 {pid} 失敗: {e}", file=sys.stderr)
             return False
 
-    def _clean_old_logs(self, days: int = 3):
-        """清除超過 N 天的舊任務日誌"""
+    def _failed_tasks_path(self) -> Path:
+        return TASKS_JSON_PATH.parent / "failed_tasks.json"
+
+    def _record_failed_tasks(self, items: List[dict], max_keep: int = 50):
+        """將異常結束/失敗/超時/重啟任務寫入 failed_tasks.json，供 App 追蹤"""
+        path = self._failed_tasks_path()
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+        by_id = {str(t.get("task_id", "")): t for t in existing if isinstance(t, dict) and t.get("task_id")}
+        for item in items:
+            tid = str(item.get("task_id", ""))
+            if not tid:
+                continue
+            by_id[tid] = {
+                "task_id": tid,
+                "name": item.get("name", tid),
+                "status": item.get("status", "FAILED"),
+                "started_at": item.get("started_at", ""),
+                "finished_at": item.get("finished_at", ""),
+                "log_file": item.get("log_file", f"data/task_logs/{tid}.log"),
+                "exit_code": item.get("exit_code"),
+            }
+        merged = sorted(by_id.values(), key=lambda x: x.get("started_at", ""), reverse=True)[:max_keep]
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as e:
+            print(f"[TaskManager] 寫入 failed_tasks.json 異常: {e}", file=sys.stderr)
+
+    def list_failed_tasks(self, limit: int = 30) -> List[dict]:
+        """回傳最近失敗/異常任務清單（不含成功任務）"""
+        path = self._failed_tasks_path()
+        try:
+            if not path.exists():
+                return []
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                return []
+            return data[:max(1, limit)]
+        except Exception:
+            return []
+
+    def get_task_log(self, task_id: str, tail_lines: int = 200) -> Dict[str, Any]:
+        """安全讀取指定任務的日誌尾部與檔案中繼資訊"""
+        safe_id = os.path.basename(task_id or "").strip()
+        if not safe_id or safe_id != task_id or ".." in safe_id:
+            return {"exists": False, "error": "invalid_task_id"}
+        log_path = (TASK_LOGS_DIR / f"{safe_id}.log").resolve()
+        if log_path.parent != TASK_LOGS_DIR.resolve() or not log_path.exists():
+            return {"exists": False, "error": "not_found"}
+        try:
+            size_bytes = log_path.stat().st_size
+            raw_text = log_path.read_text(encoding="utf-8", errors="replace")
+            all_lines = raw_text.splitlines()
+            total_lines = len(all_lines)
+            limit = max(10, min(int(tail_lines or 200), 2000))
+            sliced = all_lines[-limit:]
+            return {
+                "exists": True,
+                "task_id": safe_id,
+                "file_size_bytes": size_bytes,
+                "total_lines": total_lines,
+                "tail_lines": len(sliced),
+                "truncated": total_lines > len(sliced),
+                "content": "\n".join(sliced),
+            }
+        except Exception as e:
+            return {"exists": False, "error": str(e)}
+
+    def _clean_old_logs(self, days: int = 30, max_file_bytes: int = 5 * 1024 * 1024):
+        """清除超過 N 天的舊任務日誌，並將超過單檔上限的日誌截斷保留最新尾部"""
         try:
             cutoff = datetime.now() - timedelta(days=days)
+            keep_tail_bytes = max(512 * 1024, max_file_bytes // 2)
             for f in TASK_LOGS_DIR.glob("task_*.log"):
-                if f.stat().st_mtime < cutoff.timestamp():
+                st = f.stat()
+                if st.st_mtime < cutoff.timestamp():
                     f.unlink(missing_ok=True)
+                    continue
+                if max_file_bytes > 0 and st.st_size > max_file_bytes:
+                    with open(f, "rb") as rf:
+                        rf.seek(max(0, st.st_size - keep_tail_bytes))
+                        tail_bytes = rf.read()
+                    nl_idx = tail_bytes.find(b"\n")
+                    if nl_idx != -1:
+                        tail_bytes = tail_bytes[nl_idx + 1:]
+                    f.write_bytes(b"[... log truncated to preserve disk space ...]\n" + tail_bytes)
         except Exception as e:
             print(f"[TaskManager] 清理舊日誌異常: {e}", file=sys.stderr)
 

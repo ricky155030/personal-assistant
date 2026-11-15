@@ -497,6 +497,67 @@ public final class MacMiniAPIClient {
         }
     }
 
+    public struct TrackedTaskItem: Codable, Identifiable, Equatable {
+        public let task_id: String
+        public let name: String
+        public let status: String
+        public let started_at: String?
+        public let finished_at: String?
+        public let exit_code: Int?
+        public var id: String { task_id }
+    }
+
+    public struct TrackedTasksResponse: Codable {
+        public let running: [TrackedTaskItem]
+        public let failed: [TrackedTaskItem]
+    }
+
+    public struct TaskLogResponse: Codable {
+        public let task_id: String
+        public let file_size_bytes: Int
+        public let total_lines: Int
+        public let tail_lines: Int
+        public let truncated: Bool
+        public let content: String
+    }
+
+    public func fetchTrackedTasks() async -> TrackedTasksResponse? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/tasks/tracked") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(TrackedTasksResponse.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    public func fetchTaskLog(taskId: String, tail: Int = 200) async -> TaskLogResponse? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let encoded = taskId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(cleanBase)/api/tasks/\(encoded)/log?tail=\(tail)") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(TaskLogResponse.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
     public func fetchHistoryImageData(filename: String) async -> Data? {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let encoded = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),

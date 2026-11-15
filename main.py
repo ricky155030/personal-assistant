@@ -1200,6 +1200,45 @@ async def receive_ios_share(
     loop.run_in_executor(None, _process_share_payload_sync, prompt, url, text, title)
     return {"status": "accepted", "message": "已交由 Mac mini 背景處理"}
 
+@app.get("/api/tasks/tracked")
+def get_tracked_tasks(_authorized: bool = Depends(verify_token)):
+    """回傳進行中與最近失敗/異常背景任務清單（過濾掉成功的已完成任務）"""
+    from task_manager import task_manager
+    running = task_manager.list_tasks(include_finished=False)
+    failed = task_manager.list_failed_tasks(limit=30)
+    return {
+        "running": [
+            {
+                "task_id": t.get("task_id", ""),
+                "name": t.get("name", ""),
+                "status": t.get("status", "RUNNING"),
+                "started_at": t.get("started_at", ""),
+                "finished_at": t.get("finished_at", ""),
+                "ttl_minutes": t.get("ttl_minutes", 0),
+                "heartbeat_timeout_minutes": t.get("heartbeat_timeout_minutes", 0),
+            }
+            for t in running
+        ],
+        "failed": failed,
+    }
+
+
+@app.get("/api/tasks/{task_id}/log")
+def get_task_log_endpoint(
+    task_id: str,
+    tail: int = 200,
+    _authorized: bool = Depends(verify_token),
+):
+    """安全讀取指定背景任務的日誌尾部內容"""
+    from task_manager import task_manager
+    res = task_manager.get_task_log(task_id, tail_lines=tail)
+    if not res.get("exists"):
+        err = res.get("error", "not_found")
+        code = 400 if err == "invalid_task_id" else 404
+        raise HTTPException(status_code=code, detail=err)
+    return res
+
+
 @app.get("/api/status")
 @app.get("/api/usage")
 @app.get("/api/quota")
