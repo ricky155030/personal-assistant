@@ -15,7 +15,10 @@ import os
 import re
 from typing import Dict, Optional
 
-import edge_tts
+try:
+    import edge_tts
+except ImportError:  # pragma: no cover - optional in minimal CI environments
+    edge_tts = None
 import httpx
 
 DEFAULT_VOICE = "zh-TW-HsiaoChenNeural"
@@ -86,6 +89,8 @@ async def _synthesize_edge_bytes(
     pitch: str = "+0Hz",
 ) -> bytes:
     """使用微軟 Edge-TTS 合成 MP3 音訊位元組"""
+    if edge_tts is None:
+        raise RuntimeError("edge-tts is not installed")
     comm = edge_tts.Communicate(clean_text, voice, rate=rate, pitch=pitch)
     out = io.BytesIO()
     async for chunk in comm.stream():
