@@ -671,11 +671,6 @@ async def voice_chat_stream(
     tts_voice = payload.tts_voice or "zh-TW-HsiaoChenNeural"
     tts_rate = payload.tts_rate or "+0%"
     tts_queue: asyncio.Queue = asyncio.Queue()
-    whole_reply_tts = (
-        os.getenv("TTS_PROVIDER", "edge").strip().lower() == "gemini"
-        and bool(os.getenv("GEMINI_API_KEY", "").strip())
-    )
-    collected_sentences: List[str] = []
 
     async def tts_worker():
         from tts_service import synthesize_to_base64
@@ -785,13 +780,10 @@ async def voice_chat_stream(
                                 event_queue.put_nowait,
                                 {"type": "tts_sentence", "sentence": sent, "seq": seq}
                             )
-                            if whole_reply_tts:
-                                collected_sentences.append(sent)
-                            else:
-                                loop.call_soon_threadsafe(
-                                    tts_queue.put_nowait,
-                                    (seq, sent)
-                                )
+                            loop.call_soon_threadsafe(
+                                tts_queue.put_nowait,
+                                (seq, sent)
+                            )
 
             was_cancelled = cancel_event.is_set() or bool(turn_result.get("cancelled"))
             if was_cancelled:
@@ -808,17 +800,9 @@ async def voice_chat_stream(
                         event_queue.put_nowait,
                         {"type": "tts_sentence", "sentence": sent, "seq": seq}
                     )
-                    if whole_reply_tts:
-                        collected_sentences.append(sent)
-                    else:
-                        loop.call_soon_threadsafe(
-                            tts_queue.put_nowait,
-                            (seq, sent)
-                        )
-                if whole_reply_tts and collected_sentences:
                     loop.call_soon_threadsafe(
                         tts_queue.put_nowait,
-                        (0, " ".join(collected_sentences))
+                        (seq, sent)
                     )
 
             # 通知 tts_queue 已送完所有句子，並等待 TTS 合成排隊完成
@@ -826,7 +810,7 @@ async def voice_chat_stream(
             if not client_disconnected.is_set():
                 try:
                     fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
-                    fut.result(timeout=25.0 if whole_reply_tts else 15.0)
+                    fut.result(timeout=15.0)
                 except Exception as e:
                     print(f"[voice_chat_stream] TTS wait timeout: {e}")
 
