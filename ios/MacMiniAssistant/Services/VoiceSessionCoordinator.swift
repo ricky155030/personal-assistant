@@ -127,6 +127,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     private var activeStreamTask: Task<Void, Never>?
     private var thinkingPulseTask: Task<Void, Never>?
+    private var idleAutoStopTask: Task<Void, Never>?
     private var healthCheckTimer: Timer?
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
     private var activeRemoteTurnId: String? = nil
@@ -261,6 +262,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.silenceElapsed = 0.0
             self.silenceWarned = false
             self.state = .listening(isSpeaking: true, currentDb: self.currentDb)
+            self.resetIdleAutoStopTimer()
             self.selectionHaptic.selectionChanged()
         }
 
@@ -678,6 +680,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         currentStreamingText = ""
         currentToolStatus = nil
         speechPlayer.resetForNewTurn()
+        cancelIdleAutoStopTimer()
         state = .thinkingAndStreaming(toolStatus: nil)
         startThinkingPulseTask()
 
@@ -1208,6 +1211,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             liveTranscript = ""
             try vad.startListening()
             state = .listening(isSpeaking: false, currentDb: -60.0)
+            resetIdleAutoStopTimer()
             errorMessage = nil
         } catch {
             errorMessage = "無法啟動收音: \(error.localizedDescription)"
@@ -1217,6 +1221,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     public func stopSession() {
+        cancelIdleAutoStopTimer()
         stopThinkingPulseTask()
         activeStreamTask?.cancel()
         activeStreamTask = nil
@@ -1382,6 +1387,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         currentStreamingText = ""
         currentToolStatus = nil
         speechPlayer.resetForNewTurn()
+        cancelIdleAutoStopTimer()
         state = .thinkingAndStreaming(toolStatus: nil)
         startThinkingPulseTask()
         if voiceInputMode == .liveContinuous && !vad.isBargeInMonitoring {
@@ -1566,6 +1572,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 speechPlayer.playListeningReadyEarcon()
             }
             state = .listening(isSpeaking: false, currentDb: currentDb)
+            resetIdleAutoStopTimer()
             if vad.isBargeInMonitoring {
                 vad.transitionFromBargeInToNormalListening()
             } else {
@@ -1575,9 +1582,34 @@ public final class VoiceSessionCoordinator: ObservableObject {
             if earconSoundEnabled && shouldSpeakCurrentTurn {
                 speechPlayer.playListeningReadyEarcon()
             }
+            cancelIdleAutoStopTimer()
             vad.stopListening()
             state = .idle
         }
+    }
+
+    private func resetIdleAutoStopTimer() {
+        cancelIdleAutoStopTimer()
+        guard voiceInputMode == .liveContinuous else { return }
+        idleAutoStopTask = Task { [weak self] in
+            // 連續 5 分鐘 (300 秒) 無任何音訊輸入，自動播放結束音並停止語音對話
+            try? await Task.sleep(nanoseconds: 300_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self = self, self.voiceInputMode == .liveContinuous else { return }
+                if case .listening(let isSpeaking, _) = self.state, !isSpeaking {
+                    if self.earconSoundEnabled {
+                        self.speechPlayer.playSessionEndEarcon()
+                    }
+                    self.stopSession()
+                }
+            }
+        }
+    }
+
+    private func cancelIdleAutoStopTimer() {
+        idleAutoStopTask?.cancel()
+        idleAutoStopTask = nil
     }
 
     private func startThinkingPulseTask() {
