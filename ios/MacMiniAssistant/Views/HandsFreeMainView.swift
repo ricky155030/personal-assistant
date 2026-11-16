@@ -132,9 +132,6 @@ struct HandsFreeMainView: View {
                 // 3. 中央主區域：即時對話流
                 conversationScrollSection
 
-                // 3.5. 進行中與排隊佇列管理列
-                queueStatusBar
-
                 // 4. 底部 Gemini 輸入膠囊與 Live 語音控制區
                 bottomInputSection
                     .padding(.horizontal, 16)
@@ -1119,92 +1116,6 @@ struct HandsFreeMainView: View {
         .padding(.horizontal, 16)
     }
 
-    // MARK: - 3.5. 進行中與排隊佇列管理列
-    @ViewBuilder
-    private var queueStatusBar: some View {
-        if coordinator.activeTurnSnapshot != nil || !coordinator.pendingQueue.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                if let active = coordinator.activeTurnSnapshot {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .tint(Color(red: 0.42, green: 0.65, blue: 1.0))
-                        Text("進行中：\(active.query)")
-                            .font(.caption.weight(.medium))
-                            .foregroundColor(.white.opacity(0.92))
-                            .lineLimit(1)
-                        Spacer(minLength: 6)
-                        Button {
-                            coordinator.cancelCurrentTurn()
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "stop.circle.fill")
-                                Text("停止")
-                            }
-                            .font(.caption2.weight(.semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.red.opacity(0.75), in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                if !coordinator.pendingQueue.isEmpty {
-                    HStack {
-                        Text("排隊中 (\(coordinator.pendingQueue.count))")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundColor(.white.opacity(0.6))
-                        Spacer()
-                        if coordinator.pendingQueue.count > 1 {
-                            Button("全部清除") {
-                                coordinator.clearAllPendingQueue()
-                            }
-                            .font(.caption2.weight(.medium))
-                            .foregroundColor(.red.opacity(0.85))
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    ForEach(Array(coordinator.pendingQueue.enumerated()), id: \.element.turn_id) { idx, item in
-                        HStack(spacing: 8) {
-                            Text("#\(idx + 1)")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                                .foregroundColor(Color(red: 0.42, green: 0.65, blue: 1.0))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.08), in: Capsule())
-                            Text(item.query)
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.82))
-                                .lineLimit(1)
-                            Spacer(minLength: 6)
-                            Button {
-                                coordinator.removeQueuedTurn(item.turn_id)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.white.opacity(0.55))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
-
     // MARK: - 4. 底部 Gemini 膠囊輸入列與 Live 狀態控制
     private var bottomInputSection: some View {
         VStack(spacing: 10) {
@@ -1236,6 +1147,7 @@ struct HandsFreeMainView: View {
 
                         ForEach(quickPrompts) { chip in
                             Button(action: {
+                                guard !coordinator.isProcessingOrSpeaking else { return }
                                 haptic.impactOccurred()
                                 isInputFocused = false
                                 coordinator.sendQuickReply(chip.prompt)
@@ -1409,27 +1321,8 @@ struct HandsFreeMainView: View {
                     }
                     .accessibilityLabel("隨身眼睛拍照")
 
-                    if !coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || !coordinator.pendingImagesData.isEmpty
-                        || coordinator.pendingImageData != nil {
-                        // 有文字或已附加照片時：顯示藍色 ↑ 送出按鈕
-                        Button(action: {
-                            haptic.impactOccurred()
-                            isInputFocused = false
-                            coordinator.sendTextMessage()
-                        }) {
-                            Circle()
-                                .fill(Color(red: 0.20, green: 0.45, blue: 0.95))
-                                .frame(width: 44, height: 44)
-                                .overlay(
-                                    Image(systemName: "arrow.up")
-                                        .font(.system(size: 18, weight: .bold))
-                                        .foregroundColor(.white)
-                                )
-                        }
-                        .accessibilityLabel("送出訊息")
-                    } else if coordinator.isProcessingOrSpeaking {
-                        // 思考/工具執行/朗讀中：顯示紅色 ⏹️ 立即中止按鈕 (ACP Real-time Cancel)
+                    if coordinator.isProcessingOrSpeaking {
+                        // 思考/工具執行/朗讀中：優先顯示紅色 ⏹️ 立即中止按鈕，並鎖定每次只能送一筆
                         Button(action: {
                             haptic.impactOccurred()
                             coordinator.cancelCurrentTurn()
@@ -1450,6 +1343,26 @@ struct HandsFreeMainView: View {
                                         .foregroundColor(.white)
                                 )
                         }
+                        .accessibilityLabel("停止進行中任務")
+                    } else if !coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !coordinator.pendingImagesData.isEmpty
+                        || coordinator.pendingImageData != nil {
+                        // 有文字或已附加照片時：顯示藍色 ↑ 送出按鈕
+                        Button(action: {
+                            haptic.impactOccurred()
+                            isInputFocused = false
+                            coordinator.sendTextMessage()
+                        }) {
+                            Circle()
+                                .fill(Color(red: 0.20, green: 0.45, blue: 0.95))
+                                .frame(width: 44, height: 44)
+                                .overlay(
+                                    Image(systemName: "arrow.up")
+                                        .font(.system(size: 18, weight: .bold))
+                                        .foregroundColor(.white)
+                                )
+                        }
+                        .accessibilityLabel("送出訊息")
                     } else {
                         // 按鈕 2：((|)) Gemini Live 即時連續語音對談按鈕
                         Button(action: {

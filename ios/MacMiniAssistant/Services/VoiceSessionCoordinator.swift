@@ -55,8 +55,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var currentDb: Float = -60.0
     @Published public var silenceProgress: Float = 0.0
     @Published public var silenceElapsed: TimeInterval = 0.0
-    @Published public var activeTurnSnapshot: MacMiniAPIClient.ActiveTurnSnapshot? = nil
-    @Published public var pendingQueue: [MacMiniAPIClient.PendingTurnSnapshot] = []
     @Published public var pauseSeconds: Int = {
         let saved = UserDefaults.standard.integer(forKey: "macmini_pause_seconds")
         return saved > 0 ? saved : 2
@@ -480,6 +478,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     /// 點擊快速回覆膠囊 (Quick-Reply Chip) 一鍵送出選項
     public func sendQuickReply(_ option: String) {
+        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
         let trimmed = option.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         selectionHaptic.selectionChanged()
@@ -556,9 +555,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let lvl = effectiveLevel
         Task {
             await apiClient.cancelVoiceChat(level: lvl)
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            await self.refreshQueueStatus()
-            await self.syncRemoteHistory()
         }
 
         if let idx = messages.lastIndex(where: { $0.role == .assistant && $0.status == .streaming }) {
@@ -619,6 +615,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     /// 直接送出鍵盤輸入框的訊息（或單獨送出附加圖片，支援單張與多張）
     public func sendTextMessage() {
+        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
         let trimmed = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageCount = pendingImagesData.count + (pendingImageData != nil && pendingImagesData.isEmpty ? 1 : 0)
         guard !trimmed.isEmpty || imageCount > 0 else { return }
@@ -920,14 +917,16 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     public func rebuildTimelineFromServer(limit: Int = 40) async {
+        // 若當下剛好有背景歷史同步在跑，短暫等待其釋放鎖，確保手動上滑必能重抓
+        for _ in 0..<15 where isSyncingHistory {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
         guard !isSyncingHistory else { return }
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let (items, activeTurn, pending) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: nil)
-        self.activeTurnSnapshot = activeTurn
-        self.pendingQueue = pending
-        guard !items.isEmpty || activeTurn != nil || !pending.isEmpty else { return }
+        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: nil)
+        guard !items.isEmpty || activeTurn != nil else { return }
 
         // 保留本機既有的照片附件與工具/思考軌跡，避免重建時遺失
         let existingSnapshot = messages
@@ -1043,9 +1042,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let (items, activeTurn, pending) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: lastSyncedHistoryTimestamp)
-        self.activeTurnSnapshot = activeTurn
-        self.pendingQueue = pending
+        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: lastSyncedHistoryTimestamp)
         var changed = false
 
         // 若遠端進行中任務已結束（activeTurn == nil 或換了新 turn），先清理舊的進行中佔位狀態避免卡在轉圈
@@ -1444,29 +1441,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
-    public func refreshQueueStatus() async {
-        let status = await apiClient.fetchQueueStatus()
-        self.activeTurnSnapshot = status.activeTurn
-        self.pendingQueue = status.pendingQueue
-    }
-
-    public func removeQueuedTurn(_ turnId: String) {
-        pendingQueue.removeAll { $0.turn_id == turnId }
-        Task {
-            _ = await apiClient.deleteQueuedTurn(turnId: turnId)
-            await self.refreshQueueStatus()
-        }
-    }
-
-    public func clearAllPendingQueue() {
-        pendingQueue.removeAll()
-        Task {
-            _ = await apiClient.clearPendingQueue()
-            await self.refreshQueueStatus()
-        }
-    }
-
     private func processTranscript(_ text: String) {
+        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
+
         let attachedImg = pendingImageData
         let attachedMulti = pendingImagesData
         pendingImageData = nil
@@ -1482,64 +1459,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let fullQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let speakThisTurn = shouldSpeakCurrentTurn
         let clientTag = speakThisTurn ? "ios-voice" : "telegram"
-
-        // 若目前已有一個 Turn 正在串流執行，不中斷它，改為立即樂觀加入排隊清單並送入後端佇列
-        if activeStreamTask != nil {
-            let localTempId = "local_\(UUID().uuidString.prefix(8))"
-            let nowIso = ISO8601DateFormatter().string(from: Date())
-            pendingQueue.append(
-                MacMiniAPIClient.PendingTurnSnapshot(
-                    turn_id: localTempId,
-                    timestamp: nowIso,
-                    query: fullQuery,
-                    status: "queued"
-                )
-            )
-            let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
-            let lvl = effectiveLevel
-            let imgsData = effectiveImagesData
-            Task {
-                let imagesBase64 = await Task.detached(priority: .userInitiated) {
-                    imgsData.map { $0.base64EncodedString() }
-                }.value
-                let stream = apiClient.streamVoiceChat(
-                    query: queryWithConstraint,
-                    client: clientTag,
-                    level: lvl,
-                    imageBase64: imagesBase64.first,
-                    imagesBase64: imagesBase64
-                )
-                var resolvedTurnId = localTempId
-                do {
-                    for try await ev in stream {
-                        if Task.isCancelled { break }
-                        if case .queued(let serverTurnId, _) = ev, !serverTurnId.isEmpty {
-                            resolvedTurnId = serverTurnId
-                            await MainActor.run {
-                                if let idx = self.pendingQueue.firstIndex(where: { $0.turn_id == localTempId }) {
-                                    self.pendingQueue[idx] = MacMiniAPIClient.PendingTurnSnapshot(
-                                        turn_id: serverTurnId,
-                                        timestamp: nowIso,
-                                        query: fullQuery,
-                                        status: "queued"
-                                    )
-                                } else {
-                                    Task { await self.refreshQueueStatus() }
-                                }
-                            }
-                        } else if case .cancelled = ev {
-                            break
-                        }
-                    }
-                } catch {}
-                await MainActor.run {
-                    self.pendingQueue.removeAll { $0.turn_id == localTempId || $0.turn_id == resolvedTurnId }
-                }
-                await self.refreshQueueStatus()
-                await self.syncRemoteHistory()
-            }
-            return
-        }
 
         let userMessage = ChatMessage(
             role: .user,
@@ -1557,19 +1476,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
         startThinkingPulseTask()
         if voiceInputMode == .liveContinuous && !vad.isBargeInMonitoring {
             vad.startBargeInMonitoring()
-        }
-
-        // 樂觀顯示「進行中」狀態列，讓使用者隨時可一鍵停止
-        if activeTurnSnapshot == nil {
-            activeTurnSnapshot = MacMiniAPIClient.ActiveTurnSnapshot(
-                turn_id: "pending_active",
-                timestamp: ISO8601DateFormatter().string(from: Date()),
-                query: fullQuery,
-                thought: "",
-                tools: [],
-                reply: "",
-                status: "thinking"
-            )
         }
 
         // 若為 🎙️ 單次語音輸入，送出後即可退回一般模式（回覆完不重開麥克風）
@@ -1595,8 +1501,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     if self.voiceInputMode != .liveContinuous {
                         self.speechPlayer.stopBackgroundKeepAlive()
                     }
-                    await self.refreshQueueStatus()
-                    await self.syncRemoteHistory()
                 }
             }
             let imagesBase64 = await Task.detached(priority: .userInitiated) {
@@ -1631,7 +1535,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     private func handleSSEEvent(_ event: SSEEvent, assistantMessageId: UUID, speakThisTurn: Bool) {
         switch event {
         case .queued, .cancelled:
-            Task { await self.refreshQueueStatus() }
+            break
 
         case .thoughtDelta(let delta):
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
