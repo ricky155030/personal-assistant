@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from config import settings
 from agent import personal_agent
 from memory_manager import memory_manager
-from brain_engine import brain_router as agy_singleton
+from brain_engine import brain_router
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 from fast_intent import try_fast_intent
 from task_queue import task_queue
@@ -153,10 +153,10 @@ app.add_middleware(
 async def startup_event():
     """服務啟動時預熱啟動 agy 守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
     if settings.AGENT_ENGINE == "agy":
-        agy_singleton.start()
+        brain_router.start()
     def _warm_omp_resident() -> None:
         try:
-            agy_singleton.get_engine("omp").start()
+            brain_router.get_engine("omp").start()
         except Exception as ex:
             print(f"[Boot] ⚠️ omp 常駐預熱失敗（將於首次使用時啟動）: {ex}")
     asyncio.create_task(asyncio.to_thread(_warm_omp_resident))
@@ -529,7 +529,7 @@ def cancel_voice_chat(
         if clear_queue or cancelled_turn_id is None:
             for ev in list(_ACTIVE_VOICE_CANCEL_EVENTS):
                 ev.set()
-    acp_res = agy_singleton.cancel_active_turns(level=level)
+    acp_res = brain_router.cancel_active_turns(level=level)
     print(f"[cancel_voice_chat] 🛑 收到取消請求 (turn={cancelled_turn_id}, cleared_queue={cleared_count}, active_streams={active_count}, acp_cancelled={acp_res})")
     return {
         "status": "cancelled",
@@ -558,7 +558,7 @@ def delete_voice_chat_queue_item(
     """從排隊佇列移除尚未執行的訊息，或中斷指定進行中任務"""
     res = _TURN_QUEUE.remove_turn(turn_id)
     if res == "cancelling_active":
-        acp_res = agy_singleton.cancel_active_turns()
+        acp_res = brain_router.cancel_active_turns()
         return {"status": res, "turn_id": turn_id, "acp": acp_res}
     if res == "removed_queued":
         return {"status": res, "turn_id": turn_id}
@@ -767,7 +767,7 @@ async def voice_chat_stream(
             )
             while True:
                 if cancel_event.is_set():
-                    agy_singleton.cancel_active_turns(level=level)
+                    brain_router.cancel_active_turns(level=level)
                     break
                 try:
                     ev_type, ev_data = next(gen)
@@ -776,7 +776,7 @@ async def voice_chat_stream(
                     break
 
                 if cancel_event.is_set():
-                    agy_singleton.cancel_active_turns(level=level)
+                    brain_router.cancel_active_turns(level=level)
                     break
 
                 if ev_type == "thought":
@@ -1248,7 +1248,7 @@ def _process_share_payload_sync(
             activated = _TURN_QUEUE.wait_until_active_or_cancelled(share_turn_id, share_cancel_ev)
             if not activated:
                 return
-        clean_reply, actions, _, _ = agy_singleton.send_query(full_prompt, media=media)
+        clean_reply, actions, _, _ = brain_router.send_query(full_prompt, media=media)
     except Exception as ex:
         clean_reply = f"分享內容處理失敗：{ex}"
         actions = ["share_extension_error"]
@@ -1394,9 +1394,9 @@ def get_task_log_endpoint(
 def get_usage(refresh: bool = False):
     """查看 Gemini 5h / 7days 與 3P 模型的即時額度配額 (預設使用 30s 快取，傳入 ?refresh=true 強制即時重抓)"""
     from quota_service import quota_service
-    stat = agy_singleton.get_status()
+    stat = brain_router.get_status()
     quota_data = quota_service.get_quota_summary(force_refresh=refresh)
-    brain_catalog = agy_singleton.get_catalog()
+    brain_catalog = brain_router.get_catalog()
     return {
         "status": "ok",
         "quota": quota_data,
@@ -1415,7 +1415,7 @@ class BrainSelectRequest(BaseModel):
 @app.get("/api/brain/options")
 def get_brain_options(_authorized: bool = Depends(verify_token)):
     """取得所有可用主腦引擎（agy / omp）、各引擎精選模型白名單與是否支援額度查詢"""
-    return agy_singleton.get_catalog()
+    return brain_router.get_catalog()
 
 
 @app.post("/api/brain/select")
@@ -1425,7 +1425,7 @@ def select_brain_engine(
 ):
     """切換目前使用的主腦引擎與指定模型"""
     try:
-        catalog = agy_singleton.select_engine(payload.engine.strip(), payload.model)
+        catalog = brain_router.select_engine(payload.engine.strip(), payload.model)
         return {"status": "ok", **catalog}
     except ValueError as ex:
         raise HTTPException(status_code=400, detail=str(ex))
@@ -1434,8 +1434,8 @@ def select_brain_engine(
 @app.post("/api/quota/compact")
 def compact_context(_authorized: bool = Depends(verify_token)):
     """觸發 ACP 原生 `/compact` 無損壓縮對話記憶，釋放 Context Window 空間"""
-    res = agy_singleton.compact_session()
-    stat = agy_singleton.get_status()
+    res = brain_router.compact_session()
+    stat = brain_router.get_status()
     return {
         "status": "ok" if res.get("success") else "error",
         "compact": res,

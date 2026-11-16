@@ -15,7 +15,7 @@ from typing import Optional, List, Tuple
 
 from config import settings
 from fast_intent import try_fast_intent
-from brain_engine import brain_router as agy_singleton
+from brain_engine import brain_router
 from quota_service import quota_service
 from turn_queue import shared_turn_queue
 
@@ -685,7 +685,7 @@ def send_formatted_telegram_reply(
         try:
             lvl_norm = "med" if ("med" in level_candidate.lower() or "medium" in level_candidate.lower()) else ("high" if "high" in level_candidate.lower() else "low")
             brain_key = f"{lvl_norm}_brain"
-            stat = agy_singleton.get_status()
+            stat = brain_router.get_status()
             target_brain = stat.get(brain_key, {})
             ctx_pct = target_brain.get("percent")
             if ctx_pct is None or ctx_pct == 0:
@@ -1417,7 +1417,7 @@ async def process_telegram_request(
                 if not activated:
                     return "", {"cancelled": True}, card
 
-            stream_gen = agy_singleton.send_query_stream(
+            stream_gen = brain_router.send_query_stream(
                 effective_query,
                 media=media_list if media_list else None,
                 level=tg_level,
@@ -1425,7 +1425,7 @@ async def process_telegram_request(
             )
             while True:
                 if cancel_event.is_set():
-                    agy_singleton.cancel_active_turns(level=tg_level)
+                    brain_router.cancel_active_turns(level=tg_level)
                     turn_result = {"cancelled": True}
                     break
                 item = next(stream_gen)
@@ -1592,7 +1592,7 @@ async def start_telegram_bot():
 
                         if cb_data == "cancel_active_turn":
                             shared_turn_queue.cancel_active()
-                            res = agy_singleton.cancel_active_turns()
+                            res = brain_router.cancel_active_turns()
                             toast_text = "🛑 已中止回應" if res.get("cancelled") else "ℹ️ 當前無進行中的回應"
                             try:
                                 await client.post(
@@ -1778,19 +1778,19 @@ async def start_telegram_bot():
 
                     # 系統狀態與配額整合指令：/status, /usage, /quota, /context, 狀態, 用量, 額度, 配額
                     if user_text.lower() in ("/status", "/usage", "/quota", "/context", "狀態", "用量", "額度", "配額"):
-                        stat = agy_singleton.get_status()
+                        stat = brain_router.get_status()
                         status_msg = quota_service.format_telegram_message(context_status=stat)
                         await send_telegram_message(status_msg, chat_id=chat_id)
                         continue
 
                     if user_text.lower() in ("/restart", "/reset", "重啟", "重置"):
-                        agy_singleton.trigger_restart_with_notification("主人手動指令觸發")
+                        brain_router.trigger_restart_with_notification("主人手動指令觸發")
                         continue
 
                     if user_text.lower() in ("/compact", "壓縮記憶", "壓縮上下文", "精簡記憶"):
                         await send_telegram_message("🧹 正在執行 ACP 原生 <code>/compact</code> 無損壓縮對話記憶...", chat_id=chat_id)
                         loop = asyncio.get_running_loop()
-                        res = await loop.run_in_executor(None, agy_singleton.compact_session)
+                        res = await loop.run_in_executor(None, brain_router.compact_session)
                         if res.get("success"):
                             b_tok = res.get("before_tokens", 0)
                             a_tok = res.get("after_tokens", 0)
@@ -1892,7 +1892,7 @@ async def start_telegram_bot():
 
                     if user_text.lower() in ("/cancel", "/stop", "停", "停止", "取消", "不用了", "等一下"):
                         shared_turn_queue.cancel_active()
-                        res = agy_singleton.cancel_active_turns()
+                        res = brain_router.cancel_active_turns()
                         if res.get("cancelled"):
                             print(f"[TelegramService] 🛑 已透過文字指令 '{user_text}' 中止進行中的 Turn: {res}")
                         else:
