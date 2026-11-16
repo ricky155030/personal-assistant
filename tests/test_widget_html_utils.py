@@ -1,3 +1,7 @@
+import json
+from datetime import datetime
+
+from fast_intent import format_coupang_fast_reply, try_fast_intent
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 
 
@@ -48,3 +52,52 @@ def test_stream_filter_preserves_normal_angle_brackets():
     flt = WidgetHtmlStreamFilter()
     out = "".join(flt.feed(ch) for ch in full) + flt.flush()
     assert out == full
+
+
+def test_format_coupang_fast_reply_builds_fixed_widget(tmp_path):
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state_file = tmp_path / "coupang_state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "last_checked_at": now_str,
+                "last_cart_sync_at": now_str,
+                "total_checks": 42,
+                "cart_baselines": {
+                    "MacBook Air <M5>": {
+                        "title": "MacBook Air <M5>",
+                        "option": "午夜色",
+                        "last_price": 50000,
+                        "wave_high_24h": 51000,
+                        "last_seen": now_str,
+                    },
+                    "濕巾": {
+                        "title": "濕巾",
+                        "option": "18包",
+                        "last_price": 600,
+                        "wave_high_24h": 600,
+                        "last_seen": now_str,
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    reply = format_coupang_fast_reply(state_path=state_file)
+    assert reply is not None
+    spoken, widget = extract_widget_html(reply)
+    assert "2 項商品在線盯價" in spoken
+    assert "降了 1,000 元來到 50,000 元" in spoken
+    assert widget is not None
+    assert "MacBook Air &lt;M5&gt;" in widget
+    assert "$50,000" in widget
+    assert "$600" in widget
+
+
+def test_try_fast_intent_strips_length_constraint_prefix(monkeypatch):
+    monkeypatch.setattr("fast_intent.format_coupang_fast_reply", lambda: "OK<widget_html><div>x</div></widget_html>")
+    q = "【回覆長度約束：細節模式】以結構化條理分明方式回覆\n\n查詢酷澎最新追蹤價格與狀態"
+    assert try_fast_intent(q) == "OK<widget_html><div>x</div></widget_html>"
+

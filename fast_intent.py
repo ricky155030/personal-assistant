@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import json
+import html
 import time
 import urllib.request
 import urllib.error
@@ -83,13 +84,148 @@ def get_ha_state(entity_id: str) -> Optional[dict]:
         print(f"[FastIntent] HA get_state failed: {e}")
         return None
 
+_COUPANG_TRIGGERS = {
+    "查詢酷澎最新追蹤價格與狀態",
+    "查詢酷澎最新價格",
+    "酷澎盯價",
+    "酷澎價格",
+    "酷澎最新狀態",
+    "查酷澎最新狀態",
+    "酷澎巡檢狀況",
+}
+
+
+def format_coupang_fast_reply(state_path: Optional[Path] = None) -> Optional[str]:
+    """零 LLM Token 組裝酷澎購物車固定格式 HTML 卡片與語音摘要。"""
+    path = state_path or (BASE_DIR / "data" / "coupang_monitor_state.json")
+    if not path.exists():
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    cart_baselines = state.get("cart_baselines") or {}
+    if not cart_baselines:
+        return "目前酷澎購物車尚未建立追蹤清單。"
+
+    now_dt = datetime.now()
+    dropped_items = []
+    steady_items = []
+
+    for key, info in cart_baselines.items():
+        opt = info.get("option", "")
+        if "保留清單" in key or "保留清單" in opt:
+            continue
+        last_seen_str = info.get("last_seen")
+        is_fresh = False
+        if last_seen_str:
+            try:
+                last_seen_dt = datetime.strptime(last_seen_str, "%Y-%m-%d %H:%M:%S")
+                if (now_dt - last_seen_dt).total_seconds() <= 3600:
+                    is_fresh = True
+            except Exception:
+                pass
+        if not is_fresh:
+            continue
+
+        price = int(info.get("last_price") or 0)
+        wave_high = int(info.get("wave_high_24h") or price)
+        diff = price - wave_high
+        item = {
+            "title": str(info.get("title") or key),
+            "option": str(opt),
+            "price": price,
+            "wave_high": wave_high,
+            "diff": diff,
+        }
+        if diff < 0 and wave_high > 0:
+            dropped_items.append(item)
+        else:
+            steady_items.append(item)
+
+    total_active = len(dropped_items) + len(steady_items)
+    if total_active == 0:
+        return "目前酷澎購物車沒有一小時內同步的在線商品。"
+
+    dropped_items.sort(key=lambda x: x["diff"])
+    sync_raw = str(state.get("last_cart_sync_at") or state.get("last_checked_at") or "")
+    sync_hhmm = sync_raw[11:16] if len(sync_raw) >= 16 else "剛剛"
+    total_checks = int(state.get("total_checks") or 0)
+
+    if dropped_items:
+        highlights = "、".join(
+            f"{it['title'][:18]} 降了 {abs(it['diff']):,} 元來到 {it['price']:,} 元"
+            for it in dropped_items[:2]
+        )
+        spoken = f"酷澎目前共有 {total_active} 項商品在線盯價（{sync_hhmm} 同步），其中 {highlights}，詳細清單請看下方卡片。"
+    else:
+        spoken = f"酷澎目前共有 {total_active} 項商品在線盯價（{sync_hhmm} 同步），目前皆維持平盤，詳細清單請看下方卡片。"
+
+    drop_cards = []
+    for it in dropped_items:
+        pct = abs(it["diff"]) / it["wave_high"] * 100.0
+        title_esc = html.escape(it["title"])
+        opt_esc = html.escape(it["option"])
+        sub_line = f"{opt_esc} · 24h高 ${it['wave_high']:,}" if opt_esc else f"24h高 ${it['wave_high']:,}"
+        drop_cards.append(
+            "<div style=\"display:flex;justify-content:space-between;align-items:center;padding:6px 8px;"
+            "border-radius:10px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.28);\">"
+            "<div>"
+            f"<div style=\"font-size:13px;font-weight:600;color:#f8fafc;\">{title_esc}</div>"
+            f"<div style=\"font-size:11px;color:#94a3b8;\">{sub_line}</div>"
+            "</div>"
+            "<div style=\"text-align:right;white-space:nowrap;margin-left:8px;\">"
+            f"<div style=\"font-size:14px;font-weight:700;color:#4ade80;\">${it['price']:,}</div>"
+            f"<div style=\"font-size:11px;font-weight:600;color:#4ade80;\">📉 -${abs(it['diff']):,} (-{pct:.1f}%)</div>"
+            "</div></div>"
+        )
+
+    steady_rows = []
+    for it in steady_items:
+        title_esc = html.escape(it["title"])
+        opt_esc = html.escape(it["option"])
+        opt_span = f" <span style=\"color:#64748b;font-size:11px;\">{opt_esc}</span>" if opt_esc else ""
+        steady_rows.append(
+            f"<div style=\"color:#e2e8f0;\">{title_esc}{opt_span}</div>"
+            f"<div style=\"color:#f8fafc;font-weight:600;text-align:right;white-space:nowrap;\">${it['price']:,}</div>"
+        )
+
+    steady_block = ""
+    if steady_rows:
+        steady_block = (
+            "<div style=\"display:grid;grid-template-columns:1fr auto;row-gap:6px;column-gap:8px;padding:4px 2px;font-size:12.5px;\">"
+            + "".join(steady_rows)
+            + "</div>"
+        )
+
+    widget_html = (
+        "<div style=\"display:flex;flex-direction:column;gap:8px;font-family:-apple-system,sans-serif;\">"
+        "<div style=\"display:flex;justify-content:space-between;align-items:center;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.1);\">"
+        "<div style=\"font-size:14px;font-weight:700;color:#f8fafc;\">🛒 酷澎即時價格監控</div>"
+        f"<div style=\"font-size:11px;color:#34d399;background:rgba(52,211,153,0.15);padding:2px 8px;border-radius:999px;font-weight:600;\">{html.escape(sync_hhmm)} 已同步 · {total_checks:,}次</div>"
+        "</div>"
+        + "".join(drop_cards)
+        + steady_block
+        + "</div>"
+    )
+    return f"{spoken}\n\n<widget_html>\n{widget_html}\n</widget_html>"
+
+
 def try_fast_intent(query: str) -> Optional[str]:
     """
     極速意圖攔截器 (Fast-Path Intent Router)
     - 對於常見的開關家電、溫濕度查詢、時間查詢，直接在 0.05 秒內完成動作並產生自然語音回覆
     - 若非明確單一動作，則回傳 None 交給常駐 AI 大腦深度處理
     """
-    clean_q = re.sub(r"[，。！？\s]+", "", query).strip()
+    stripped = re.sub(r"^\s*【回覆長度約束：[^】]*】[^\n]*\s*", "", query)
+    clean_q = re.sub(r"[，。！？\s]+", "", stripped).strip()
+
+    # 0. 酷澎盯價零 Token HTML 卡片快查 (~0.01s)
+    if clean_q in _COUPANG_TRIGGERS:
+        coupang_reply = format_coupang_fast_reply()
+        if coupang_reply:
+            return coupang_reply
     
     # 1. 系統時間/日期秒回 (<0.001s)
     time_reply = get_current_time_intent(clean_q)
