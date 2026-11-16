@@ -1499,7 +1499,7 @@ struct HandsFreeMainView: View {
                         isInputFocused = false
                         showPhotoLibraryPicker = true
                     }) {
-                        Label("從相簿選取圖片（可多選）", systemImage: "photo.on.rectangle")
+                        Label("從相簿選取圖片", systemImage: "photo.on.rectangle")
                     }
 
                     Button(action: {

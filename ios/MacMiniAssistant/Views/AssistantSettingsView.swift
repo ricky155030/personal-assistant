@@ -1,5 +1,4 @@
 import SwiftUI
-import AVFoundation
 
 struct AssistantSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -16,7 +15,6 @@ struct AssistantSettingsView: View {
     @State private var newPromptTitle: String = ""
     @State private var newPromptBody: String = ""
     @State private var newPromptIcon: String = "sparkles"
-    @State private var availableVoices: [AVSpeechSynthesisVoice] = []
 
     var body: some View {
         NavigationStack {
@@ -100,64 +98,6 @@ struct AssistantSettingsView: View {
                     }
                 }
 
-                Section("iPhone 本地備援語音") {
-                    if availableVoices.isEmpty {
-                        Text("系統未偵測到繁體中文語音，將使用預設發音。")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    } else {
-                        ForEach(availableVoices, id: \.identifier) { voice in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(voice.name)
-                                        .font(.body)
-                                    HStack(spacing: 6) {
-                                        Text(qualityLabel(voice.quality))
-                                            .font(.caption2)
-                                            .bold()
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(qualityColor(voice.quality).opacity(0.15))
-                                            .foregroundColor(qualityColor(voice.quality))
-                                            .cornerRadius(4)
-
-                                        Text(voice.language)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-
-                                Spacer()
-
-                                if coordinator.speechPlayer.preferredVoice?.identifier == voice.identifier {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.blue)
-                                        .font(.system(size: 18))
-                                }
-
-                                Button(action: {
-                                    coordinator.speechPlayer.selectAndTestVoice(voice)
-                                }) {
-                                    Image(systemName: "speaker.wave.2.fill")
-                                        .font(.system(size: 16))
-                                        .foregroundColor(.blue)
-                                        .padding(6)
-                                        .background(Color.blue.opacity(0.1))
-                                        .clipShape(Circle())
-                                }
-                                .buttonStyle(BorderlessButtonStyle())
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                coordinator.speechPlayer.selectAndTestVoice(voice)
-                            }
-                        }
-                    }
-
-                    Text("提示：若要使用更擬真的神經網路聲音，可在 iPhone「設定」➔「輔助使用」➔「朗讀內容」➔「聲音」中下載「美佳（高級 / 增強版）」或「Siri」語音。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                }
 
                 Section("語音辨識模式 (STT Recognition)") {
                     ForEach(STTRecognitionMode.allCases) { mode in
@@ -308,14 +248,6 @@ struct AssistantSettingsView: View {
             }
             .navigationTitle("助理設定")
             .navigationBarTitleDisplayMode(.inline)
-            .task {
-                if availableVoices.isEmpty {
-                    let loaded = await Task.detached(priority: .userInitiated) {
-                        NativeSpeechPlayer.getAvailableVoices()
-                    }.value
-                    availableVoices = loaded
-                }
-            }
             .sheet(isPresented: $isAddingSharePrompt) {
                 AddSharePromptSheet(
                     title: $newPromptTitle,
@@ -371,31 +303,6 @@ struct AssistantSettingsView: View {
         }
     }
 
-    private func qualityLabel(_ quality: AVSpeechSynthesisVoiceQuality) -> String {
-        switch quality {
-        case .premium:
-            return "高級 (Premium)"
-        case .enhanced:
-            return "增強 (Enhanced)"
-        case .default:
-            return "標準 (Default)"
-        @unknown default:
-            return "一般"
-        }
-    }
-
-    private func qualityColor(_ quality: AVSpeechSynthesisVoiceQuality) -> Color {
-        switch quality {
-        case .premium:
-            return .purple
-        case .enhanced:
-            return .blue
-        case .default:
-            return .secondary
-        @unknown default:
-            return .secondary
-        }
-    }
 }
 
 private struct AddSharePromptSheet: View {
