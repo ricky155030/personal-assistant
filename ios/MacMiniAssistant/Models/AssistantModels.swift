@@ -655,3 +655,43 @@ public final class QuickPromptStore {
         }
     }
 }
+
+public struct BrainModelOption: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let label: String
+
+    public init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+}
+
+public struct BrainEngineOption: Codable, Equatable, Identifiable, Sendable {
+    public let id: String
+    public let label: String
+    public let supportsQuota: Bool
+    public let selectedModel: String
+    public let models: [BrainModelOption]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case supportsQuota = "supports_quota"
+        case selectedModel = "selected_model"
+        case models
+    }
+}
+
+public struct BrainCatalogResponse: Codable, Equatable, Sendable {
+    public let activeEngine: String
+    public let activeModel: String
+    public let supportsQuota: Bool
+    public let engines: [BrainEngineOption]
+
+    enum CodingKeys: String, CodingKey {
+        case activeEngine = "active_engine"
+        case activeModel = "active_model"
+        case supportsQuota = "supports_quota"
+        case engines
+    }
+}

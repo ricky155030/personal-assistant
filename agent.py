@@ -4,7 +4,7 @@ Personal Agent 核心直通介面 (Direct Passthrough)
 支援依據 client 端點 (homepod / apple-watch) 分流語音輸出長度。
 """
 from typing import Tuple, List, Generator, Optional
-from agy_singleton import agy_singleton
+from brain_engine import brain_router
 from fast_intent import try_fast_intent
 
 class PersonalAgent:
@@ -34,7 +34,7 @@ class PersonalAgent:
         else:
             formatted_query = query
         
-        reply, actions, ttft, total = agy_singleton.send_query(formatted_query, media=media, level=level)
+        reply, actions, ttft, total = brain_router.send_query(formatted_query, media=media, level=level)
         if media and not any("multimodal" in a for a in actions):
             actions.append(f"multimodal: {len(media)} images" if len(media) > 1 else "multimodal: image")
         return reply, actions
@@ -65,6 +65,6 @@ class PersonalAgent:
         else:
             formatted_query = query
 
-        return (yield from agy_singleton.send_query_stream(formatted_query, media=media, level=level))
+        return (yield from brain_router.send_query_stream(formatted_query, media=media, level=level))
 
 personal_agent = PersonalAgent()

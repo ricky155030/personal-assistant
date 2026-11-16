@@ -591,4 +591,45 @@ public final class MacMiniAPIClient {
             return nil
         }
     }
+
+    public func fetchBrainOptions() async -> BrainCatalogResponse? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/brain/options") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(BrainCatalogResponse.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
+    public func selectBrainEngine(engine: String, model: String? = nil) async -> BrainCatalogResponse? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/brain/select") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        var body: [String: Any] = ["engine": engine]
+        if let model = model, !model.isEmpty {
+            body["model"] = model
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(BrainCatalogResponse.self, from: data)
+        } catch {
+            return nil
+        }
+    }
 }

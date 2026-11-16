@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from config import settings
 from agent import personal_agent
 from memory_manager import memory_manager
-from agy_singleton import agy_singleton
+from brain_engine import brain_router as agy_singleton
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 from fast_intent import try_fast_intent
 from task_queue import task_queue
@@ -1381,12 +1381,39 @@ def get_usage(refresh: bool = False):
     from quota_service import quota_service
     stat = agy_singleton.get_status()
     quota_data = quota_service.get_quota_summary(force_refresh=refresh)
+    brain_catalog = agy_singleton.get_catalog()
     return {
         "status": "ok",
         "quota": quota_data,
         "context": stat,
+        "brain": brain_catalog,
+        "supports_quota": brain_catalog.get("supports_quota", True),
         "background_tasks": quota_data.get("background_tasks", {})
     }
+
+
+class BrainSelectRequest(BaseModel):
+    engine: str
+    model: Optional[str] = None
+
+
+@app.get("/api/brain/options")
+def get_brain_options(_authorized: bool = Depends(verify_token)):
+    """取得所有可用主腦引擎（agy / omp）、各引擎精選模型白名單與是否支援額度查詢"""
+    return agy_singleton.get_catalog()
+
+
+@app.post("/api/brain/select")
+def select_brain_engine(
+    payload: BrainSelectRequest,
+    _authorized: bool = Depends(verify_token)
+):
+    """切換目前使用的主腦引擎與指定模型"""
+    try:
+        catalog = agy_singleton.select_engine(payload.engine.strip(), payload.model)
+        return {"status": "ok", **catalog}
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail=str(ex))
 
 
 @app.post("/api/quota/compact")

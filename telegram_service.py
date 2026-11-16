@@ -15,7 +15,7 @@ from typing import Optional, List, Tuple
 
 from config import settings
 from fast_intent import try_fast_intent
-from agy_singleton import agy_singleton
+from brain_engine import brain_router as agy_singleton
 from quota_service import quota_service
 from turn_queue import shared_turn_queue
 

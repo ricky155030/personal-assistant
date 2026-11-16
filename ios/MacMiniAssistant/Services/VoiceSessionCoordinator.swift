@@ -99,6 +99,17 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var pendingFiles: [PendingUploadFile] = []
     @Published public var pendingLocationLabel: String? = nil
     @Published public var isFetchingLocation: Bool = false
+    @Published public var brainCatalog: BrainCatalogResponse? = nil
+    @Published public var selectedEngineId: String = UserDefaults.standard.string(forKey: "macmini_brain_engine") ?? "agy" {
+        didSet {
+            UserDefaults.standard.set(selectedEngineId, forKey: "macmini_brain_engine")
+        }
+    }
+    @Published public var selectedEngineModelId: String = UserDefaults.standard.string(forKey: "macmini_brain_model") ?? "" {
+        didSet {
+            UserDefaults.standard.set(selectedEngineModelId, forKey: "macmini_brain_model")
+        }
+    }
     private let locationFetcher = OneShotLocationFetcher()
     public var onVisionVoiceFollowUpFinished: ((String) -> Void)? = nil
     public var onVisionVoicePartialTranscript: ((String) -> Void)? = nil
@@ -179,6 +190,57 @@ public final class VoiceSessionCoordinator: ObservableObject {
         startAutoHistoryPolling()
         Task {
             await self.syncRemoteHistory()
+            await self.refreshBrainOptions()
+        }
+    }
+
+    public var currentEngineSupportsQuota: Bool {
+        if let eng = brainCatalog?.engines.first(where: { $0.id == selectedEngineId }) {
+            return eng.supportsQuota
+        }
+        return selectedEngineId == "agy"
+    }
+
+    public var currentEngineDisplayName: String {
+        if selectedEngineId == "agy" {
+            return selectedModelFamily.displayName
+        }
+        if let eng = brainCatalog?.engines.first(where: { $0.id == selectedEngineId }) {
+            if let model = eng.models.first(where: { $0.id == selectedEngineModelId }) ?? eng.models.first {
+                return model.label
+            }
+            return eng.label
+        }
+        return selectedEngineModelId.isEmpty ? "OMP" : selectedEngineModelId
+    }
+
+    public func refreshBrainOptions() async {
+        if let cat = await apiClient.fetchBrainOptions() {
+            self.brainCatalog = cat
+            self.selectedEngineId = cat.activeEngine
+            if !cat.activeModel.isEmpty {
+                self.selectedEngineModelId = cat.activeModel
+            } else if let eng = cat.engines.first(where: { $0.id == cat.activeEngine }) {
+                self.selectedEngineModelId = eng.selectedModel
+            }
+        }
+    }
+
+    public func selectBrainEngine(_ engineId: String, modelId: String? = nil) {
+        self.selectedEngineId = engineId
+        if let m = modelId, !m.isEmpty {
+            self.selectedEngineModelId = m
+        } else if let eng = brainCatalog?.engines.first(where: { $0.id == engineId }) {
+            self.selectedEngineModelId = eng.selectedModel
+        }
+        Task {
+            if let updated = await apiClient.selectBrainEngine(engine: engineId, model: modelId) {
+                self.brainCatalog = updated
+                self.selectedEngineId = updated.activeEngine
+                if !updated.activeModel.isEmpty {
+                    self.selectedEngineModelId = updated.activeModel
+                }
+            }
         }
     }
 

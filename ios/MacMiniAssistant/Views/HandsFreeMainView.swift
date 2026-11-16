@@ -397,7 +397,7 @@ struct HandsFreeMainView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 3) {
-                            Text(coordinator.selectedModelFamily.displayName)
+                            Text(coordinator.currentEngineDisplayName)
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
@@ -469,7 +469,12 @@ struct HandsFreeMainView: View {
     private var usageCapsuleButton: some View {
         let ctx = latestContextUsage
         let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
-        let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+        let quotaText: String = {
+            if !coordinator.currentEngineSupportsQuota {
+                return "∞ 無額度"
+            }
+            return coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+        }()
         let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
 
         return Button(action: {
@@ -628,11 +633,46 @@ struct HandsFreeMainView: View {
 
                 Divider().opacity(0.22).padding(.horizontal, 12).padding(.vertical, 3)
 
+                popoverSectionHeader("主腦引擎切換")
+                let engineList = coordinator.brainCatalog?.engines ?? [
+                    BrainEngineOption(id: "agy", label: "Antigravity (agy)", supportsQuota: true, selectedModel: "hydrogen", models: []),
+                    BrainEngineOption(id: "omp", label: "Oh-My-Pi (omp)", supportsQuota: false, selectedModel: "muse-spark-1.3-contributor", models: [
+                        BrainModelOption(id: "muse-spark-1.3-contributor", label: "Muse Spark 1.3"),
+                        BrainModelOption(id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5")
+                    ])
+                ]
+                ForEach(engineList) { eng in
+                    popoverOptionRow(
+                        title: eng.supportsQuota ? eng.label : "\(eng.label) · 無額度限制",
+                        icon: eng.id == "agy" ? "sparkles" : "cpu",
+                        isSelected: coordinator.selectedEngineId == eng.id
+                    ) {
+                        coordinator.selectBrainEngine(eng.id)
+                    }
+                }
+
+                Divider().opacity(0.25).padding(.vertical, 3)
+
                 popoverSectionHeader("AI 模型選擇")
-                ForEach(ModelFamily.allCases) { fam in
-                    popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
-                        coordinator.selectedModelFamily = fam
-                        showModelPopover = false
+                if coordinator.selectedEngineId == "agy" {
+                    ForEach(ModelFamily.allCases) { fam in
+                        popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
+                            coordinator.selectedModelFamily = fam
+                            coordinator.selectBrainEngine("agy", modelId: fam.rawValue)
+                            showModelPopover = false
+                        }
+                    }
+                } else {
+                    let curModels = engineList.first(where: { $0.id == coordinator.selectedEngineId })?.models ?? []
+                    ForEach(curModels) { m in
+                        popoverOptionRow(
+                            title: m.label,
+                            icon: "cpu.fill",
+                            isSelected: coordinator.selectedEngineModelId == m.id
+                        ) {
+                            coordinator.selectBrainEngine(coordinator.selectedEngineId, modelId: m.id)
+                            showModelPopover = false
+                        }
                     }
                 }
 
@@ -1066,7 +1106,12 @@ struct HandsFreeMainView: View {
         let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
         let ctx = latestContextUsage
         let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
-        let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+        let quotaText: String = {
+            if !coordinator.currentEngineSupportsQuota {
+                return "∞ 無額度"
+            }
+            return coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+        }()
 
         return VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
