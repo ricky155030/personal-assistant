@@ -55,6 +55,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var currentDb: Float = -60.0
     @Published public var silenceProgress: Float = 0.0
     @Published public var silenceElapsed: TimeInterval = 0.0
+    @Published public var activeTurnSnapshot: MacMiniAPIClient.ActiveTurnSnapshot? = nil
+    @Published public var pendingQueue: [MacMiniAPIClient.PendingTurnSnapshot] = []
     @Published public var pauseSeconds: Int = {
         let saved = UserDefaults.standard.integer(forKey: "macmini_pause_seconds")
         return saved > 0 ? saved : 2
@@ -554,6 +556,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let lvl = effectiveLevel
         Task {
             await apiClient.cancelVoiceChat(level: lvl)
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await self.refreshQueueStatus()
+            await self.syncRemoteHistory()
         }
 
         if let idx = messages.lastIndex(where: { $0.role == .assistant && $0.status == .streaming }) {
@@ -919,8 +924,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: nil)
-        guard !items.isEmpty || activeTurn != nil else { return }
+        let (items, activeTurn, pending) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: nil)
+        self.activeTurnSnapshot = activeTurn
+        self.pendingQueue = pending
+        guard !items.isEmpty || activeTurn != nil || !pending.isEmpty else { return }
 
         // 保留本機既有的照片附件與工具/思考軌跡，避免重建時遺失
         let existingSnapshot = messages
@@ -1036,7 +1043,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
         isSyncingHistory = true
         defer { isSyncingHistory = false }
 
-        let (items, activeTurn) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: lastSyncedHistoryTimestamp)
+        let (items, activeTurn, pending) = await apiClient.fetchHistoryWithActiveTurn(limit: limit, since: lastSyncedHistoryTimestamp)
+        self.activeTurnSnapshot = activeTurn
+        self.pendingQueue = pending
         var changed = false
 
         // 若遠端進行中任務已結束（activeTurn == nil 或換了新 turn），先清理舊的進行中佔位狀態避免卡在轉圈
@@ -1431,6 +1440,28 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
+    public func refreshQueueStatus() async {
+        let status = await apiClient.fetchQueueStatus()
+        self.activeTurnSnapshot = status.activeTurn
+        self.pendingQueue = status.pendingQueue
+    }
+
+    public func removeQueuedTurn(_ turnId: String) {
+        pendingQueue.removeAll { $0.turn_id == turnId }
+        Task {
+            _ = await apiClient.deleteQueuedTurn(turnId: turnId)
+            await self.refreshQueueStatus()
+        }
+    }
+
+    public func clearAllPendingQueue() {
+        pendingQueue.removeAll()
+        Task {
+            _ = await apiClient.clearPendingQueue()
+            await self.refreshQueueStatus()
+        }
+    }
+
     private func processTranscript(_ text: String) {
         let attachedImg = pendingImageData
         let attachedMulti = pendingImagesData
@@ -1444,6 +1475,41 @@ public final class VoiceSessionCoordinator: ObservableObject {
             effectiveImagesData = [single]
         }
         let imagesBase64 = effectiveImagesData.map { $0.base64EncodedString() }
+
+        let fullQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let speakThisTurn = shouldSpeakCurrentTurn
+        let clientTag = speakThisTurn ? "ios-voice" : "telegram"
+
+        // 若目前已有一個 Turn 正在串流執行，不中斷它，改為將新訊息送入後端佇列排隊
+        if activeStreamTask != nil {
+            let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
+            let lvl = effectiveLevel
+            Task {
+                let stream = apiClient.streamVoiceChat(
+                    query: queryWithConstraint,
+                    client: clientTag,
+                    level: lvl,
+                    imageBase64: imagesBase64.first,
+                    imagesBase64: imagesBase64
+                )
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    await self.refreshQueueStatus()
+                }
+                do {
+                    for try await _ in stream {
+                        if Task.isCancelled { break }
+                    }
+                } catch {}
+                await MainActor.run {
+                    Task {
+                        await self.refreshQueueStatus()
+                        await self.syncRemoteHistory()
+                    }
+                }
+            }
+            return
+        }
 
         let userMessage = ChatMessage(
             role: .user,
@@ -1471,25 +1537,22 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let assistantMessageId = UUID()
         let assistantMessage = ChatMessage(id: assistantMessageId, role: .assistant, content: "", status: .streaming)
         messages.append(assistantMessage)
-        speakingMessageId = assistantMessageId
+        speakingMessageId = speakThisTurn ? assistantMessageId : nil
         syncCurrentSessionToHistory()
 
-        let fullQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let speakThisTurn = shouldSpeakCurrentTurn
-        let clientTag = speakThisTurn ? "ios-voice" : "telegram"
-        speakingMessageId = speakThisTurn ? assistantMessageId : nil
-
-        activeStreamTask?.cancel()
         beginBackgroundExecutionTask()
         speechPlayer.startBackgroundKeepAlive()
 
         activeStreamTask = Task {
             defer {
                 Task { @MainActor in
+                    self.activeStreamTask = nil
                     self.endBackgroundExecutionTask()
                     if self.voiceInputMode != .liveContinuous {
                         self.speechPlayer.stopBackgroundKeepAlive()
                     }
+                    await self.refreshQueueStatus()
+                    await self.syncRemoteHistory()
                 }
             }
             let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
@@ -1500,6 +1563,11 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 imageBase64: imagesBase64.first,
                 imagesBase64: imagesBase64
             )
+
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await self.refreshQueueStatus()
+            }
 
             do {
                 for try await event in stream {

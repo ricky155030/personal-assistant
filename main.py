@@ -17,6 +17,7 @@ from agy_singleton import agy_singleton
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 from fast_intent import try_fast_intent
 from task_queue import task_queue
+from turn_queue import TurnQueueManager
 from transcribe_service import transcribe_file, warm_transcriber
 from telegram_service import (
     start_telegram_bot,
@@ -470,6 +471,31 @@ _VOICE_CANCEL_LOCK = _threading.Lock()
 class CancelChatRequest(BaseModel):
     level: Optional[str] = None
     reason: Optional[str] = "user_cancelled"
+    clear_queue: bool = False
+
+
+_TURN_QUEUE = TurnQueueManager(stale_timeout_sec=120.0)
+
+
+def _on_stale_turn_cleanup(stale_snapshot: dict) -> None:
+    try:
+        partial = (stale_snapshot.get("reply") or "").strip()
+        msg = f"{partial}\n\n[回覆逾時或連線中斷]" if partial else "[回覆逾時或大腦連線中斷]"
+        memory_manager.log_interaction(
+            stale_snapshot.get("query", ""),
+            msg,
+            actions=["interrupted_timeout"],
+        )
+    except Exception:
+        pass
+
+
+def _get_active_turn_snapshot() -> Optional[dict]:
+    return _TURN_QUEUE.get_active_snapshot(on_stale=_on_stale_turn_cleanup)
+
+
+def _get_pending_queue_snapshot() -> List[dict]:
+    return _TURN_QUEUE.get_pending_snapshot()
 
 
 @app.post("/api/voice-chat/cancel")
@@ -478,117 +504,61 @@ def cancel_voice_chat(
     _authorized: bool = Depends(verify_token)
 ):
     """iOS 端一鍵停止/語音打斷專用端點：
-    1. 觸發所有活躍 SSE 串流之 cancel_event，立即中止 TTS 合成並攔截 Telegram 推播
+    1. 預設僅觸發當前進行中 Turn 之 cancel_event，保留佇列中待執行項目（clear_queue=True 時一併清空）
     2. 對底層 agy acp 發送原生 `session/cancel`，於 6~15ms 內強制中止大腦思考與執行中工具
     """
     level = payload.level if payload else None
+    clear_queue = bool(payload.clear_queue) if payload else False
+
+    cancelled_turn_id = _TURN_QUEUE.cancel_active()
+    cleared_count = _TURN_QUEUE.clear_pending_queue() if clear_queue else 0
+
     with _VOICE_CANCEL_LOCK:
         active_count = len(_ACTIVE_VOICE_CANCEL_EVENTS)
-        for ev in list(_ACTIVE_VOICE_CANCEL_EVENTS):
-            ev.set()
+        if clear_queue or cancelled_turn_id is None:
+            for ev in list(_ACTIVE_VOICE_CANCEL_EVENTS):
+                ev.set()
     acp_res = agy_singleton.cancel_active_turns(level=level)
-    print(f"[cancel_voice_chat] 🛑 收到取消請求 (active_streams={active_count}, acp_cancelled={acp_res})")
+    print(f"[cancel_voice_chat] 🛑 收到取消請求 (turn={cancelled_turn_id}, cleared_queue={cleared_count}, active_streams={active_count}, acp_cancelled={acp_res})")
     return {
         "status": "cancelled",
+        "cancelled_turn_id": cancelled_turn_id,
+        "cleared_queue": cleared_count,
         "active_streams_signaled": active_count,
         "acp": acp_res
     }
 
 
-# 進行中語音/文字對話之純記憶體狀態緩衝區（不寫入磁碟，支援 App 重開斷線續接與超時自清）
-_ACTIVE_TURN_LOCK = _threading.Lock()
-_ACTIVE_TURN: Optional[dict] = None
-_ACTIVE_TURN_STALE_SEC = 120.0
+@app.get("/api/voice-chat/queue")
+def get_voice_chat_queue(_authorized: bool = Depends(verify_token)):
+    """取得目前進行中任務與排隊佇列狀態"""
+    return {
+        "active_turn": _get_active_turn_snapshot(),
+        "pending_queue": _get_pending_queue_snapshot(),
+    }
 
 
-def _start_active_turn(user_query: str) -> str:
-    global _ACTIVE_TURN
-    import uuid
-    import time as _t
-    turn_id = uuid.uuid4().hex[:12]
-    clean_q = _clean_history_query(user_query)
-    with _ACTIVE_TURN_LOCK:
-        _ACTIVE_TURN = {
-            "turn_id": turn_id,
-            "timestamp": datetime.now().isoformat(),
-            "query": clean_q,
-            "thought": "",
-            "tools": [],
-            "reply": "",
-            "status": "thinking",
-            "updated_at": _t.time(),
-        }
-    return turn_id
-
-
-def _update_active_turn(
+@app.delete("/api/voice-chat/queue/{turn_id}")
+@app.post("/api/voice-chat/queue/{turn_id}/cancel")
+def delete_voice_chat_queue_item(
     turn_id: str,
-    *,
-    thought_delta: Optional[str] = None,
-    tool_status: Optional[str] = None,
-    text_delta: Optional[str] = None,
-) -> None:
-    import time as _t
-    with _ACTIVE_TURN_LOCK:
-        if not _ACTIVE_TURN or _ACTIVE_TURN.get("turn_id") != turn_id:
-            return
-        if thought_delta:
-            _ACTIVE_TURN["thought"] += thought_delta
-        if tool_status:
-            tools = _ACTIVE_TURN["tools"]
-            if not tools or tools[-1] != tool_status:
-                tools.append(tool_status)
-        if text_delta:
-            _ACTIVE_TURN["reply"] += text_delta
-            _ACTIVE_TURN["status"] = "streaming"
-        _ACTIVE_TURN["updated_at"] = _t.time()
+    _authorized: bool = Depends(verify_token)
+):
+    """從排隊佇列移除尚未執行的訊息，或中斷指定進行中任務"""
+    res = _TURN_QUEUE.remove_turn(turn_id)
+    if res == "cancelling_active":
+        acp_res = agy_singleton.cancel_active_turns()
+        return {"status": res, "turn_id": turn_id, "acp": acp_res}
+    if res == "removed_queued":
+        return {"status": res, "turn_id": turn_id}
+    raise HTTPException(status_code=404, detail="Turn not found in active or pending queue")
 
 
-def _clear_active_turn(turn_id: Optional[str] = None) -> Optional[dict]:
-    global _ACTIVE_TURN
-    with _ACTIVE_TURN_LOCK:
-        if not _ACTIVE_TURN:
-            return None
-        if turn_id is not None and _ACTIVE_TURN.get("turn_id") != turn_id:
-            return None
-        prev = dict(_ACTIVE_TURN)
-        _ACTIVE_TURN = None
-        return prev
-
-
-def _get_active_turn_snapshot() -> Optional[dict]:
-    global _ACTIVE_TURN
-    import time as _t
-    stale_snapshot = None
-    with _ACTIVE_TURN_LOCK:
-        if not _ACTIVE_TURN:
-            return None
-        if _t.time() - _ACTIVE_TURN.get("updated_at", 0) > _ACTIVE_TURN_STALE_SEC:
-            stale_snapshot = dict(_ACTIVE_TURN)
-            _ACTIVE_TURN = None
-        else:
-            return {
-                "turn_id": _ACTIVE_TURN["turn_id"],
-                "timestamp": _ACTIVE_TURN["timestamp"],
-                "query": _ACTIVE_TURN["query"],
-                "thought": _ACTIVE_TURN["thought"],
-                "tools": list(_ACTIVE_TURN["tools"]),
-                "reply": _ACTIVE_TURN["reply"],
-                "status": _ACTIVE_TURN["status"],
-            }
-    # 若超過心跳時限，於鎖外補寫中斷紀錄並解除前端卡住狀態
-    if stale_snapshot:
-        try:
-            partial = (stale_snapshot.get("reply") or "").strip()
-            msg = f"{partial}\n\n[回覆逾時或連線中斷]" if partial else "[回覆逾時或大腦連線中斷]"
-            memory_manager.log_interaction(
-                stale_snapshot.get("query", ""),
-                msg,
-                actions=["interrupted_timeout"],
-            )
-        except Exception:
-            pass
-    return None
+@app.delete("/api/voice-chat/queue")
+def clear_voice_chat_pending_queue(_authorized: bool = Depends(verify_token)):
+    """清空所有排隊中（尚未執行）的任務"""
+    cleared = _TURN_QUEUE.clear_pending_queue()
+    return {"status": "cleared", "cleared_count": cleared}
 
 
 @app.post("/api/voice-chat/stream")
@@ -727,9 +697,28 @@ async def voice_chat_stream(
         extractor = TTSSentenceExtractor()
         widget_filter = WidgetHtmlStreamFilter()
         sentence_seq = 0
-        active_turn_id = _start_active_turn(user_query)
+        active_turn_id, is_active_now, queue_pos = _TURN_QUEUE.enqueue_or_activate(
+            _clean_history_query(user_query),
+            cancel_event,
+            level=level,
+            client=client_source,
+        )
 
         try:
+            if not is_active_now:
+                loop.call_soon_threadsafe(
+                    event_queue.put_nowait,
+                    {"type": "queued", "turn_id": active_turn_id, "position": queue_pos},
+                )
+                activated = _TURN_QUEUE.wait_until_active_or_cancelled(active_turn_id, cancel_event)
+                if not activated:
+                    loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                    loop.call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "cancelled", "turn_id": active_turn_id},
+                    )
+                    return
+
             gen = personal_agent.stream(
                 user_query,
                 client=client_source,
@@ -751,14 +740,14 @@ async def voice_chat_stream(
                     break
 
                 if ev_type == "thought":
-                    _update_active_turn(active_turn_id, thought_delta=ev_data)
+                    _TURN_QUEUE.update_active(active_turn_id, thought_delta=ev_data)
                     loop.call_soon_threadsafe(
                         event_queue.put_nowait,
                         {"type": "thought_delta", "delta": ev_data}
                     )
                 elif ev_type == "status":
                     status_text = ev_data
-                    _update_active_turn(active_turn_id, tool_status=status_text)
+                    _TURN_QUEUE.update_active(active_turn_id, tool_status=status_text)
                     clean_status = sanitize_for_tts(status_text)
                     actions.append(f"tool: {status_text[:30]}")
                     loop.call_soon_threadsafe(
@@ -770,7 +759,7 @@ async def voice_chat_stream(
                     full_reply_parts.append(delta)
                     visible_delta = widget_filter.feed(delta)
                     if visible_delta:
-                        _update_active_turn(active_turn_id, text_delta=visible_delta)
+                        _TURN_QUEUE.update_active(active_turn_id, text_delta=visible_delta)
                         loop.call_soon_threadsafe(
                             event_queue.put_nowait,
                             {"type": "text_delta", "delta": visible_delta}
@@ -798,7 +787,7 @@ async def voice_chat_stream(
             # Flush 剩餘未結尾句子（若客戶端已離線則略過 TTS 合成，直接完成任務寫入歷史與 Telegram）
             rem_visible = widget_filter.flush()
             if rem_visible:
-                _update_active_turn(active_turn_id, text_delta=rem_visible)
+                _TURN_QUEUE.update_active(active_turn_id, text_delta=rem_visible)
                 loop.call_soon_threadsafe(
                     event_queue.put_nowait,
                     {"type": "text_delta", "delta": rem_visible}
@@ -898,7 +887,7 @@ async def voice_chat_stream(
                 pass
             loop.call_soon_threadsafe(event_queue.put_nowait, {"type": "error", "error": str(e)})
         finally:
-            _clear_active_turn(active_turn_id)
+            _TURN_QUEUE.finish_active(active_turn_id)
             worker_finished.set()
             with _VOICE_CANCEL_LOCK:
                 _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
@@ -1095,6 +1084,7 @@ def chat_history(
     return {
         "history": entries[-limit:],
         "active_turn": _get_active_turn_snapshot(),
+        "pending_queue": _get_pending_queue_snapshot(),
     }
 
 

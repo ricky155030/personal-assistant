@@ -461,9 +461,23 @@ public final class MacMiniAPIClient {
         public let status: String
     }
 
+    public struct PendingTurnSnapshot: Codable, Identifiable, Equatable {
+        public var id: String { turn_id }
+        public let turn_id: String
+        public let timestamp: String
+        public let query: String
+        public let status: String
+    }
+
     private struct RemoteHistoryResponse: Codable {
         let history: [RemoteHistoryItem]
         let active_turn: ActiveTurnSnapshot?
+        let pending_queue: [PendingTurnSnapshot]?
+    }
+
+    private struct QueueStatusResponse: Codable {
+        let active_turn: ActiveTurnSnapshot?
+        let pending_queue: [PendingTurnSnapshot]?
     }
 
     public func fetchHistory(limit: Int = 40, since: String? = nil) async -> [RemoteHistoryItem] {
@@ -471,7 +485,7 @@ public final class MacMiniAPIClient {
         return result.history
     }
 
-    public func fetchHistoryWithActiveTurn(limit: Int = 40, since: String? = nil) async -> (history: [RemoteHistoryItem], activeTurn: ActiveTurnSnapshot?) {
+    public func fetchHistoryWithActiveTurn(limit: Int = 40, since: String? = nil) async -> (history: [RemoteHistoryItem], activeTurn: ActiveTurnSnapshot?, pendingQueue: [PendingTurnSnapshot]) {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         var components = URLComponents(string: "\(cleanBase)/api/history")
         var queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
@@ -479,7 +493,7 @@ public final class MacMiniAPIClient {
             queryItems.append(URLQueryItem(name: "since", value: since))
         }
         components?.queryItems = queryItems
-        guard let url = components?.url else { return ([], nil) }
+        guard let url = components?.url else { return ([], nil, []) }
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 5.0
@@ -488,12 +502,63 @@ public final class MacMiniAPIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-                return ([], nil)
+                return ([], nil, [])
             }
             let decoded = try JSONDecoder().decode(RemoteHistoryResponse.self, from: data)
-            return (decoded.history, decoded.active_turn)
+            return (decoded.history, decoded.active_turn, decoded.pending_queue ?? [])
         } catch {
-            return ([], nil)
+            return ([], nil, [])
+        }
+    }
+
+    public func fetchQueueStatus() async -> (activeTurn: ActiveTurnSnapshot?, pendingQueue: [PendingTurnSnapshot]) {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/voice-chat/queue") else { return (nil, []) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return (nil, [])
+            }
+            let decoded = try JSONDecoder().decode(QueueStatusResponse.self, from: data)
+            return (decoded.active_turn, decoded.pending_queue ?? [])
+        } catch {
+            return (nil, [])
+        }
+    }
+
+    public func deleteQueuedTurn(turnId: String) async -> Bool {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let encodedId = turnId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "\(cleanBase)/api/voice-chat/queue/\(encodedId)") else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse else { return false }
+            return (200...299).contains(httpResp.statusCode)
+        } catch {
+            return false
+        }
+    }
+
+    public func clearPendingQueue() async -> Bool {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/voice-chat/queue") else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse else { return false }
+            return (200...299).contains(httpResp.statusCode)
+        } catch {
+            return false
         }
     }
 
