@@ -17,7 +17,7 @@ from agy_singleton import agy_singleton
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 from fast_intent import try_fast_intent
 from task_queue import task_queue
-from turn_queue import TurnQueueManager
+from turn_queue import shared_turn_queue
 from transcribe_service import transcribe_file, warm_transcriber
 from telegram_service import (
     start_telegram_bot,
@@ -474,7 +474,7 @@ class CancelChatRequest(BaseModel):
     clear_queue: bool = False
 
 
-_TURN_QUEUE = TurnQueueManager(stale_timeout_sec=120.0)
+_TURN_QUEUE = shared_turn_queue
 
 
 def _on_stale_turn_cleanup(stale_snapshot: dict) -> None:
@@ -1190,11 +1190,21 @@ def _process_share_payload_sync(
         f"{prompt}\n\n{shared_block}"
     )
 
+    share_cancel_ev = _threading.Event()
+    share_turn_id, is_active_now, _ = _TURN_QUEUE.enqueue_or_activate(
+        display_query, share_cancel_ev, client="ios-share"
+    )
     try:
+        if not is_active_now:
+            activated = _TURN_QUEUE.wait_until_active_or_cancelled(share_turn_id, share_cancel_ev)
+            if not activated:
+                return
         clean_reply, actions, _, _ = agy_singleton.send_query(full_prompt, media=media)
     except Exception as ex:
         clean_reply = f"分享內容處理失敗：{ex}"
         actions = ["share_extension_error"]
+    finally:
+        _TURN_QUEUE.finish_active(share_turn_id)
 
     try:
         memory_manager.log_interaction(

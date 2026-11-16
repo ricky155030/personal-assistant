@@ -173,6 +173,7 @@ class TurnQueueManager:
                         "tools": list(self._active_turn["tools"]),
                         "reply": self._active_turn["reply"],
                         "status": self._active_turn["status"],
+                        "client": self._active_turn.get("client"),
                     }
         if stale_snapshot and on_stale:
             on_stale(stale_snapshot)
@@ -240,3 +241,7 @@ class TurnQueueManager:
             for item in self._pending_queue:
                 events.append(item["cancel_event"])
             return events
+
+
+# 全系統跨渠道（App / Watch / HomePod / Telegram / iOS 分享擴充）共用之單例任務追蹤器
+shared_turn_queue = TurnQueueManager(stale_timeout_sec=120.0)

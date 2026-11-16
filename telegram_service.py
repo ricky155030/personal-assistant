@@ -2,6 +2,7 @@ import os
 import json
 import time
 import asyncio
+import threading
 import mimetypes
 import html
 import re
@@ -16,6 +17,7 @@ from config import settings
 from fast_intent import try_fast_intent
 from agy_singleton import agy_singleton
 from quota_service import quota_service
+from turn_queue import shared_turn_queue
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
@@ -1397,11 +1399,24 @@ async def process_telegram_request(
     existing_reports = {f.name: f.stat().st_mtime for f in settings.REPORTS_DIR.glob("*.html")}
 
     tg_level, tg_model_id, tg_model_label = resolve_telegram_model_and_level(effective_query)
+    display_query = user_text if user_text else (f"傳送了 {len(media_list)} 張圖片" if len(media_list) > 1 else "請幫我分析這張圖片")
 
     def _stream_runner():
         card = TelegramLiveCard(chat_id=chat_id)
         turn_result = {}
+        cancel_event = threading.Event()
+        active_turn_id, is_active_now, _ = shared_turn_queue.enqueue_or_activate(
+            display_query,
+            cancel_event,
+            level=tg_level,
+            client="telegram",
+        )
         try:
+            if not is_active_now:
+                activated = shared_turn_queue.wait_until_active_or_cancelled(active_turn_id, cancel_event)
+                if not activated:
+                    return "", {"cancelled": True}, card
+
             stream_gen = agy_singleton.send_query_stream(
                 effective_query,
                 media=media_list if media_list else None,
@@ -1409,6 +1424,10 @@ async def process_telegram_request(
                 model_override=tg_model_id,
             )
             while True:
+                if cancel_event.is_set():
+                    agy_singleton.cancel_active_turns(level=tg_level)
+                    turn_result = {"cancelled": True}
+                    break
                 item = next(stream_gen)
                 if isinstance(item, tuple) and len(item) == 2:
                     ev_type, ev_data = item
@@ -1416,19 +1435,32 @@ async def process_telegram_request(
                     ev_type, ev_data = "text", item
 
                 if ev_type == "thought":
-                    card.on_thought(str(ev_data))
+                    s_data = str(ev_data)
+                    card.on_thought(s_data)
+                    shared_turn_queue.update_active(active_turn_id, thought_delta=s_data)
                 elif ev_type == "status":
-                    card.on_status(str(ev_data))
+                    s_data = str(ev_data)
+                    card.on_status(s_data)
+                    shared_turn_queue.update_active(active_turn_id, tool_status=s_data)
                 elif ev_type == "tool_done":
-                    card.on_tool_done(str(ev_data))
+                    s_data = str(ev_data)
+                    card.on_tool_done(s_data)
+                    shared_turn_queue.update_active(active_turn_id, tool_status=s_data)
                 elif ev_type == "text":
-                    card.on_text(str(ev_data))
+                    s_data = str(ev_data)
+                    card.on_text(s_data)
+                    shared_turn_queue.update_active(active_turn_id, text_delta=s_data)
         except StopIteration as e:
             turn_result = e.value or {}
         except Exception as e:
             if card.msg_id:
                 delete_telegram_message_sync(card.msg_id, chat_id=chat_id)
             raise e
+        finally:
+            shared_turn_queue.finish_active(active_turn_id)
+
+        if turn_result.get("cancelled"):
+            return "", turn_result, card
 
         card.finalize()
         clean_out = "".join(card.collected_text).strip() or turn_result.get("clean_reply", "")
@@ -1442,7 +1474,6 @@ async def process_telegram_request(
         return
     msg_id = card.msg_id
     total_lat = turn_result.get("total_latency", (datetime.now() - start_t).total_seconds())
-    display_query = user_text if user_text else (f"傳送了 {len(media_list)} 張圖片" if len(media_list) > 1 else "請幫我分析這張圖片")
 
     # 若主人點擊了 [⏹️ 停止回應] 或發送 /stop 中途取消，原地更新進度卡片為已中止並結束
     if turn_result.get("cancelled"):
@@ -1560,6 +1591,7 @@ async def start_telegram_bot():
                             continue
 
                         if cb_data == "cancel_active_turn":
+                            shared_turn_queue.cancel_active()
                             res = agy_singleton.cancel_active_turns()
                             toast_text = "🛑 已中止回應" if res.get("cancelled") else "ℹ️ 當前無進行中的回應"
                             try:
@@ -1859,6 +1891,7 @@ async def start_telegram_bot():
                         continue
 
                     if user_text.lower() in ("/cancel", "/stop", "停", "停止", "取消", "不用了", "等一下"):
+                        shared_turn_queue.cancel_active()
                         res = agy_singleton.cancel_active_turns()
                         if res.get("cancelled"):
                             print(f"[TelegramService] 🛑 已透過文字指令 '{user_text}' 中止進行中的 Turn: {res}")

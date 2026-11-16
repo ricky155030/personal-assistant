@@ -140,3 +140,45 @@ def test_stale_active_turn_promotes_next():
     next_snap = mgr.get_active_snapshot()
     assert next_snap is not None
     assert next_snap["turn_id"] == id2
+
+
+def test_shared_turn_queue_cross_channel_visibility():
+    from turn_queue import shared_turn_queue
+    import main as main_mod
+    import telegram_service as tg_mod
+
+    assert main_mod._TURN_QUEUE is shared_turn_queue
+    assert tg_mod.shared_turn_queue is shared_turn_queue
+
+    ev_tg = threading.Event()
+    ev_ios = threading.Event()
+    tg_id, tg_active, tg_pos = shared_turn_queue.enqueue_or_activate(
+        "Telegram 提問", ev_tg, client="telegram"
+    )
+    try:
+        assert tg_active is True
+        assert tg_pos == 0
+
+        shared_turn_queue.update_active(tg_id, thought_delta="思考中...")
+        snap = main_mod._get_active_turn_snapshot()
+        assert snap is not None
+        assert snap["turn_id"] == tg_id
+        assert snap["client"] == "telegram"
+        assert snap["query"] == "Telegram 提問"
+        assert snap["thought"] == "思考中..."
+
+        ios_id, ios_active, ios_pos = shared_turn_queue.enqueue_or_activate(
+            "App 提問", ev_ios, client="ios-voice"
+        )
+        assert ios_active is False
+        assert ios_pos == 1
+
+        # Finish Telegram turn -> promotes iOS turn
+        shared_turn_queue.finish_active(tg_id)
+        snap2 = main_mod._get_active_turn_snapshot()
+        assert snap2 is not None
+        assert snap2["turn_id"] == ios_id
+        shared_turn_queue.finish_active(ios_id)
+    finally:
+        shared_turn_queue.clear_pending_queue()
+        shared_turn_queue.finish_active(tg_id)
