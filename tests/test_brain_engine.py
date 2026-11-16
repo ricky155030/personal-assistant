@@ -133,3 +133,34 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
     assert result["clean_reply"] == "完成回覆"
     assert eng._session_id == "sess-abc-123"
     assert eng._last_tokens == 321
+
+
+def test_cross_brain_handoff_injected_once(tmp_path):
+    prefs = tmp_path / "brain_prefs.json"
+    history = tmp_path / "history.jsonl"
+    history.write_text(
+        json.dumps({"query": "幫我查酷澎價格", "reply": "目前尿布為 799 元"}, ensure_ascii=False) + "\n"
+        + json.dumps({"query": "那幫我記一下", "reply": "已記錄備忘"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    seen_queries = []
+
+    class _CaptureEngine(_DummyEngine):
+        def send_query_stream(self, query, media=None, level=None, model_override=None):
+            seen_queries.append(query)
+            return (yield from super().send_query_stream(query, media=media, level=level, model_override=model_override))
+
+    router = BrainRouter(prefs_path=prefs, history_path=history)
+    router.register_engine(_CaptureEngine("agy", True, [{"id": "hydrogen", "label": "Hydrogen"}]))
+    router.register_engine(_CaptureEngine("omp", False, [{"id": "m1", "label": "M1"}]))
+
+    router.select_engine("omp", "m1")
+    router.send_query("接下來呢？")
+    router.send_query("第二句話")
+
+    assert len(seen_queries) == 2
+    assert "[跨大腦記憶交接提要（由 agy 切換至 omp）]" in seen_queries[0]
+    assert "幫我查酷澎價格" in seen_queries[0]
+    assert seen_queries[0].endswith("接下來呢？")
+    assert seen_queries[1] == "第二句話"

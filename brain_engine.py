@@ -167,12 +167,14 @@ class AgyEngineAdapter(BaseBrainEngine):
 class BrainRouter:
     """Routes all assistant channels (App, Watch, HomePod, Telegram, Share) to the active brain engine."""
 
-    def __init__(self, prefs_path: Optional[Path] = None) -> None:
+    def __init__(self, prefs_path: Optional[Path] = None, history_path: Optional[Path] = None) -> None:
         self._lock = threading.RLock()
         self._engines: Dict[str, BaseBrainEngine] = {}
         self._prefs_path = prefs_path or (settings.DATA_DIR / "brain_prefs.json")
+        self._history_path = history_path or settings.HISTORY_LOG_PATH
         self._active_engine_id: str = "agy"
         self._active_models: Dict[str, str] = {}
+        self._pending_handoff: Optional[Tuple[str, str]] = None
         self._load_prefs()
 
     def _load_prefs(self) -> None:
@@ -232,11 +234,59 @@ class BrainRouter:
         with self._lock:
             if engine_id not in self._engines:
                 raise ValueError(f"Unknown brain engine: {engine_id}")
+            prev_engine_id = self._active_engine_id
             self._active_engine_id = engine_id
             if model_id is not None and model_id.strip():
                 self._active_models[engine_id] = model_id.strip()
+            if prev_engine_id != engine_id:
+                ctx = self._build_recent_handoff_context(prev_engine_id, engine_id)
+                self._pending_handoff = (engine_id, ctx) if ctx else None
             self._save_prefs()
             return self.get_catalog()
+
+    def _build_recent_handoff_context(self, from_engine: str, to_engine: str, max_turns: int = 6) -> str:
+        """Read the latest N turns from history.jsonl so the newly selected engine continues seamlessly."""
+        try:
+            if not self._history_path.exists():
+                return ""
+            lines = [ln.strip() for ln in self._history_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            recent = lines[-max_turns:]
+            snippets: List[str] = []
+            for raw in recent:
+                try:
+                    rec = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                q = str(rec.get("query") or "").strip()
+                r = str(rec.get("reply") or "").strip()
+                if not q and not r:
+                    continue
+                if len(q) > 200:
+                    q = q[:200] + "..."
+                if len(r) > 350:
+                    r = r[:350] + "..."
+                snippets.append(f"- 主人：{q}\n  助理：{r}")
+            if not snippets:
+                return ""
+            joined = "\n".join(snippets)
+            return (
+                f"[跨大腦記憶交接提要（由 {from_engine} 切換至 {to_engine}）]\n"
+                f"以下為切換前最近 {len(snippets)} 輪對話紀錄，請直接銜接脈絡繼續服務：\n"
+                f"{joined}\n"
+                f"[交接結束，以下為主人本次新訊息]"
+            )
+        except Exception:
+            return ""
+
+    def _consume_handoff_prefix(self, engine_id: str, query: str) -> str:
+        with self._lock:
+            pending = self._pending_handoff
+            if pending and pending[0] == engine_id:
+                self._pending_handoff = None
+                ctx = pending[1]
+                if ctx:
+                    return f"{ctx}\n\n{query}"
+        return query
 
     def get_selected_model(self, engine_id: Optional[str] = None) -> Optional[str]:
         with self._lock:
@@ -316,9 +366,10 @@ class BrainRouter:
     ) -> Generator[Tuple[str, str], None, dict]:
         eng = self.get_engine()
         effective_override = model_override or self.get_selected_model(eng.engine_id)
+        effective_query = self._consume_handoff_prefix(eng.engine_id, query)
         return (
             yield from eng.send_query_stream(
-                query,
+                effective_query,
                 media=media,
                 level=level,
                 model_override=effective_override,
@@ -334,8 +385,9 @@ class BrainRouter:
     ) -> Tuple[str, List[str], float, float]:
         eng = self.get_engine()
         effective_override = model_override or self.get_selected_model(eng.engine_id)
+        effective_query = self._consume_handoff_prefix(eng.engine_id, query)
         return eng.send_query(
-            query,
+            effective_query,
             media=media,
             level=level,
             model_override=effective_override,
