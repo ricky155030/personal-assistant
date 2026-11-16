@@ -29,6 +29,17 @@ def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
         metadata["widget_html"] = widget_html
     return clean_reply.strip()
 
+def _quick_replies_for(clean_reply: str, user_query: str = "", was_cancelled: bool = False) -> List[str]:
+    """與 agy 同規格的候選回覆：取消/空回覆直接回空，否則 lazy 復用 agy 輕量判斷。"""
+    if was_cancelled or not clean_reply:
+        return []
+    try:
+        from agy_singleton import extract_quick_replies
+        return extract_quick_replies(clean_reply, user_query=user_query) or []
+    except Exception:
+        return []
+
+
 
 def _load_agents_md_text() -> str:
     try:
@@ -601,6 +612,7 @@ class OmpResidentWorker:
             "engine": "omp-resident",
         }
         clean_reply = _finalize_reply_and_metadata("".join(reply_parts).strip(), metadata)
+        quick_replies = _quick_replies_for(clean_reply, user_query=query, was_cancelled=was_cancelled)
         if was_cancelled and not clean_reply:
             return {
                 "status": "CANCELLED",
@@ -612,6 +624,7 @@ class OmpResidentWorker:
                 "thinking_level": level_norm,
                 "model": self.model,
                 "metadata": metadata,
+                "quick_replies": quick_replies,
             }
         if self.last_tokens >= settings.CONTEXT_RESTART_THRESHOLD:
             print(f"[OmpResident] 🔄 Context 已達門檻 ({self.last_tokens} >= {settings.CONTEXT_RESTART_THRESHOLD})，背景重啟全新 Session...")
@@ -626,6 +639,7 @@ class OmpResidentWorker:
             "thinking_level": level_norm,
             "model": self.model,
             "metadata": metadata,
+            "quick_replies": quick_replies,
         }
 
 
@@ -839,6 +853,7 @@ class OmpBrainEngine(BaseBrainEngine):
                     "estimated_cost_usd": 0.0,
                     "engine": "omp",
                 },
+                "quick_replies": [],
             }
 
         self._session_dir.mkdir(parents=True, exist_ok=True)
@@ -996,6 +1011,7 @@ class OmpBrainEngine(BaseBrainEngine):
                 "thinking_level": level_norm,
                 "model": chosen_model,
                 "metadata": metadata,
+                "quick_replies": [],
             }
 
         if proc.returncode not in (0, None) and not clean_reply:
@@ -1019,6 +1035,7 @@ class OmpBrainEngine(BaseBrainEngine):
             "thinking_level": level_norm,
             "model": chosen_model,
             "metadata": metadata,
+            "quick_replies": _quick_replies_for(clean_reply, user_query=query, was_cancelled=False),
         }
 
 

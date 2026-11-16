@@ -429,7 +429,10 @@ def try_fast_intent(query: str) -> Optional[str]:
             return fb_reply
 
     # 0b. 家電狀態 HTML 報告 (~0.2s, 零 Token)
-    if any(k in clean_q for k in ["家電狀態", "家電報告", "設備狀態", "電器狀態", "全屋狀態", "巡檢家電", "家電巡檢"]):
+    if (
+        any(k in clean_q for k in ["家電狀態", "家電報告", "設備狀態", "電器狀態", "電器", "全屋狀態", "巡檢家電", "家電巡檢", "溫濕度狀態", "家裡電器"])
+        and not re.search(r"(關掉|關閉|關上|熄掉|打開|開啟|打開|開燈|關燈)", clean_q)
+    ):
         ha_reply = format_ha_status_fast_reply()
         if ha_reply:
             return ha_reply
