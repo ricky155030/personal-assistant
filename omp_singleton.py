@@ -17,6 +17,33 @@ from typing import Generator, List, Optional, Tuple
 from brain_engine import BaseBrainEngine
 from config import settings
 from memory_manager import memory_manager
+from thinking_router import clean_query_prefix
+from widget_html_utils import extract_widget_html
+
+
+def _clean_query_for_history(raw_query: str) -> str:
+    """移除系統前綴規範與跨大腦交接提要，僅保留純淨使用者提問寫入 history.jsonl。"""
+    q = (raw_query or "").strip()
+    markers = (
+        "[跨大腦記憶交接提要",
+        "[來源管道:",
+        "【語音輸出嚴格規範】",
+        "【回覆長度約束",
+    )
+    if any(m in q for m in markers):
+        parts = q.split("\n\n")
+        while len(parts) > 1 and any(m in parts[0] for m in markers):
+            parts.pop(0)
+        q = "\n\n".join(parts).strip()
+    return q
+
+
+def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
+    """抽離 <widget_html> 區塊並寫入 metadata，避免原始標籤污染 history.jsonl。"""
+    clean_reply, widget_html = extract_widget_html(raw_reply)
+    if widget_html:
+        metadata["widget_html"] = widget_html
+    return clean_reply.strip()
 DEFAULT_OMP_MODELS: List[dict] = [
     {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3"},
     {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版"},
@@ -531,8 +558,17 @@ class OmpResidentWorker:
                             pass
                     elif "tool" in kind:
                         tool_calls_count += 1
-                        label = str(update.get("content", "") or update.get("toolName", "") or "工具")
-                        yield ("status", f"執行工具：{label[:40]}")
+                        label = str(
+                            update.get("title")
+                            or update.get("toolName")
+                            or update.get("name")
+                            or "工具"
+                        ).strip()
+                        status_val = str(update.get("status") or "").lower()
+                        if status_val in ("completed", "failed"):
+                            yield ("tool_done", f"完成工具：{label[:40]}")
+                        else:
+                            yield ("status", f"執行工具：{label[:40]}")
         finally:
             with self.lock:
                 self._active_turn_id = None
@@ -563,6 +599,7 @@ class OmpResidentWorker:
             "estimated_cost_usd": turn_cost_usd,
             "engine": "omp-resident",
         }
+        clean_reply = _finalize_reply_and_metadata("".join(reply_parts).strip(), metadata)
         if was_cancelled and not clean_reply:
             return {
                 "status": "CANCELLED",
@@ -578,7 +615,7 @@ class OmpResidentWorker:
         try:
             saved_images = memory_manager.save_compressed_history_images(media)
             memory_manager.log_interaction(
-                query,
+                _clean_query_for_history(query),
                 clean_reply,
                 [f"engine:omp-resident ({self.model})"],
                 images=saved_images,
@@ -975,10 +1012,11 @@ class OmpBrainEngine(BaseBrainEngine):
             yield ("text", err_msg)
             clean_reply = err_msg
 
+        clean_reply = _finalize_reply_and_metadata(clean_reply, metadata)
         try:
             saved_images = memory_manager.save_compressed_history_images(media)
             memory_manager.log_interaction(
-                query,
+                _clean_query_for_history(query),
                 clean_reply,
                 [f"engine:omp ({chosen_model})"],
                 images=saved_images,

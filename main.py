@@ -1062,9 +1062,14 @@ def chat_task_result(task_id: str, _authorized: bool = Depends(verify_token)):
 
 
 def _clean_history_query(raw_query: str) -> str:
-    """移除 iOS/Watch/HomePod 的系統前綴規範，完整保留多段使用者對話文字"""
+    """移除 iOS/Watch/HomePod 的系統前綴規範與跨大腦交接提要，完整保留多段使用者對話文字"""
     q = (raw_query or "").strip()
-    prefix_markers = ("[來源管道:", "【語音輸出嚴格規範】", "【回覆長度約束")
+    prefix_markers = (
+        "[來源管道:",
+        "[跨大腦記憶交接提要",
+        "【語音輸出嚴格規範】",
+        "【回覆長度約束",
+    )
     if any(marker in q for marker in prefix_markers):
         parts = q.split("\n\n")
         while len(parts) > 1 and any(marker in parts[0] for marker in prefix_markers):

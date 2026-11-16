@@ -244,3 +244,23 @@ def test_cross_brain_handoff_injected_once(tmp_path):
     assert "幫我查酷澎價格" in seen_queries[0]
     assert seen_queries[0].endswith("接下來呢？")
     assert seen_queries[1] == "第二句話"
+
+
+def test_omp_cleans_history_query_and_extracts_widget_html():
+    from omp_singleton import _clean_query_for_history, _finalize_reply_and_metadata
+    from main import _clean_history_query
+
+    wrapped = (
+        "[跨大腦記憶交接提要（由 agy 切換至 omp）]\n背景...\n\n"
+        "[來源管道: iOS 隨身語音對話 App]\n"
+        "【語音輸出嚴格規範】\n1. 精簡\n\n"
+        "【回覆長度約束：細節模式】250~350字\n\n"
+        "幫我看一下狀態"
+    )
+    assert _clean_query_for_history(wrapped) == "幫我看一下狀態"
+    assert _clean_history_query(wrapped) == "幫我看一下狀態"
+
+    meta = {}
+    cleaned = _finalize_reply_and_metadata("目前正常<widget_html><div>OK</div></widget_html>", meta)
+    assert cleaned == "目前正常"
+    assert meta["widget_html"] == "<div>OK</div>"
