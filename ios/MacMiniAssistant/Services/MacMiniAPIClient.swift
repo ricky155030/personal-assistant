@@ -295,7 +295,8 @@ public final class MacMiniAPIClient {
         client: String = "ios-voice",
         level: String? = nil,
         imageBase64: String? = nil,
-        imagesBase64: [String]? = nil
+        imagesBase64: [String]? = nil,
+        files: [[String: String]]? = nil
     ) -> AsyncThrowingStream<SSEEvent, Error> {
         return AsyncThrowingStream { continuation in
             Task {
@@ -331,6 +332,9 @@ public final class MacMiniAPIClient {
                 } else if let imgB64 = imageBase64, !imgB64.isEmpty {
                     payload["image_base64"] = imgB64
                     payload["media"] = [["data_base64": imgB64, "mime_type": "image/jpeg"]]
+                }
+                if let attachedFiles = files, !attachedFiles.isEmpty {
+                    payload["files"] = attachedFiles
                 }
 
                 guard let body = try? JSONSerialization.data(withJSONObject: payload) else {

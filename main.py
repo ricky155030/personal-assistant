@@ -169,6 +169,7 @@ class ChatRequest(BaseModel):
     image_path: Optional[str] = None
     image_paths: Optional[List[str]] = None
     image_base64: Optional[str] = None
+    files: Optional[List[dict]] = None
     level: Optional[str] = None
     tts_voice: Optional[str] = "zh-TW-HsiaoChenNeural"
     tts_rate: Optional[str] = "+0%"
@@ -637,6 +638,30 @@ async def voice_chat_stream(
                     "uri": str(img_p)
                 })
 
+    file_contexts: List[str] = []
+    if payload.files:
+        from share_file_parser import extract_file_preview, sanitize_filename
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        for item in payload.files[:5]:
+            b64_data = (item.get("data_base64") or "").strip() if isinstance(item, dict) else ""
+            if not b64_data:
+                continue
+            try:
+                raw_bytes = base64.b64decode(b64_data)
+                safe_name = sanitize_filename(str(item.get("filename") or "upload.bin"), fallback="upload.bin")
+                saved_file = upload_dir / f"ios_doc_{int(time.time())}_{uuid.uuid4().hex[:6]}_{safe_name}"
+                saved_file.write_bytes(raw_bytes)
+                if saved_file.suffix.lower() == ".pdf":
+                    effective_media.append({
+                        "mime_type": "application/pdf",
+                        "uri": str(saved_file.resolve())
+                    })
+                preview = extract_file_preview(saved_file)
+                header = f"📎 檔案：{safe_name}（本機路徑：{saved_file.resolve()}）"
+                file_contexts.append(f"{header}\n{preview}" if preview else header)
+            except Exception as ex:
+                print(f"[voice_chat_stream] Failed to decode uploaded file: {ex}")
+
     loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue = asyncio.Queue()
     tts_voice = payload.tts_voice or "zh-TW-HsiaoChenNeural"
@@ -671,7 +696,7 @@ async def voice_chat_stream(
 
     tts_task = asyncio.create_task(tts_worker())
 
-    if not user_query and not effective_media:
+    if not user_query and not effective_media and not file_contexts:
         with _VOICE_CANCEL_LOCK:
             _ACTIVE_VOICE_CANCEL_EVENTS.discard(cancel_event)
         async def empty_gen():
@@ -685,8 +710,13 @@ async def voice_chat_stream(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
         )
 
-    if not user_query and effective_media:
+    if not user_query and effective_media and not file_contexts:
         user_query = f"請幫我分析這 {len(effective_media)} 張圖片。" if len(effective_media) > 1 else "請幫我分析這張圖片"
+    elif not user_query and file_contexts:
+        user_query = f"請幫我解析這 {len(file_contexts)} 份檔案。" if len(file_contexts) > 1 else "請幫我解析這份檔案。"
+
+    if file_contexts:
+        user_query = f"{user_query}\n\n" + "\n\n".join(file_contexts)
 
     existing_reports = {f.name: f.stat().st_mtime for f in settings.REPORTS_DIR.glob("*.html")}
 

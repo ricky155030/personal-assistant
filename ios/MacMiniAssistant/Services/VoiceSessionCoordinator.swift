@@ -2,7 +2,20 @@ import Foundation
 import SwiftUI
 import Combine
 import AVFoundation
+import CoreLocation
 import WidgetKit
+
+public struct PendingUploadFile: Identifiable, Sendable {
+    public let id: UUID
+    public let filename: String
+    public let data: Data
+
+    public init(id: UUID = UUID(), filename: String, data: Data) {
+        self.id = id
+        self.filename = filename
+        self.data = data
+    }
+}
 
 @MainActor
 public final class VoiceSessionCoordinator: ObservableObject {
@@ -83,6 +96,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
             UserDefaults.standard.set(earconSoundEnabled, forKey: "macmini_earcon_enabled")
         }
     }
+    @Published public var pendingFiles: [PendingUploadFile] = []
+    @Published public var pendingLocationLabel: String? = nil
+    @Published public var isFetchingLocation: Bool = false
+    private let locationFetcher = OneShotLocationFetcher()
     public var onVisionVoiceFollowUpFinished: ((String) -> Void)? = nil
     public var onVisionVoicePartialTranscript: ((String) -> Void)? = nil
     @Published public var pendingImageData: Data? = nil
@@ -613,14 +630,32 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
-    /// 直接送出鍵盤輸入框的訊息（或單獨送出附加圖片，支援單張與多張）
+    /// 直接送出鍵盤輸入框的訊息（或單獨送出附加圖片/檔案/定位）
     public func sendTextMessage() {
         guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
         let trimmed = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageCount = pendingImagesData.count + (pendingImageData != nil && pendingImagesData.isEmpty ? 1 : 0)
-        guard !trimmed.isEmpty || imageCount > 0 else { return }
-        let defaultImagePrompt = imageCount > 1 ? "請幫我分析這 \(imageCount) 張圖片" : "請幫我分析這張圖片"
-        let finalQuery = trimmed.isEmpty ? defaultImagePrompt : trimmed
+        let fileCount = pendingFiles.count
+        let locationTag = pendingLocationLabel
+        guard !trimmed.isEmpty || imageCount > 0 || fileCount > 0 || locationTag != nil else { return }
+
+        var baseQuery = trimmed
+        if baseQuery.isEmpty {
+            if fileCount > 0 {
+                baseQuery = fileCount > 1 ? "請幫我解析這 \(fileCount) 份檔案" : "請幫我解析這份檔案：\(pendingFiles[0].filename)"
+            } else if imageCount > 0 {
+                baseQuery = imageCount > 1 ? "請幫我分析這 \(imageCount) 張圖片" : "請幫我分析這張圖片"
+            } else if locationTag != nil {
+                baseQuery = "我目前在這裡，附近有什麼推薦的或需要注意的嗎？"
+            }
+        }
+        let finalQuery: String
+        if let loc = locationTag, !loc.isEmpty {
+            finalQuery = "\(baseQuery)\n[目前位置：\(loc)]"
+        } else {
+            finalQuery = baseQuery
+        }
+        pendingLocationLabel = nil
         textInput = ""
         dictationBaseText = ""
         liveTranscript = ""
@@ -1446,8 +1481,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
         let attachedImg = pendingImageData
         let attachedMulti = pendingImagesData
+        let attachedFiles = pendingFiles
         pendingImageData = nil
         pendingImagesData.removeAll()
+        pendingFiles.removeAll()
 
         var effectiveImagesData: [Data] = []
         if !attachedMulti.isEmpty {
@@ -1493,6 +1530,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         speechPlayer.startBackgroundKeepAlive()
 
         let imgsData = effectiveImagesData
+        let docsData = attachedFiles
         activeStreamTask = Task {
             defer {
                 Task { @MainActor in
@@ -1503,8 +1541,10 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     }
                 }
             }
-            let imagesBase64 = await Task.detached(priority: .userInitiated) {
-                imgsData.map { $0.base64EncodedString() }
+            let (imagesBase64, filesPayload): ([String], [[String: String]]) = await Task.detached(priority: .userInitiated) {
+                let imgs = imgsData.map { $0.base64EncodedString() }
+                let docs = docsData.map { ["filename": $0.filename, "data_base64": $0.data.base64EncodedString()] }
+                return (imgs, docs)
             }.value
             let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
             let stream = apiClient.streamVoiceChat(
@@ -1512,7 +1552,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 client: clientTag,
                 level: effectiveLevel,
                 imageBase64: imagesBase64.first,
-                imagesBase64: imagesBase64
+                imagesBase64: imagesBase64,
+                files: filesPayload.isEmpty ? nil : filesPayload
             )
 
             do {
@@ -1832,5 +1873,99 @@ public final class VoiceSessionCoordinator: ObservableObject {
         } catch {
             print("[VoiceSessionCoordinator] setAudioRouteToReceiver error: \(error)")
         }
+    }
+
+    /// 取得目前 GPS 座標並反向地理編碼為地址標籤
+    public func attachCurrentLocation() {
+        guard !isFetchingLocation else { return }
+        isFetchingLocation = true
+        locationFetcher.fetchCurrentLocation { [weak self] result in
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.isFetchingLocation = false
+                switch result {
+                case .success(let label):
+                    self.pendingLocationLabel = label
+                case .failure(let err):
+                    self.errorMessage = err.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+private final class OneShotLocationFetcher: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
+    private var completion: ((Result<String, Error>) -> Void)?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func fetchCurrentLocation(completion: @escaping (Result<String, Error>) -> Void) {
+        self.completion = completion
+        let status = manager.authorizationStatus
+        switch status {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
+        case .restricted, .denied:
+            finish(.failure(NSError(
+                domain: "Location",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "請至 iPhone 設定開啟 MacMiniAssistant 的定位權限"]
+            )))
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        @unknown default:
+            manager.requestLocation()
+        }
+    }
+
+    private func finish(_ result: Result<String, Error>) {
+        let cb = completion
+        completion = nil
+        cb?(result)
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard completion != nil else { return }
+        let status = manager.authorizationStatus
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
+            manager.requestLocation()
+        } else if status == .denied || status == .restricted {
+            finish(.failure(NSError(
+                domain: "Location",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "定位權限未開啟，無法取得目前位置"]
+            )))
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let loc = locations.last else { return }
+        let coords = String(format: "%.5f, %.5f", loc.coordinate.latitude, loc.coordinate.longitude)
+        geocoder.reverseGeocodeLocation(loc) { [weak self] placemarks, _ in
+            if let pm = placemarks?.first {
+                let parts = [pm.administrativeArea, pm.locality, pm.subLocality, pm.thoroughfare, pm.name]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                var deduped: [String] = []
+                for p in parts where !deduped.contains(p) {
+                    deduped.append(p)
+                }
+                let addr = deduped.joined(separator: "")
+                let label = addr.isEmpty ? coords : "\(addr) (\(coords))"
+                self?.finish(.success(label))
+            } else {
+                self?.finish(.success(coords))
+            }
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(.failure(error))
     }
 }

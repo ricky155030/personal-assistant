@@ -3,6 +3,7 @@ import PhotosUI
 import UIKit
 import AVKit
 import ImageIO
+import UniformTypeIdentifiers
 
 // MARK: - Gemini 標誌性四色四角星芒 Shape
 struct GeminiSparkleShape: Shape {
@@ -88,6 +89,7 @@ struct HandsFreeMainView: View {
     @State private var showVisionCamera: Bool = false
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
+    @State private var showFileImporter: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var quotedMessage: ChatMessage? = nil
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
@@ -190,6 +192,34 @@ struct HandsFreeMainView: View {
                     appendPendingImages(loaded)
                     selectedPhotoItems = []
                 }
+            }
+        }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.pdf, .plainText, .commaSeparatedText, .json, .xml, .data, .item],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                Task.detached(priority: .userInitiated) {
+                    var picked: [PendingUploadFile] = []
+                    for url in urls.prefix(5) {
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer {
+                            if scoped { url.stopAccessingSecurityScopedResource() }
+                        }
+                        if let data = try? Data(contentsOf: url), data.count <= 15 * 1024 * 1024 {
+                            picked.append(PendingUploadFile(filename: url.lastPathComponent, data: data))
+                        }
+                    }
+                    let immutablePicked = picked
+                    await MainActor.run {
+                        let room = max(0, 5 - coordinator.pendingFiles.count)
+                        coordinator.pendingFiles.append(contentsOf: immutablePicked.prefix(room))
+                    }
+                }
+            case .failure(let err):
+                coordinator.errorMessage = "檔案選取失敗：\(err.localizedDescription)"
             }
         }
     }
@@ -1230,6 +1260,72 @@ struct HandsFreeMainView: View {
                 )
             }
 
+            if coordinator.isFetchingLocation || coordinator.pendingLocationLabel != nil || !coordinator.pendingFiles.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if coordinator.isFetchingLocation {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .scaleEffect(0.75)
+                                    .tint(.cyan)
+                                Text("取得目前位置...")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.85))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.cyan.opacity(0.18)))
+                        } else if let loc = coordinator.pendingLocationLabel {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.cyan)
+                                Text(loc)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.92))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 200, alignment: .leading)
+                                Button(action: {
+                                    haptic.impactOccurred()
+                                    coordinator.pendingLocationLabel = nil
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(Color(white: 0.6))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.cyan.opacity(0.18)))
+                        }
+
+                        ForEach(coordinator.pendingFiles) { file in
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                                Text(file.filename)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.92))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 160, alignment: .leading)
+                                Button(action: {
+                                    haptic.impactOccurred()
+                                    coordinator.pendingFiles.removeAll { $0.id == file.id }
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(Color(white: 0.6))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.orange.opacity(0.18)))
+                        }
+                    }
+                }
+            }
+
             if !allPendingImages.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -1319,20 +1415,28 @@ struct HandsFreeMainView: View {
 
             // Gemini 標誌性深色膠囊輸入列
             HStack(alignment: .bottom, spacing: 8) {
-                // 左側 [ + ] 隨身眼睛拍照 / 相簿傳圖按鈕
+                // 左側 [ + ] 相簿選圖 / 附加檔案 / 帶入目前位置
                 Menu {
-                    Button(action: {
-                        isInputFocused = false
-                        showVisionCamera = true
-                    }) {
-                        Label("隨身眼睛拍照", systemImage: "camera.fill")
-                    }
-
                     Button(action: {
                         isInputFocused = false
                         showPhotoLibraryPicker = true
                     }) {
                         Label("從相簿選取圖片（可多選）", systemImage: "photo.on.rectangle")
+                    }
+
+                    Button(action: {
+                        isInputFocused = false
+                        showFileImporter = true
+                    }) {
+                        Label("附加檔案或文件", systemImage: "doc.badge.plus")
+                    }
+
+                    Button(action: {
+                        haptic.impactOccurred()
+                        isInputFocused = false
+                        coordinator.attachCurrentLocation()
+                    }) {
+                        Label("帶入目前位置", systemImage: "location.fill")
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -1340,7 +1444,7 @@ struct HandsFreeMainView: View {
                         .foregroundColor(.white.opacity(0.88))
                         .frame(minWidth: 44, minHeight: 44)
                 }
-                .accessibilityLabel("附加圖片或拍照")
+                .accessibilityLabel("附加圖片、檔案或目前位置")
 
                 // 文字輸入框：「問問助理」
                 TextField(
@@ -1354,7 +1458,8 @@ struct HandsFreeMainView: View {
                 .lineLimit(1...5)
                 .foregroundColor(.white)
                 .focused($isInputFocused)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
+                .frame(minHeight: 44, alignment: .center)
 
                 // 右側按鈕區：📷 隨身眼睛拍照 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
                 HStack(spacing: 6) {
@@ -1396,7 +1501,9 @@ struct HandsFreeMainView: View {
                         .accessibilityLabel("停止進行中任務")
                     } else if !coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || !coordinator.pendingImagesData.isEmpty
-                        || coordinator.pendingImageData != nil {
+                        || coordinator.pendingImageData != nil
+                        || !coordinator.pendingFiles.isEmpty
+                        || coordinator.pendingLocationLabel != nil {
                         // 有文字或已附加照片時：顯示藍色 ↑ 送出按鈕
                         Button(action: {
                             haptic.impactOccurred()

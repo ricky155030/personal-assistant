@@ -33,6 +33,7 @@ targets:
         NSSpeechRecognitionUsageDescription: "用於即時將您的語音轉換為文字並自動偵測斷句送出"
         NSCameraUsageDescription: "用於拍攝商品、帳單或畫面並交由 Mac mini 助理辨識處理"
         NSPhotoLibraryUsageDescription: "用於從相簿選取圖片並交由 Mac mini 助理辨識處理"
+        NSLocationWhenInUseUsageDescription: "用於在對話中一鍵帶入目前位置，方便查詢附近資訊或路線"
         UIBackgroundModes:
           - audio
         NSAppTransportSecurity:
