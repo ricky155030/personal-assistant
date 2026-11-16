@@ -89,6 +89,7 @@ struct HandsFreeMainView: View {
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var quotedMessage: ChatMessage? = nil
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
     @AppStorage("showQuickSkillBar") private var showQuickSkillBar: Bool = true
     @FocusState private var isInputFocused: Bool
@@ -697,12 +698,24 @@ struct HandsFreeMainView: View {
                                     }
 
                                     Button {
+                                        haptic.impactOccurred()
+                                        quotedMessage = msg
+                                        isInputFocused = true
+                                    } label: {
+                                        Label("引用追問", systemImage: "quote.bubble")
+                                    }
+
+                                    Button {
                                         coordinator.toggleSpeakMessage(msg)
                                     } label: {
                                         Label(
                                             isSpeakingMessage(msg) ? "停止朗讀" : "朗讀此則訊息",
                                             systemImage: isSpeakingMessage(msg) ? "stop.circle" : "speaker.wave.2"
                                         )
+                                    }
+
+                                    ShareLink(item: msg.content) {
+                                        Label("分享", systemImage: "square.and.arrow.up")
                                     }
 
                                     if msg.role == .user {
@@ -1180,6 +1193,43 @@ struct HandsFreeMainView: View {
                 return []
             }()
 
+            if let quoted = quotedMessage {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(Color.cyan.opacity(0.85))
+                        .frame(width: 3)
+                        .cornerRadius(2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(quoted.role == .user ? "引用你的提問" : "引用助理回覆")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.cyan)
+                        Text(quoted.content.replacingOccurrences(of: "\n", with: " "))
+                            .font(.system(size: 12))
+                            .foregroundColor(Color(white: 0.78))
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Button(action: {
+                        haptic.impactOccurred()
+                        quotedMessage = nil
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundColor(Color(white: 0.55))
+                    }
+                    .accessibilityLabel("取消引用")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+            }
+
             if !allPendingImages.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -1351,6 +1401,16 @@ struct HandsFreeMainView: View {
                         Button(action: {
                             haptic.impactOccurred()
                             isInputFocused = false
+                            if let quoted = quotedMessage {
+                                let snippet = quoted.content
+                                    .replacingOccurrences(of: "\n", with: " ")
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                let truncated = snippet.count > 160 ? String(snippet.prefix(160)) + "..." : snippet
+                                let roleLabel = quoted.role == .user ? "我先前提問" : "助理先前回覆"
+                                let userText = coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                coordinator.textInput = "【引用\(roleLabel)：「\(truncated)」】\n\(userText)"
+                                quotedMessage = nil
+                            }
                             coordinator.sendTextMessage()
                         }) {
                             Circle()
