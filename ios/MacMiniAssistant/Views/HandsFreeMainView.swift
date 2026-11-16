@@ -1220,16 +1220,17 @@ struct HandsFreeMainView: View {
                             isInputFocused = false
                             showQuickPromptDrawer = true
                         }) {
-                            Label("抽屜", systemImage: "square.grid.2x2")
+                            Image(systemName: "square.grid.2x2")
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.cyan)
-                                .padding(.horizontal, 12)
+                                .padding(.horizontal, 10)
                                 .frame(minHeight: 34)
                                 .background(
                                     Capsule()
                                         .fill(Color.cyan.opacity(0.14))
                                         .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
                                 )
+                                .accessibilityLabel("快捷抽屜")
                         }
                         .buttonStyle(.plain)
 
