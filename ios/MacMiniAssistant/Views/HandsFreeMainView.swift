@@ -910,11 +910,12 @@ struct HandsFreeMainView: View {
     }
 
     private func isSpeakingMessage(_ msg: ChatMessage) -> Bool {
-        guard msg.role == .assistant, msg.id == coordinator.messages.last?.id else { return false }
-        if case .speaking = coordinator.state {
-            return true
+        guard msg.role == .assistant,
+              msg.id == coordinator.speakingMessageId,
+              case .speaking = coordinator.state else {
+            return false
         }
-        return false
+        return true
     }
 
     private func shouldShowTimestampSeparator(at index: Int) -> Bool {

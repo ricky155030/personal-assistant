@@ -88,6 +88,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var pendingImageData: Data? = nil
     @Published public var pendingImagesData: [Data] = []
     @Published public var messages: [ChatMessage] = []
+    @Published public var speakingMessageId: UUID? = nil
     @Published public var sessionHistory: [ChatSession] = []
     @Published public var currentSessionId: UUID = UUID()
     @Published public var liveTranscript: String = ""
@@ -687,6 +688,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let assistantMessageId = UUID()
         let assistantMessage = ChatMessage(id: assistantMessageId, role: .assistant, content: "", status: .streaming)
         messages.append(assistantMessage)
+        speakingMessageId = assistantMessageId
         syncCurrentSessionToHistory()
 
         activeStreamTask?.cancel()
@@ -1469,11 +1471,13 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let assistantMessageId = UUID()
         let assistantMessage = ChatMessage(id: assistantMessageId, role: .assistant, content: "", status: .streaming)
         messages.append(assistantMessage)
+        speakingMessageId = assistantMessageId
         syncCurrentSessionToHistory()
 
         let fullQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let speakThisTurn = shouldSpeakCurrentTurn
         let clientTag = speakThisTurn ? "ios-voice" : "telegram"
+        speakingMessageId = speakThisTurn ? assistantMessageId : nil
 
         activeStreamTask?.cancel()
         beginBackgroundExecutionTask()
@@ -1543,6 +1547,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.currentToolStatus = nil
             self.stopThinkingPulseTask()
             if speakThisTurn {
+                self.speakingMessageId = assistantMessageId
                 if case .thinkingAndStreaming = self.state {
                     self.state = .speaking(currentSentence: sentence)
                 }
@@ -1553,6 +1558,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.currentToolStatus = nil
             self.stopThinkingPulseTask()
             if speakThisTurn {
+                self.speakingMessageId = assistantMessageId
                 if case .thinkingAndStreaming = self.state {
                     self.state = .speaking(currentSentence: sentence)
                 }
@@ -1616,13 +1622,18 @@ public final class VoiceSessionCoordinator: ObservableObject {
     /// 手動朗讀或停止朗讀特定訊息氣泡
     public func toggleSpeakMessage(_ message: ChatMessage) {
         if case .speaking = state {
+            let wasSameMessage = (speakingMessageId == message.id)
             speechPlayer.stopImmediately()
+            speakingMessageId = nil
             state = (voiceInputMode == .liveContinuous) ? .listening(isSpeaking: false, currentDb: currentDb) : .idle
-            return
+            if wasSameMessage {
+                return
+            }
         }
         let clean = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         speechPlayer.resetForNewTurn()
+        speakingMessageId = message.id
         state = .speaking(currentSentence: clean)
         speechPlayer.enqueueSentence(clean)
         speechPlayer.markGenerationFinished()
@@ -1630,6 +1641,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     private func handleQueueFinished() {
         stopThinkingPulseTask()
+        speakingMessageId = nil
         currentStreamingText = ""
         currentToolStatus = nil
 
