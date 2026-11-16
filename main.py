@@ -154,6 +154,12 @@ async def startup_event():
     """服務啟動時預熱啟動 agy 守護進程，實現零冷啟動，並啟動 Telegram 與記憶庫排程監聽"""
     if settings.AGENT_ENGINE == "agy":
         agy_singleton.start()
+    def _warm_omp_resident() -> None:
+        try:
+            agy_singleton.get_engine("omp").start()
+        except Exception as ex:
+            print(f"[Boot] ⚠️ omp 常駐預熱失敗（將於首次使用時啟動）: {ex}")
+    asyncio.create_task(asyncio.to_thread(_warm_omp_resident))
     if settings.TELEGRAM_BOT_TOKEN:
         asyncio.create_task(start_telegram_bot())
     asyncio.create_task(run_memory_scheduler())
@@ -338,15 +344,19 @@ def chat(
             )
             send_telegram_sync(tg_text, parse_mode="HTML")
 
-            print(
-                f"\n┌─────────────────────────────────────────────────────────────\n"
-                f"│ ⏱️  [Timing Benchmark] 極速通道命中 (來源: /api/chat, 裝置: {client_source})\n"
-                f"│ ⚡ 總處理耗時 (Latency): {latency:.3f} 秒\n"
-                f"│ 💬 Prompt 內容:        \"{user_query}\"\n"
-                f"│ 🤖 設備端回覆:         \"{output_reply}\"\n"
-                f"└─────────────────────────────────────────────────────────────\n",
-                flush=True
-            )
+            try:
+                _stripped, _widget = extract_widget_html(output_reply)
+                _meta = {"engine": "fast-path"}
+                if _widget:
+                    _meta["widget_html"] = _widget
+                memory_manager.log_interaction(
+                    _clean_history_query(user_query),
+                    _stripped.strip() or output_reply,
+                    actions=["engine: fast-path"],
+                    metadata=_meta,
+                )
+            except Exception as _log_e:
+                print(f"[chat] fast-path history log failed: {_log_e}")
 
             return ChatResponse(
                 reply=output_reply,

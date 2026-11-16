@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import os
+import queue
 import shutil
 import subprocess
 import threading
@@ -38,10 +41,520 @@ def _load_curated_omp_models() -> List[dict]:
         else:
             models.append({"id": item, "label": item})
     return models or list(DEFAULT_OMP_MODELS)
+class OmpResidentWorker:
+    """常駐 omp acp 進程（與 agy 同協定）：開機啟動、長連線問答、毫秒級取消。"""
+
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.proc: Optional[subprocess.Popen] = None
+        self.session_id: Optional[str] = None
+        self.lock = threading.RLock()
+        self._stdin_lock = threading.Lock()
+        self._rpc_id_lock = threading.Lock()
+        self._rpc_seq = 0
+        self._active_turn_id: Optional[int] = None
+        self._cancel_requested = False
+        self._is_ready = False
+        self.last_tokens = 0
+        self.last_usage: dict = {}
+        self.last_cost_usd = 0.0
+        self.last_active_time = time.time()
+        self.cwd = str(settings.BASE_DIR)
+        self.session_state_path = settings.DATA_DIR / "omp_acp_session.json"
+        self.stderr_file = None
+        self.stdout_queue: queue.Queue = queue.Queue()
+        self.reader_thread: Optional[threading.Thread] = None
+
+    def _next_rpc_id(self) -> int:
+        with self._rpc_id_lock:
+            self._rpc_seq += 1
+            return self._rpc_seq
+
+    def _send_rpc(self, payload: dict) -> None:
+        with self._stdin_lock:
+            if self.proc is None or self.proc.stdin is None or self.proc.poll() is not None:
+                raise RuntimeError("OMP ACP stdin 不可用")
+            self.proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self.proc.stdin.flush()
+
+    def _wait_for_rpc_response(self, req_id: int, timeout: float = 30.0) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            remaining = max(0.1, min(1.0, deadline - time.time()))
+            try:
+                msg = self.stdout_queue.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            if msg is None:
+                raise RuntimeError("OMP ACP 輸出意外關閉")
+            if msg.get("id") == req_id and ("result" in msg or "error" in msg):
+                if "error" in msg:
+                    raise RuntimeError(f"OMP ACP 回應錯誤 (id={req_id}): {msg['error']}")
+                return msg
+        raise TimeoutError(f"等待 OMP ACP 回應逾時 id={req_id}")
+
+    def _load_saved_session(self) -> Optional[dict]:
+        try:
+            if self.session_state_path.exists():
+                data = json.loads(self.session_state_path.read_text(encoding="utf-8"))
+                if data.get("session_id"):
+                    return data
+        except Exception as ex:
+            print(f"[OmpResident] ⚠️ 讀取 omp_acp_session.json 失敗: {ex}")
+        return None
+
+    def _save_session_state(self) -> None:
+        if not self.session_id:
+            return
+        try:
+            self.session_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.session_state_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": self.session_id,
+                        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "last_tokens": self.last_tokens,
+                        "last_model": self.model,
+                        "last_usage": self.last_usage,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception as ex:
+            print(f"[OmpResident] ⚠️ 儲存 omp_acp_session.json 失敗: {ex}")
+
+    def _clear_saved_session(self) -> None:
+        try:
+            self.session_state_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    @property
+    def is_busy(self) -> bool:
+        return self._active_turn_id is not None
+
+    @staticmethod
+    def _resolve_omp_bin() -> Optional[str]:
+        return shutil.which("omp") or (
+            str(Path.home() / ".local" / "bin" / "omp")
+            if (Path.home() / ".local" / "bin" / "omp").exists()
+            else None
+        )
+
+    def start(self, force_new_session: bool = False) -> None:
+        with self.lock:
+            self._start_unlocked(force_new_session=force_new_session)
+
+    def _start_unlocked(self, force_new_session: bool = False) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            if self._is_ready and not force_new_session:
+                return
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
+            self.proc = None
+            self._is_ready = False
+        if force_new_session:
+            self._clear_saved_session()
+        omp_bin = self._resolve_omp_bin()
+        if not omp_bin:
+            print("[OmpResident] ❌ 找不到 omp 執行檔，無法啟動常駐進程")
+            return
+        print(f"[OmpResident] 🚀 正在啟動 omp acp 常駐進程 (模型: {self.model})...")
+        t0 = time.time()
+        stderr_log_path = Path(self.cwd) / "data" / "omp_acp.stderr.log"
+        stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.stderr_file and not self.stderr_file.closed:
+            try:
+                self.stderr_file.close()
+            except Exception:
+                pass
+        self.stderr_file = open(stderr_log_path, "a", encoding="utf-8")
+        self.proc = subprocess.Popen(
+            [omp_bin, "acp"] if not self.model else [omp_bin, "--model", self.model, "acp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self.stderr_file,
+            text=True,
+            bufsize=1,
+            cwd=self.cwd,
+        )
+        self.stdout_queue = queue.Queue()
+        self._active_turn_id = None
+        self._cancel_requested = False
+
+        def _reader(proc, out_q) -> None:
+            try:
+                for raw_line in iter(proc.stdout.readline, ""):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except Exception:
+                        continue
+                    if "method" in msg and "id" in msg and "result" not in msg and "error" not in msg:
+                        try:
+                            self._send_rpc({"jsonrpc": "2.0", "id": msg.get("id"), "result": {}})
+                        except Exception:
+                            pass
+                        continue
+                    out_q.put(msg)
+            except Exception:
+                pass
+            finally:
+                out_q.put(None)
+
+        self.reader_thread = threading.Thread(
+            target=_reader, args=(self.proc, self.stdout_queue), daemon=True
+        )
+        self.reader_thread.start()
+        try:
+            init_id = self._next_rpc_id()
+            self._send_rpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": init_id,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": 1,
+                        "clientInfo": {"name": "macmini-assistant-omp", "version": "2.0"},
+                    },
+                }
+            )
+            self._wait_for_rpc_response(init_id, timeout=30.0)
+            resumed = False
+            saved = None if force_new_session else self._load_saved_session()
+            if saved and saved.get("session_id"):
+                try:
+                    resume_id = self._next_rpc_id()
+                    self._send_rpc(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": resume_id,
+                            "method": "session/resume",
+                            "params": {
+                                "sessionId": saved["session_id"],
+                                "cwd": self.cwd,
+                                "mcpServers": [],
+                            },
+                        }
+                    )
+                    resume_resp = self._wait_for_rpc_response(resume_id, timeout=20.0)
+                    self.session_id = resume_resp.get("result", {}).get("sessionId") or saved["session_id"]
+                    self.last_tokens = int(saved.get("last_tokens", 0) or 0)
+                    self.last_usage = dict(saved.get("last_usage", {}) or {})
+                    resumed = True
+                except Exception as resume_err:
+                    print(f"[OmpResident] ℹ️ 無法恢復舊 Session，將建立新 Session: {resume_err}")
+            if not resumed:
+                new_id = self._next_rpc_id()
+                self._send_rpc(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": new_id,
+                        "method": "session/new",
+                        "params": {"cwd": self.cwd, "mcpServers": []},
+                    }
+                )
+                new_resp = self._wait_for_rpc_response(new_id, timeout=45.0)
+                self.session_id = new_resp.get("result", {}).get("sessionId")
+                self.last_tokens = 0
+                self.last_usage = {}
+                self.last_cost_usd = 0.0
+            if not self.session_id:
+                raise RuntimeError("OMP ACP 未能取得有效 sessionId")
+            self._set_model_unlocked(self.model, log_switch=False)
+            elapsed = time.time() - t0
+            self._is_ready = True
+            self._save_session_state()
+            print(
+                f"[OmpResident] ✅ 常駐進程就緒！耗時 {elapsed:.2f}s | Session: {self.session_id[:8]} | 模型: {self.model}"
+            )
+        except Exception as ex:
+            print(f"[OmpResident] ❌ 啟動失敗：{ex}")
+            try:
+                if self.proc:
+                    self.proc.kill()
+            except Exception:
+                pass
+            self.proc = None
+            self._is_ready = False
+
+    def _set_model_unlocked(self, target_model: str, log_switch: bool = True) -> bool:
+        if not target_model:
+            return False
+        if target_model == self.model and self._is_ready:
+            return True
+        old_model = self.model
+        self.model = target_model
+        if self.proc is not None and self.proc.poll() is None and self._is_ready and not self.is_busy:
+            print(f"[OmpResident] 🔀 模型切換需重建常駐進程: {old_model} ➔ {target_model}（開啟全新 Session）")
+            self._start_unlocked(force_new_session=True)
+        elif log_switch:
+            print(f"[OmpResident] 🔀 常駐模型切換: {old_model} ➔ {target_model}")
+        return self._is_ready
+
+    def stop(self) -> None:
+        with self.lock:
+            if self.proc:
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+            self.proc = None
+            self._is_ready = False
+            self._active_turn_id = None
+
+    def restart(self, force_new_session: bool = True) -> None:
+        with self.lock:
+            if self.proc:
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        self.proc.kill()
+                    except Exception:
+                        pass
+            self.proc = None
+            self._is_ready = False
+            self._active_turn_id = None
+            self._start_unlocked(force_new_session=force_new_session)
+
+    def cancel_current_turn(self) -> bool:
+        if not self._is_ready or self.proc is None or self.proc.poll() is not None:
+            return False
+        if self._active_turn_id is None:
+            return False
+        try:
+            self._cancel_requested = True
+            self._send_rpc(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/cancel",
+                    "params": {"sessionId": self.session_id},
+                }
+            )
+            print(f"[OmpResident] 🛑 已發送 session/cancel (turn_id={self._active_turn_id})")
+            return True
+        except Exception as ex:
+            print(f"[OmpResident] ⚠️ 發送 session/cancel 失敗: {ex}")
+            return False
+
+    @staticmethod
+    def _build_prompt_blocks(query: str, media: Optional[List[dict]] = None) -> List[dict]:
+        blocks: List[dict] = []
+        if media:
+            for item in media:
+                mime_type = item.get("mime_type") or item.get("mimeType") or "image/jpeg"
+                b64_data = item.get("data")
+                uri = item.get("uri") or ""
+                if not b64_data and uri:
+                    try:
+                        file_path = Path(uri.replace("file://", ""))
+                        if file_path.exists():
+                            guessed, _ = mimetypes.guess_type(str(file_path))
+                            if guessed:
+                                mime_type = guessed
+                            b64_data = base64.b64encode(file_path.read_bytes()).decode("ascii")
+                    except Exception as ex:
+                        print(f"[OmpResident] ⚠️ 讀取圖片轉 Base64 失敗 ({uri}): {ex}")
+                if b64_data:
+                    blocks.append({"type": "image", "mimeType": mime_type, "data": b64_data})
+        blocks.append({"type": "text", "text": query or "你好"})
+        return blocks
+
+    def send_query_stream(
+        self,
+        query: str,
+        media: Optional[List[dict]] = None,
+        level: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> Generator[Tuple[str, str], None, dict]:
+        with self.lock:
+            if not self._is_ready or self.proc is None or self.proc.poll() is not None or not self.session_id:
+                self._start_unlocked(force_new_session=False)
+            if not self._is_ready or self.proc is None or not self.session_id:
+                yield ("text", "OMP 常駐進程未就緒，請稍後重試。")
+                return {"status": "ERROR", "error": "process_not_ready"}
+            target_model = (model_override or "").strip() or self.model
+            if target_model != self.model:
+                self._set_model_unlocked(target_model, log_switch=True)
+            else:
+                self.model = target_model
+            while not self.stdout_queue.empty():
+                try:
+                    self.stdout_queue.get_nowait()
+                except queue.Empty:
+                    break
+            req_id = self._next_rpc_id()
+            self._active_turn_id = req_id
+            self._cancel_requested = False
+            self._send_rpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": "session/prompt",
+                    "params": {"sessionId": self.session_id, "prompt": self._build_prompt_blocks(query, media)},
+                }
+            )
+        start_t = time.perf_counter()
+        first_token_t: Optional[float] = None
+        reply_parts: List[str] = []
+        thought_parts: List[str] = []
+        turn_usage: dict = {}
+        turn_cost_usd = 0.0
+        was_cancelled = False
+        tool_calls_count = 0
+        try:
+            deadline = time.time() + 600.0
+            while time.time() < deadline:
+                if self._cancel_requested:
+                    was_cancelled = True
+                    break
+                try:
+                    msg = self.stdout_queue.get(timeout=1.0)
+                except queue.Empty:
+                    if self.proc is None or self.proc.poll() is not None:
+                        break
+                    continue
+                if msg is None:
+                    break
+                if msg.get("id") == req_id and ("result" in msg or "error" in msg):
+                    if "error" in msg:
+                        raise RuntimeError(f"OMP ACP prompt 錯誤: {msg['error']}")
+                    result = msg.get("result", {}) or {}
+                    usage = result.get("usage") or {}
+                    if usage:
+                        turn_usage = {
+                            "input_tokens": int(usage.get("inputTokens", 0) or 0),
+                            "output_tokens": int(usage.get("outputTokens", 0) or 0),
+                            "thought_tokens": int(usage.get("thoughtTokens", 0) or 0),
+                            "cached_read_tokens": int(usage.get("cachedReadTokens", 0) or 0),
+                            "total_tokens": int(usage.get("totalTokens", 0) or 0),
+                        }
+                    if result.get("stopReason") == "cancelled":
+                        was_cancelled = True
+                    break
+                if msg.get("method") == "session/update":
+                    params = msg.get("params", {}) or {}
+                    if params.get("sessionId") != self.session_id:
+                        continue
+                    update = params.get("update", {}) or {}
+                    kind = str(update.get("sessionUpdate") or "")
+                    if kind == "agent_message_chunk":
+                        content = update.get("content", {}) or {}
+                        delta = str(content.get("text") or "")
+                        if delta:
+                            if first_token_t is None:
+                                first_token_t = time.perf_counter()
+                            reply_parts.append(delta)
+                            yield ("text", delta)
+                    elif kind in ("agent_thought_chunk", "thought_chunk", "reasoning_chunk"):
+                        content = update.get("content", {}) or {}
+                        delta = str(content.get("text") or "")
+                        if delta:
+                            thought_parts.append(delta)
+                            yield ("thought", delta)
+                    elif kind == "usage_update":
+                        try:
+                            used = int(update.get("used") or 0)
+                            if used > 0:
+                                self.last_tokens = used
+                        except (TypeError, ValueError):
+                            pass
+                        cost = update.get("cost") or {}
+                        try:
+                            if cost.get("amount") is not None:
+                                turn_cost_usd = round(float(cost["amount"]), 6)
+                        except (TypeError, ValueError):
+                            pass
+                    elif "tool" in kind:
+                        tool_calls_count += 1
+                        label = str(update.get("content", "") or update.get("toolName", "") or "工具")
+                        yield ("status", f"執行工具：{label[:40]}")
+        finally:
+            with self.lock:
+                self._active_turn_id = None
+                self.last_active_time = time.time()
+        total_latency = time.perf_counter() - start_t
+        ttft = (first_token_t - start_t) if first_token_t else total_latency
+        clean_reply = "".join(reply_parts).strip()
+        full_thought = "".join(thought_parts).strip()
+        if turn_usage and turn_usage.get("total_tokens"):
+            self.last_tokens = int(turn_usage["total_tokens"])
+            self.last_cost_usd = turn_cost_usd
+        self.last_usage = dict(turn_usage) if turn_usage else {"total_tokens": self.last_tokens}
+        self.last_usage["context_tokens"] = self.last_tokens
+        self._save_session_state()
+        level_norm = level or "med"
+        metadata = {
+            "model": self.model,
+            "thinking_level": level_norm,
+            "ttft_sec": round(ttft, 2),
+            "total_sec": round(total_latency, 2),
+            "usage": {
+                "input_tokens": int(self.last_usage.get("input_tokens", 0) or 0),
+                "output_tokens": int(self.last_usage.get("output_tokens", 0) or 0),
+                "thought_tokens": int(self.last_usage.get("thought_tokens", 0) or 0),
+                "cached_read_tokens": int(self.last_usage.get("cached_read_tokens", 0) or 0),
+                "total_tokens": int(self.last_usage.get("total_tokens", 0) or 0),
+            },
+            "estimated_cost_usd": turn_cost_usd,
+            "engine": "omp-resident",
+        }
+        if was_cancelled and not clean_reply:
+            return {
+                "status": "CANCELLED",
+                "cancelled": True,
+                "clean_reply": clean_reply,
+                "thought": full_thought,
+                "total_latency": total_latency,
+                "time_to_first_token": ttft,
+                "thinking_level": level_norm,
+                "model": self.model,
+                "metadata": metadata,
+            }
+        try:
+            saved_images = memory_manager.save_compressed_history_images(media)
+            memory_manager.log_interaction(
+                query,
+                clean_reply,
+                [f"engine:omp-resident ({self.model})"],
+                images=saved_images,
+                metadata=metadata,
+            )
+        except Exception as log_ex:
+            print(f"[OmpResident] ⚠️ 寫入對話紀錄失敗: {log_ex}")
+        return {
+            "status": "OK",
+            "clean_reply": clean_reply,
+            "thought": full_thought,
+            "actions": [f"engine:omp-resident ({self.model})"],
+            "total_latency": total_latency,
+            "time_to_first_token": ttft,
+            "thinking_level": level_norm,
+            "model": self.model,
+            "metadata": metadata,
+        }
+
+
 
 
 class OmpBrainEngine(BaseBrainEngine):
-    """Subprocess-based OMP engine with session resume, JSONL streaming, and instant cancellation."""
+    """常駐 omp acp 進程引擎（同 agy 協定），異常時自動退回按需子行程模式。"""
 
     engine_id = "omp"
     display_name = "Oh-My-Pi (omp)"
@@ -57,6 +570,7 @@ class OmpBrainEngine(BaseBrainEngine):
         self._last_tokens: int = 0
         self._last_usage: dict = {}
         self._last_model: str = _load_curated_omp_models()[0]["id"]
+        self._worker = OmpResidentWorker(self._last_model)
 
     def _load_session_id(self) -> Optional[str]:
         try:
@@ -90,6 +604,11 @@ class OmpBrainEngine(BaseBrainEngine):
         )
 
     def is_busy(self) -> bool:
+        try:
+            if self._worker.is_busy:
+                return True
+        except Exception:
+            pass
         with self._lock:
             return self._active_proc is not None and self._active_proc.poll() is None
 
@@ -97,26 +616,44 @@ class OmpBrainEngine(BaseBrainEngine):
         self._session_dir.mkdir(parents=True, exist_ok=True)
         if force_new_session:
             self._save_session_id(None)
+        try:
+            self._worker.start(force_new_session=force_new_session)
+        except Exception as ex:
+            print(f"[OmpBrainEngine] ⚠️ 常駐進程啟動失敗，退回按需模式: {ex}")
 
     def stop(self) -> None:
         self.cancel_active_turns()
+        try:
+            self._worker.stop()
+        except Exception:
+            pass
 
     def restart(self, force_new_session: bool = True) -> None:
         self.cancel_active_turns()
         if force_new_session:
             self._save_session_id(None)
+        try:
+            self._worker.restart(force_new_session=force_new_session)
+        except Exception as ex:
+            print(f"[OmpBrainEngine] ⚠️ 常駐進程重啟失敗: {ex}")
 
     def cancel_active_turns(self, level: Optional[str] = None) -> dict:
+        cancelled = False
+        try:
+            if self._worker.cancel_current_turn():
+                cancelled = True
+        except Exception:
+            pass
         with self._lock:
             proc = self._active_proc
             self._cancel_requested = True
             if proc is not None and proc.poll() is None:
                 try:
                     proc.terminate()
-                    return {"cancelled": True, "engine": self.engine_id, "pid": proc.pid}
+                    cancelled = True
                 except Exception as ex:
-                    return {"cancelled": False, "engine": self.engine_id, "error": str(ex)}
-            return {"cancelled": False, "engine": self.engine_id}
+                    return {"cancelled": cancelled, "engine": self.engine_id, "error": str(ex)}
+            return {"cancelled": cancelled, "engine": self.engine_id}
 
     def compact_session(self, timeout: float = 45.0) -> dict:
         return {
@@ -128,19 +665,21 @@ class OmpBrainEngine(BaseBrainEngine):
     def get_status(self) -> dict:
         omp_bin = self._resolve_omp_bin()
         limit = settings.CONTEXT_WINDOW_LIMIT
-        current = int(self._last_tokens or 0)
+        worker_tokens = int(getattr(self._worker, "last_tokens", 0) or 0)
+        current = int(self._last_tokens or worker_tokens or 0)
         ratio = current / limit if limit > 0 else 0.0
+        resident_ready = bool(getattr(self._worker, "_is_ready", False))
         ready = bool(omp_bin)
         busy = self.is_busy()
         return {
             "engine": self.engine_id,
             "ready": ready,
             "is_ready": ready,
+            "resident_ready": resident_ready,
             "busy": busy,
             "is_busy": busy,
-            "session_id": self._session_id,
-            "model": self._last_model,
-            "context_tokens": current,
+            "session_id": self._worker.session_id or self._session_id,
+            "model": self._worker.model,
             "current_tokens": current,
             "limit": limit,
             "ratio": ratio,
@@ -160,6 +699,36 @@ class OmpBrainEngine(BaseBrainEngine):
         return mapping.get(level.lower().strip())
 
     def send_query_stream(
+        self,
+        query: str,
+        media: Optional[List[dict]] = None,
+        level: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> Generator[Tuple[str, str], None, dict]:
+        try:
+            chosen = (model_override or "").strip()
+            if chosen:
+                self._last_model = chosen
+            gen = self._worker.send_query_stream(
+                query, media=media, level=level, model_override=model_override
+            )
+            result = yield from gen
+            self._last_tokens = int(
+                ((result or {}).get("metadata") or {}).get("usage", {}).get("total_tokens")
+                or self._worker.last_tokens
+                or self._last_tokens
+            )
+            self._last_usage = dict(self._worker.last_usage or self._last_usage)
+            self._last_model = self._worker.model
+            return result
+        except Exception as ex:
+            print(f"[OmpBrainEngine] ⚠️ 常駐問答失敗，退回按需模式: {ex}")
+        result = yield from self._send_query_stream_subprocess(
+            query, media=media, level=level, model_override=model_override
+        )
+        return result
+
+    def _send_query_stream_subprocess(
         self,
         query: str,
         media: Optional[List[dict]] = None,
@@ -364,7 +933,7 @@ class OmpBrainEngine(BaseBrainEngine):
                 query,
                 clean_reply,
                 [f"engine:omp ({chosen_model})"],
-                image_paths=saved_images,
+                images=saved_images,
                 metadata=metadata,
             )
         except Exception as log_ex:

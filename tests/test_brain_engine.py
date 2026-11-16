@@ -131,7 +131,7 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
     with patch.object(eng, "_resolve_omp_bin", return_value="/usr/local/bin/omp"), patch(
         "omp_singleton.subprocess.Popen", return_value=fake_proc
     ), patch("omp_singleton.memory_manager.log_interaction") as mock_log:
-        gen = eng.send_query_stream("hi", level="med", model_override="muse-spark-1.3-contributor")
+        gen = eng._send_query_stream_subprocess("hi", level="med", model_override="muse-spark-1.3-contributor")
         collected = []
         result = {}
         try:
@@ -162,6 +162,57 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
     stat = eng.get_status()
     assert stat["current_tokens"] == 321
     assert stat["usage"]["input_tokens"] == 200
+
+
+def test_omp_resident_dispatch_uses_worker():
+    eng = OmpBrainEngine()
+    expected_meta = {
+        "model": "muse-spark-1.3-contributor",
+        "thinking_level": "med",
+        "ttft_sec": 0.1,
+        "total_sec": 0.2,
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "thought_tokens": 0,
+            "cached_read_tokens": 0,
+            "total_tokens": 15,
+        },
+        "estimated_cost_usd": 0.0,
+        "engine": "omp-resident",
+    }
+    expected_result = {
+        "status": "OK",
+        "clean_reply": "常駐回覆",
+        "thought": "",
+        "actions": ["engine:omp-resident (muse-spark-1.3-contributor)"],
+        "total_latency": 0.2,
+        "time_to_first_token": 0.1,
+        "thinking_level": "med",
+        "model": "muse-spark-1.3-contributor",
+        "metadata": expected_meta,
+    }
+
+    def _fake_worker_stream(*args, **kwargs):
+        yield ("text", "常駐回覆")
+        return expected_result
+
+    eng._worker.send_query_stream = _fake_worker_stream
+    eng._worker.last_usage = dict(expected_meta["usage"])
+    eng._worker.last_tokens = 15
+    eng._worker.model = "muse-spark-1.3-contributor"
+    gen = eng.send_query_stream("hi", level="med")
+    collected = []
+    result = {}
+    try:
+        while True:
+            collected.append(next(gen))
+    except StopIteration as stop_ex:
+        result = stop_ex.value
+    assert ("text", "常駐回覆") in collected
+    assert result["metadata"]["engine"] == "omp-resident"
+    assert result["metadata"]["usage"]["total_tokens"] == 15
+    assert eng._last_tokens == 15
 
 
 def test_cross_brain_handoff_injected_once(tmp_path):

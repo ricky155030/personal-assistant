@@ -320,6 +320,94 @@ def format_coupang_fast_reply(state_path: Optional[Path] = None) -> Optional[str
     return f"{spoken}\n\n<widget_html>\n{widget_html}\n</widget_html>"
 
 
+_HA_STATUS_ENTITIES = [
+    ("書房電燈", "switch.0xa4c1389d92bf8ed8"),
+    ("客廳頂燈左", "switch.sonoff_1000ef8371"),
+    ("客廳頂燈右", "switch.sonoff_1000ef5159"),
+    ("流理台燈", "switch.sonoff_10013047ee"),
+    ("臥室米飛", "switch.sonoff_10013051ad"),
+    ("臥室大燈", "switch.wall_switch_left_158d00041a35ca"),
+    ("臥室小燈", "switch.wall_switch_right_158d00041a35ca"),
+    ("餐廳電燈", "switch.0xa4c138f1f9217413"),
+    ("廚房電燈", "switch.chu_fang_dian_deng"),
+    ("走廊電燈", "switch.0xa4c138be0ebaf9d8_center"),
+    ("更衣室電燈", "switch.0xa4c138be0ebaf9d8_left"),
+    ("廁所電燈", "switch.0xa4c138be0ebaf9d8_right"),
+    ("主臥廁所電燈", "switch.0xa4c138fd3fa20eba"),
+    ("客廳冷氣", "switch.living_room_ac_26_medium"),
+    ("臥室冷氣", "switch.bedroom_ac_26_medium"),
+    ("除濕機", "switch.dehumidifier_power"),
+    ("新風機", "switch.xin_feng_ji"),
+    ("離子夾", "switch.li_zi_jia"),
+]
+
+
+def format_ha_status_fast_reply() -> Optional[str]:
+    """零 LLM Token 組裝家電狀態 HTML 報告與語音摘要。"""
+    if not HASS_URL or not HASS_TOKEN:
+        return None
+    rows = []
+    on_count = 0
+    for name, eid in _HA_STATUS_ENTITIES:
+        st = get_ha_state(eid)
+        state = str((st or {}).get("state") or "unknown")
+        is_on = state == "on"
+        if is_on:
+            on_count += 1
+        dot = "#4ade80" if is_on else ("#f87171" if state == "off" else "#64748b")
+        label = "開" if is_on else ("關" if state == "off" else state)
+        rows.append((name, eid, label, dot, is_on))
+    temp_s = get_ha_state(os.getenv("HA_TEMP_SENSOR", "sensor.0x0ceff6fffe69c1c0_temperature"))
+    hum_s = get_ha_state(os.getenv("HA_HUMIDITY_SENSOR", "sensor.0x0ceff6fffe69c1c0_humidity"))
+    temp_v = str((temp_s or {}).get("state") or "--")
+    hum_v = str((hum_s or {}).get("state") or "--")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    file_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    card_rows = "".join(
+        f"<div style=\"display:flex;justify-content:space-between;padding:5px 2px;font-size:12.5px;\">"
+        f"<span style=\"color:#e2e8f0;\">{html.escape(n)}</span>"
+        f"<span style=\"color:{d};font-weight:700;\">● {html.escape(lb)}</span></div>"
+        for n, _, lb, d, _ in rows
+    )
+    widget_html = (
+        "<div style=\"display:flex;flex-direction:column;gap:6px;font-family:-apple-system,sans-serif;\">"
+        "<div style=\"font-size:14px;font-weight:700;color:#f8fafc;\">🏠 家電即時狀態</div>"
+        f"<div style=\"font-size:11px;color:#94a3b8;\">{html.escape(now_str)} · {temp_v}°C / {hum_v}% · {on_count} 個開啟中</div>"
+        + card_rows +
+        "</div>"
+    )
+    table_rows = "".join(
+        f"<tr><td>{html.escape(n)}</td><td><code>{html.escape(e)}</code></td>"
+        f"<td style=\"color:{d};font-weight:700;\">{html.escape(lb)}</td></tr>"
+        for n, e, lb, d, _ in rows
+    )
+    full_html = (
+        "<!DOCTYPE html><html lang=\"zh-Hant\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<title>家電狀態報告 {html.escape(now_str)}</title>"
+        "<style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:20px;}"
+        ".card{max-width:640px;margin:auto;background:#1e293b;border-radius:12px;padding:20px;}"
+        "table{width:100%;border-collapse:collapse;font-size:14px;}td{padding:8px;border-bottom:1px solid #334155;}"
+        "code{color:#94a3b8;font-size:12px;}</style></head><body><div class=\"card\">"
+        f"<h2>🏠 家電狀態報告</h2><p>{html.escape(now_str)} · 客廳 {html.escape(temp_v)}°C / {html.escape(hum_v)}% · {on_count} 個開啟中</p>"
+        f"<table>{table_rows}</table></div></body></html>"
+    )
+    try:
+        reports_dir = BASE_DIR / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        (reports_dir / f"ha_status_{file_ts}.html").write_text(full_html, encoding="utf-8")
+    except Exception as ex:
+        print(f"[FastIntent] HA status report write failed: {ex}")
+    on_names = "、".join([n for n, _, _, _, is_on in rows if is_on][:4])
+    if on_count == 0:
+        spoken = f"目前家電全部關閉，客廳 {temp_v} 度濕度 {hum_v}%，完整報告已生成。"
+    elif on_names:
+        spoken = f"目前有 {on_count} 個家電開啟中，包括{on_names}，客廳 {temp_v} 度濕度 {hum_v}%，完整報告已生成，詳情請看下方卡片。"
+    else:
+        spoken = f"目前有 {on_count} 個家電開啟中，客廳 {temp_v} 度濕度 {hum_v}%，完整報告已生成。"
+    return f"{spoken}\n\n<widget_html>\n{widget_html}\n</widget_html>"
+
+
 def try_fast_intent(query: str) -> Optional[str]:
     """
     極速意圖攔截器 (Fast-Path Intent Router)
@@ -339,8 +427,13 @@ def try_fast_intent(query: str) -> Optional[str]:
         fb_reply = format_fb_monitor_fast_reply()
         if fb_reply:
             return fb_reply
+
+    # 0b. 家電狀態 HTML 報告 (~0.2s, 零 Token)
+    if any(k in clean_q for k in ["家電狀態", "家電報告", "設備狀態", "電器狀態", "全屋狀態", "巡檢家電", "家電巡檢"]):
+        ha_reply = format_ha_status_fast_reply()
+        if ha_reply:
+            return ha_reply
     
-    # 1. 系統時間/日期秒回 (<0.001s)
     time_reply = get_current_time_intent(clean_q)
     if time_reply:
         return time_reply

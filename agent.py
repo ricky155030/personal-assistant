@@ -8,13 +8,30 @@ from brain_engine import brain_router
 from fast_intent import try_fast_intent
 
 class PersonalAgent:
+    def _log_fast(self, query: str, reply: str) -> None:
+        try:
+            from memory_manager import memory_manager as _mm
+            from widget_html_utils import extract_widget_html as _extract
+            _stripped, _widget = _extract(reply)
+            _meta = {"engine": "fast-path"}
+            if _widget:
+                _meta["widget_html"] = _widget
+            _mm.log_interaction(
+                query,
+                (_stripped or "").strip() or reply,
+                actions=["engine: fast-path"],
+                metadata=_meta,
+            )
+        except Exception:
+            pass
+
     def process(self, query: str, client: str = "apple-watch", media: Optional[List[dict]] = None, level: Optional[str] = None) -> Tuple[str, List[str]]:
         """直通處理查詢：優先經由 Fast-Path，未命中或有圖片則直通常駐 agy 代理"""
         if not media:
             fast_reply = try_fast_intent(query)
             if fast_reply:
+                self._log_fast(query, fast_reply)
                 return fast_reply, ["engine: fast-path"]
-        
         # 依據來源管道加上分流標籤，引導 LLM 動態調整長度與風格
         if client == "homepod":
             formatted_query = f"[來源管道: HomePod 音箱] {query}"
@@ -44,6 +61,7 @@ class PersonalAgent:
         if not media:
             fast_reply = try_fast_intent(query)
             if fast_reply:
+                self._log_fast(query, fast_reply)
                 yield ("text", fast_reply)
                 return {"status": "SUCCESS", "mode": "fast-path", "clean_reply": fast_reply}
         
