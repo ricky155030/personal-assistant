@@ -1015,7 +1015,7 @@ def _clean_history_query(raw_query: str) -> str:
 
 def _infer_history_source(raw_query: str, actions: Optional[List[str]] = None) -> str:
     if raw_query.startswith("[背景任務 · ") or any(
-        str(a).startswith("task_report") for a in (actions or [])
+        str(a).startswith(("task_report", "task_manager")) for a in (actions or [])
     ):
         return "background_report"
     if "[來源管道: iOS" in raw_query:

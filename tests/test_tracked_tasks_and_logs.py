@@ -89,3 +89,8 @@ def test_tracked_tasks_and_log_endpoints(tmp_path):
 
         bad_resp = client.get("/api/tasks/missing_task/log")
         assert bad_resp.status_code == 404
+
+
+def test_infer_history_source_recognizes_both_task_prefixes():
+    assert main._infer_history_source("", ["task_report (task:123)"]) == "background_report"
+    assert main._infer_history_source("", ["task_manager (task_123)", "status=成功完成"]) == "background_report"

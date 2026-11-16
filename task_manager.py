@@ -199,7 +199,7 @@ def _sync_task_result_to_memory(
             memory_manager.log_interaction(
                 "",
                 summary,
-                actions=[f"task_manager ({task_id})", f"status={status_str}"],
+                actions=[f"task_report ({task_id})", f"status={status_str}"],
             )
         except Exception as e:
             print(f"[TaskManager] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
