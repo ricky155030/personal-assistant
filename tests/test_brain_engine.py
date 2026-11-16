@@ -104,7 +104,21 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
         {"type": "tool_execution_start", "toolName": "bash"},
         {"type": "tool_execution_end", "toolName": "bash"},
         {"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "完成回覆"}},
-        {"type": "agent_end", "messages": [{"usage": {"totalTokens": 321}}]},
+        {
+            "type": "agent_end",
+            "messages": [
+                {
+                    "usage": {
+                        "input": 200,
+                        "output": 80,
+                        "reasoningTokens": 21,
+                        "cacheRead": 20,
+                        "totalTokens": 321,
+                        "cost": {"total": 0.001234},
+                    }
+                }
+            ],
+        },
     ]
     fake_stdout = io.StringIO("\n".join(json.dumps(e) for e in events) + "\n")
     fake_proc = MagicMock()
@@ -116,7 +130,7 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
 
     with patch.object(eng, "_resolve_omp_bin", return_value="/usr/local/bin/omp"), patch(
         "omp_singleton.subprocess.Popen", return_value=fake_proc
-    ):
+    ), patch("omp_singleton.memory_manager.log_interaction") as mock_log:
         gen = eng.send_query_stream("hi", level="med", model_override="muse-spark-1.3-contributor")
         collected = []
         result = {}
@@ -133,6 +147,21 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
     assert result["clean_reply"] == "完成回覆"
     assert eng._session_id == "sess-abc-123"
     assert eng._last_tokens == 321
+    meta = result["metadata"]
+    assert meta["model"] == "muse-spark-1.3-contributor"
+    assert meta["thinking_level"] == "med"
+    assert meta["estimated_cost_usd"] == 0.001234
+    assert meta["usage"] == {
+        "input_tokens": 200,
+        "output_tokens": 80,
+        "thought_tokens": 21,
+        "cached_read_tokens": 20,
+        "total_tokens": 321,
+    }
+    mock_log.assert_called_once()
+    stat = eng.get_status()
+    assert stat["current_tokens"] == 321
+    assert stat["usage"]["input_tokens"] == 200
 
 
 def test_cross_brain_handoff_injected_once(tmp_path):

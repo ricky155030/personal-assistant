@@ -13,6 +13,7 @@ from typing import Generator, List, Optional, Tuple
 
 from brain_engine import BaseBrainEngine
 from config import settings
+from memory_manager import memory_manager
 
 
 # 精選給 App / Telegram 顯示的 OMP 模型白名單（可隨時於此增減，或透過 OMP_CURATED_MODELS 環境變數覆寫）
@@ -54,6 +55,7 @@ class OmpBrainEngine(BaseBrainEngine):
         self._session_state_path = settings.DATA_DIR / "omp_session.json"
         self._session_id: Optional[str] = self._load_session_id()
         self._last_tokens: int = 0
+        self._last_usage: dict = {}
         self._last_model: str = _load_curated_omp_models()[0]["id"]
 
     def _load_session_id(self) -> Optional[str]:
@@ -125,13 +127,25 @@ class OmpBrainEngine(BaseBrainEngine):
 
     def get_status(self) -> dict:
         omp_bin = self._resolve_omp_bin()
+        limit = settings.CONTEXT_WINDOW_LIMIT
+        current = int(self._last_tokens or 0)
+        ratio = current / limit if limit > 0 else 0.0
+        ready = bool(omp_bin)
+        busy = self.is_busy()
         return {
             "engine": self.engine_id,
-            "ready": bool(omp_bin),
-            "busy": self.is_busy(),
+            "ready": ready,
+            "is_ready": ready,
+            "busy": busy,
+            "is_busy": busy,
             "session_id": self._session_id,
             "model": self._last_model,
-            "context_tokens": self._last_tokens,
+            "context_tokens": current,
+            "current_tokens": current,
+            "limit": limit,
+            "ratio": ratio,
+            "percent": round(ratio * 100, 1),
+            "usage": dict(self._last_usage),
             "supports_quota": False,
         }
 
@@ -156,7 +170,29 @@ class OmpBrainEngine(BaseBrainEngine):
         if not omp_bin:
             msg = "找不到 omp 執行檔，請確認已安裝並加入 PATH。"
             yield ("text", msg)
-            return {"status": "ERROR", "clean_reply": msg, "error": "omp_not_found"}
+            chosen_fallback = (model_override or "").strip() or self._last_model
+            return {
+                "status": "ERROR",
+                "clean_reply": msg,
+                "error": "omp_not_found",
+                "thinking_level": level or "med",
+                "model": chosen_fallback,
+                "metadata": {
+                    "model": chosen_fallback,
+                    "thinking_level": level or "med",
+                    "ttft_sec": 0.0,
+                    "total_sec": 0.0,
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "thought_tokens": 0,
+                        "cached_read_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                    "estimated_cost_usd": 0.0,
+                    "engine": "omp",
+                },
+            }
 
         self._session_dir.mkdir(parents=True, exist_ok=True)
         chosen_model = (model_override or "").strip() or self._last_model
@@ -188,6 +224,8 @@ class OmpBrainEngine(BaseBrainEngine):
         first_token_t: Optional[float] = None
         reply_parts: List[str] = []
         thought_parts: List[str] = []
+        turn_usage: dict = {}
+        turn_cost_usd: float = 0.0
         cancelled = False
 
         with self._lock:
@@ -237,14 +275,37 @@ class OmpBrainEngine(BaseBrainEngine):
                 elif ev_type == "tool_execution_end":
                     tool_name = str(ev.get("toolName") or ev.get("name") or "工具")
                     yield ("tool_done", f"完成工具：{tool_name}")
-                elif ev_type == "agent_end":
-                    msgs = ev.get("messages") or []
-                    if isinstance(msgs, list) and msgs:
-                        last_msg = msgs[-1]
-                        usage = last_msg.get("usage") or {}
-                        total_tok = usage.get("totalTokens")
-                        if isinstance(total_tok, int) and total_tok > 0:
-                            self._last_tokens = total_tok
+                elif ev_type in ("turn_end", "agent_end"):
+                    target_msg = ev.get("message") if ev_type == "turn_end" else None
+                    if target_msg is None:
+                        msgs = ev.get("messages") or []
+                        if isinstance(msgs, list) and msgs:
+                            target_msg = msgs[-1]
+                    if isinstance(target_msg, dict):
+                        usage = target_msg.get("usage") or {}
+                        if isinstance(usage, dict) and usage:
+                            in_tok = int(usage.get("input") or 0)
+                            out_tok = int(usage.get("output") or 0)
+                            thought_tok = int(usage.get("reasoningTokens") or 0)
+                            cache_tok = int(usage.get("cacheRead") or 0)
+                            total_tok = int(usage.get("totalTokens") or (in_tok + out_tok + thought_tok + cache_tok))
+                            turn_usage = {
+                                "input_tokens": in_tok,
+                                "output_tokens": out_tok,
+                                "thought_tokens": thought_tok,
+                                "cached_read_tokens": cache_tok,
+                                "total_tokens": total_tok,
+                            }
+                            cost_obj = usage.get("cost") or {}
+                            if isinstance(cost_obj, dict) and cost_obj.get("total") is not None:
+                                try:
+                                    turn_cost_usd = round(float(cost_obj["total"]), 6)
+                                except (TypeError, ValueError):
+                                    pass
+                            if total_tok > 0:
+                                self._last_tokens = total_tok
+                            self._last_usage = dict(turn_usage)
+                            self._last_usage["context_tokens"] = self._last_tokens
 
             proc.wait(timeout=10)
         finally:
@@ -257,6 +318,22 @@ class OmpBrainEngine(BaseBrainEngine):
         total_latency = time.perf_counter() - start_t
         ttft = (first_token_t - start_t) if first_token_t else total_latency
         clean_reply = "".join(reply_parts).strip()
+        level_norm = level or "med"
+        metadata = {
+            "model": chosen_model,
+            "thinking_level": level_norm,
+            "ttft_sec": round(ttft, 2),
+            "total_sec": round(total_latency, 2),
+            "usage": {
+                "input_tokens": int(turn_usage.get("input_tokens") or 0),
+                "output_tokens": int(turn_usage.get("output_tokens") or 0),
+                "thought_tokens": int(turn_usage.get("thought_tokens") or 0),
+                "cached_read_tokens": int(turn_usage.get("cached_read_tokens") or 0),
+                "total_tokens": int(turn_usage.get("total_tokens") or self._last_tokens or 0),
+            },
+            "estimated_cost_usd": turn_cost_usd,
+            "engine": "omp",
+        }
 
         if cancelled or self._cancel_requested:
             return {
@@ -266,7 +343,9 @@ class OmpBrainEngine(BaseBrainEngine):
                 "thought": "".join(thought_parts),
                 "total_latency": total_latency,
                 "time_to_first_token": ttft,
-                "thinking_level": level or "med",
+                "thinking_level": level_norm,
+                "model": chosen_model,
+                "metadata": metadata,
             }
 
         if proc.returncode not in (0, None) and not clean_reply:
@@ -279,6 +358,18 @@ class OmpBrainEngine(BaseBrainEngine):
             yield ("text", err_msg)
             clean_reply = err_msg
 
+        try:
+            saved_images = memory_manager.save_compressed_history_images(media)
+            memory_manager.log_interaction(
+                query,
+                clean_reply,
+                [f"engine:omp ({chosen_model})"],
+                image_paths=saved_images,
+                metadata=metadata,
+            )
+        except Exception as log_ex:
+            print(f"[OmpBrainEngine] ⚠️ 寫入對話紀錄失敗: {log_ex}")
+
         return {
             "status": "OK",
             "clean_reply": clean_reply,
@@ -286,7 +377,9 @@ class OmpBrainEngine(BaseBrainEngine):
             "actions": [f"engine:omp ({chosen_model})"],
             "total_latency": total_latency,
             "time_to_first_token": ttft,
-            "thinking_level": level or "med",
+            "thinking_level": level_norm,
+            "model": chosen_model,
+            "metadata": metadata,
         }
 
 
