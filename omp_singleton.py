@@ -17,12 +17,9 @@ from typing import Generator, List, Optional, Tuple
 from brain_engine import BaseBrainEngine
 from config import settings
 from memory_manager import memory_manager
-
-
-# 精選給 App / Telegram 顯示的 OMP 模型白名單（可隨時於此增減，或透過 OMP_CURATED_MODELS 環境變數覆寫）
 DEFAULT_OMP_MODELS: List[dict] = [
     {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3"},
-    {"id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
+    {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版"},
 ]
 
 
@@ -288,17 +285,68 @@ class OmpResidentWorker:
             self.proc = None
             self._is_ready = False
 
+    def _run_internal_prompt(self, prompt_text: str, timeout: float = 60.0) -> str:
+        """透過常駐 ACP 發送內部指令並收集文字回覆（不寫入對話歷史）。"""
+        if not self._is_ready or not self.session_id or self.proc is None or self.proc.poll() is not None:
+            return ""
+        while not self.stdout_queue.empty():
+            try:
+                self.stdout_queue.get_nowait()
+            except queue.Empty:
+                break
+        req_id = self._next_rpc_id()
+        self._send_rpc(
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "method": "session/prompt",
+                "params": {"sessionId": self.session_id, "prompt": [{"type": "text", "text": prompt_text}]},
+            }
+        )
+        collected: List[str] = []
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            try:
+                msg = self.stdout_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if msg is None:
+                break
+            if msg.get("id") == req_id and ("result" in msg or "error" in msg):
+                break
+            if msg.get("method") == "session/update":
+                params = msg.get("params", {}) or {}
+                if params.get("sessionId") != self.session_id:
+                    continue
+                update = params.get("update", {}) or {}
+                if update.get("sessionUpdate") == "agent_message_chunk":
+                    delta = str((update.get("content", {}) or {}).get("text") or "")
+                    if delta:
+                        collected.append(delta)
+        return "".join(collected).strip()
+
     def _set_model_unlocked(self, target_model: str, log_switch: bool = True) -> bool:
         if not target_model:
             return False
         if target_model == self.model and self._is_ready:
             return True
         old_model = self.model
-        self.model = target_model
         if self.proc is not None and self.proc.poll() is None and self._is_ready and not self.is_busy:
-            print(f"[OmpResident] 🔀 模型切換需重建常駐進程: {old_model} ➔ {target_model}（開啟全新 Session）")
-            self._start_unlocked(force_new_session=True)
-        elif log_switch:
+            try:
+                switch_out = self._run_internal_prompt(f"/switch {target_model}", timeout=60.0)
+            except Exception as ex:
+                print(f"[OmpResident] ⚠️ /switch 指令發送失敗: {ex}")
+                return False
+            if "Failed to switch" in switch_out or "No API key" in switch_out:
+                print(f"[OmpResident] ⚠️ 模型切換失敗，沿用 {old_model}: {switch_out[:120]}")
+                return False
+            self.model = target_model
+            self._save_session_state()
+            if log_switch:
+                print(f"[OmpResident] 🔀 同 Session 模型切換: {old_model} ➔ {target_model}")
+            return True
+        self.model = target_model
+        if log_switch:
             print(f"[OmpResident] 🔀 常駐模型切換: {old_model} ➔ {target_model}")
         return self._is_ready
 
