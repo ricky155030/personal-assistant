@@ -44,6 +44,7 @@ final class ShareViewController: UIViewController {
         var foundText: String = ""
         var foundTitle: String = ""
         var foundImages: [UIImage] = []
+        var foundFiles: [SharedFileItem] = []
 
         for item in items {
             if let title = item.attributedTitle?.string, !title.isEmpty, foundTitle.isEmpty {
@@ -57,6 +58,19 @@ final class ShareViewController: UIViewController {
                 if foundImages.count < 9 && provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
                     if let img = await loadImage(from: provider) {
                         foundImages.append(downscaleImage(img, maxDimension: 1280))
+                    }
+                    continue
+                }
+                if foundFiles.count < 5 && (
+                    provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
+                    || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                    || (!provider.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+                        && !provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+                        && provider.hasItemConformingToTypeIdentifier(UTType.data.identifier))
+                ) {
+                    if let fileItem = await loadFile(from: provider) {
+                        foundFiles.append(fileItem)
+                        continue
                     }
                 }
                 if foundURL.isEmpty && provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
@@ -78,7 +92,7 @@ final class ShareViewController: UIViewController {
             foundURL = candidate.absoluteString
         }
 
-        return SharedPayload(title: foundTitle, url: foundURL, text: foundText, images: foundImages)
+        return SharedPayload(title: foundTitle, url: foundURL, text: foundText, images: foundImages, files: foundFiles)
     }
 
     private func loadImage(from provider: NSItemProvider) async -> UIImage? {
@@ -173,6 +187,30 @@ final class ShareViewController: UIViewController {
             }
         }
     }
+
+    private func loadFile(from provider: NSItemProvider) async -> SharedFileItem? {
+        let preferredType = provider.registeredTypeIdentifiers.first(where: { $0 != UTType.fileURL.identifier }) ?? UTType.data.identifier
+        return await withCheckedContinuation { cont in
+            provider.loadFileRepresentation(forTypeIdentifier: preferredType) { url, _ in
+                guard let url = url, let data = try? Data(contentsOf: url), !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
+                    cont.resume(returning: nil)
+                    return
+                }
+                let filename = url.lastPathComponent.isEmpty ? "shared_file" : url.lastPathComponent
+                let mimeType = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                let sizeText = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                cont.resume(returning: SharedFileItem(filename: filename, mimeType: mimeType, data: data, sizeText: sizeText))
+            }
+        }
+    }
+}
+
+private struct SharedFileItem: Identifiable {
+    let id = UUID()
+    let filename: String
+    let mimeType: String
+    let data: Data
+    let sizeText: String
 }
 
 private struct SharedPayload {
@@ -180,12 +218,16 @@ private struct SharedPayload {
     var url: String = ""
     var text: String = ""
     var images: [UIImage] = []
+    var files: [SharedFileItem] = []
 
     var isEmpty: Bool {
-        title.isEmpty && url.isEmpty && text.isEmpty && images.isEmpty
+        title.isEmpty && url.isEmpty && text.isEmpty && images.isEmpty && files.isEmpty
     }
 
     var previewText: String {
+        if !files.isEmpty && title.isEmpty && url.isEmpty && text.isEmpty {
+            return "已選取 \(files.count) 份檔案"
+        }
         if !images.isEmpty && title.isEmpty && url.isEmpty && text.isEmpty {
             return "已選取 \(images.count) 張照片"
         }
@@ -201,6 +243,13 @@ private let imageSharePresets: [SharePromptPreset] = [
     SharePromptPreset(title: "嬰兒備品", prompt: "幫我把這些實品照片新增到嬰幼兒備品清單", icon: "stroller.fill"),
     SharePromptPreset(title: "記帳憑證", prompt: "幫我辨識這張收據或帳單明細並記錄", icon: "doc.text.viewfinder"),
     SharePromptPreset(title: "看圖分析", prompt: "請幫我詳細辨識並分析這些圖片內容", icon: "eye.fill"),
+]
+
+private let fileSharePresets: [SharePromptPreset] = [
+    SharePromptPreset(title: "重點摘要", prompt: "請幫我閱讀這份文件並整理核心重點條列", icon: "doc.text.magnifyingglass"),
+    SharePromptPreset(title: "帳單對帳", prompt: "請幫我解析這份帳單或明細並檢查異常項目", icon: "creditcard.fill"),
+    SharePromptPreset(title: "翻譯重點", prompt: "請幫我將這份文件翻譯成繁體中文重點摘要", icon: "character.book.closed.fill"),
+    SharePromptPreset(title: "整理待辦", prompt: "請從這份文件中萃取需要我處理的待辦事項", icon: "checklist"),
 ]
 
 private struct ShareExtensionView: View {
@@ -270,6 +319,28 @@ private struct ShareExtensionView: View {
                                                             .stroke(Color.white.opacity(0.18), lineWidth: 1)
                                                     )
                                             }
+                                        }
+                                    }
+                                    .padding(.bottom, 2)
+                                }
+                                if !payload.files.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(payload.files) { file in
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "doc.fill")
+                                                    .foregroundColor(.cyan)
+                                                Text(file.filename)
+                                                    .font(.subheadline.weight(.medium))
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                Spacer()
+                                                Text(file.sizeText)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
                                         }
                                     }
                                     .padding(.bottom, 2)
@@ -346,8 +417,13 @@ private struct ShareExtensionView: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.secondary)
 
+                            let activePresets: [SharePromptPreset] = {
+                                if !payload.files.isEmpty { return fileSharePresets }
+                                if !payload.images.isEmpty { return imageSharePresets }
+                                return presets
+                            }()
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                ForEach(payload.images.isEmpty ? presets : imageSharePresets) { preset in
+                                ForEach(activePresets) { preset in
                                     Button(action: {
                                         sendShare(prompt: preset.prompt)
                                     }) {
@@ -459,7 +535,7 @@ private struct ShareExtensionView: View {
         Task {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.timeoutInterval = payload.images.isEmpty ? 10.0 : 30.0
+            request.timeoutInterval = (payload.images.isEmpty && payload.files.isEmpty) ? 10.0 : 35.0
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             if !apiKey.isEmpty {
                 request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
@@ -467,6 +543,13 @@ private struct ShareExtensionView: View {
 
             let imagesBase64 = payload.images.compactMap { img -> String? in
                 img.jpegData(compressionQuality: 0.72)?.base64EncodedString()
+            }
+            let filesPayload = payload.files.map { file -> [String: String] in
+                [
+                    "filename": file.filename,
+                    "mime_type": file.mimeType,
+                    "data_base64": file.data.base64EncodedString(),
+                ]
             }
 
             var body: [String: Any] = [
@@ -477,6 +560,9 @@ private struct ShareExtensionView: View {
             ]
             if !imagesBase64.isEmpty {
                 body["images_base64"] = imagesBase64
+            }
+            if !filesPayload.isEmpty {
+                body["files"] = filesPayload
             }
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
