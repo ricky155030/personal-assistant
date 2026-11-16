@@ -356,6 +356,8 @@ public struct ChatSession: Identifiable, Codable, Equatable {
 }
 
 public enum SSEEvent {
+    case queued(turnId: String, position: Int)
+    case cancelled(turnId: String)
     case thoughtDelta(delta: String)
     case status(text: String, tts: String?)
     case textDelta(delta: String)

@@ -380,6 +380,15 @@ public final class MacMiniAPIClient {
                         }
 
                         switch type {
+                        case "queued":
+                            let turnId = json["turn_id"] as? String ?? ""
+                            let pos = json["position"] as? Int ?? 1
+                            continuation.yield(.queued(turnId: turnId, position: pos))
+
+                        case "cancelled":
+                            let turnId = json["turn_id"] as? String ?? ""
+                            continuation.yield(.cancelled(turnId: turnId))
+
                         case "thought_delta":
                             let delta = json["delta"] as? String ?? ""
                             continuation.yield(.thoughtDelta(delta: delta))

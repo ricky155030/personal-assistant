@@ -1200,8 +1200,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     private func saveSessionHistory() {
-        guard let data = try? JSONEncoder().encode(sessionHistory) else { return }
-        try? data.write(to: historyFileURL, options: .atomic)
+        let snapshot = sessionHistory
+        let url = historyFileURL
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     public func syncCurrentSessionToHistory() {
@@ -1474,17 +1478,30 @@ public final class VoiceSessionCoordinator: ObservableObject {
         } else if let single = attachedImg {
             effectiveImagesData = [single]
         }
-        let imagesBase64 = effectiveImagesData.map { $0.base64EncodedString() }
 
         let fullQuery = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let speakThisTurn = shouldSpeakCurrentTurn
         let clientTag = speakThisTurn ? "ios-voice" : "telegram"
 
-        // 若目前已有一個 Turn 正在串流執行，不中斷它，改為將新訊息送入後端佇列排隊
+        // 若目前已有一個 Turn 正在串流執行，不中斷它，改為立即樂觀加入排隊清單並送入後端佇列
         if activeStreamTask != nil {
+            let localTempId = "local_\(UUID().uuidString.prefix(8))"
+            let nowIso = ISO8601DateFormatter().string(from: Date())
+            pendingQueue.append(
+                MacMiniAPIClient.PendingTurnSnapshot(
+                    turn_id: localTempId,
+                    timestamp: nowIso,
+                    query: fullQuery,
+                    status: "queued"
+                )
+            )
             let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
             let lvl = effectiveLevel
+            let imgsData = effectiveImagesData
             Task {
+                let imagesBase64 = await Task.detached(priority: .userInitiated) {
+                    imgsData.map { $0.base64EncodedString() }
+                }.value
                 let stream = apiClient.streamVoiceChat(
                     query: queryWithConstraint,
                     client: clientTag,
@@ -1492,21 +1509,34 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     imageBase64: imagesBase64.first,
                     imagesBase64: imagesBase64
                 )
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                    await self.refreshQueueStatus()
-                }
+                var resolvedTurnId = localTempId
                 do {
-                    for try await _ in stream {
+                    for try await ev in stream {
                         if Task.isCancelled { break }
+                        if case .queued(let serverTurnId, _) = ev, !serverTurnId.isEmpty {
+                            resolvedTurnId = serverTurnId
+                            await MainActor.run {
+                                if let idx = self.pendingQueue.firstIndex(where: { $0.turn_id == localTempId }) {
+                                    self.pendingQueue[idx] = MacMiniAPIClient.PendingTurnSnapshot(
+                                        turn_id: serverTurnId,
+                                        timestamp: nowIso,
+                                        query: fullQuery,
+                                        status: "queued"
+                                    )
+                                } else {
+                                    Task { await self.refreshQueueStatus() }
+                                }
+                            }
+                        } else if case .cancelled = ev {
+                            break
+                        }
                     }
                 } catch {}
                 await MainActor.run {
-                    Task {
-                        await self.refreshQueueStatus()
-                        await self.syncRemoteHistory()
-                    }
+                    self.pendingQueue.removeAll { $0.turn_id == localTempId || $0.turn_id == resolvedTurnId }
                 }
+                await self.refreshQueueStatus()
+                await self.syncRemoteHistory()
             }
             return
         }
@@ -1529,6 +1559,19 @@ public final class VoiceSessionCoordinator: ObservableObject {
             vad.startBargeInMonitoring()
         }
 
+        // 樂觀顯示「進行中」狀態列，讓使用者隨時可一鍵停止
+        if activeTurnSnapshot == nil {
+            activeTurnSnapshot = MacMiniAPIClient.ActiveTurnSnapshot(
+                turn_id: "pending_active",
+                timestamp: ISO8601DateFormatter().string(from: Date()),
+                query: fullQuery,
+                thought: "",
+                tools: [],
+                reply: "",
+                status: "thinking"
+            )
+        }
+
         // 若為 🎙️ 單次語音輸入，送出後即可退回一般模式（回覆完不重開麥克風）
         if voiceInputMode == .singleTurn {
             voiceInputMode = .none
@@ -1543,6 +1586,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         beginBackgroundExecutionTask()
         speechPlayer.startBackgroundKeepAlive()
 
+        let imgsData = effectiveImagesData
         activeStreamTask = Task {
             defer {
                 Task { @MainActor in
@@ -1555,6 +1599,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     await self.syncRemoteHistory()
                 }
             }
+            let imagesBase64 = await Task.detached(priority: .userInitiated) {
+                imgsData.map { $0.base64EncodedString() }
+            }.value
             let queryWithConstraint = "\(self.responseLength.promptInstruction)\n\n\(fullQuery)"
             let stream = apiClient.streamVoiceChat(
                 query: queryWithConstraint,
@@ -1563,11 +1610,6 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 imageBase64: imagesBase64.first,
                 imagesBase64: imagesBase64
             )
-
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 200_000_000)
-                await self.refreshQueueStatus()
-            }
 
             do {
                 for try await event in stream {
@@ -1588,6 +1630,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     private func handleSSEEvent(_ event: SSEEvent, assistantMessageId: UUID, speakThisTurn: Bool) {
         switch event {
+        case .queued, .cancelled:
+            Task { await self.refreshQueueStatus() }
+
         case .thoughtDelta(let delta):
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
                 self.messages[idx].thoughtProcess += delta
