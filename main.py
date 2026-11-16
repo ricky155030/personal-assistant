@@ -14,6 +14,7 @@ from config import settings
 from agent import personal_agent
 from memory_manager import memory_manager
 from agy_singleton import agy_singleton
+from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 from fast_intent import try_fast_intent
 from task_queue import task_queue
 from transcribe_service import transcribe_file, warm_transcriber
@@ -724,6 +725,7 @@ async def voice_chat_stream(
         full_reply_parts = []
         turn_result = {}
         extractor = TTSSentenceExtractor()
+        widget_filter = WidgetHtmlStreamFilter()
         sentence_seq = 0
         active_turn_id = _start_active_turn(user_query)
 
@@ -765,25 +767,27 @@ async def voice_chat_stream(
                     )
                 elif ev_type == "text":
                     delta = ev_data
-                    _update_active_turn(active_turn_id, text_delta=delta)
                     full_reply_parts.append(delta)
-                    loop.call_soon_threadsafe(
-                        event_queue.put_nowait,
-                        {"type": "text_delta", "delta": delta}
-                    )
-                    sentences = extractor.feed(delta)
-                    if not client_disconnected.is_set():
-                        for sent in sentences:
-                            seq = sentence_seq
-                            sentence_seq += 1
-                            loop.call_soon_threadsafe(
-                                event_queue.put_nowait,
-                                {"type": "tts_sentence", "sentence": sent, "seq": seq}
-                            )
-                            loop.call_soon_threadsafe(
-                                tts_queue.put_nowait,
-                                (seq, sent)
-                            )
+                    visible_delta = widget_filter.feed(delta)
+                    if visible_delta:
+                        _update_active_turn(active_turn_id, text_delta=visible_delta)
+                        loop.call_soon_threadsafe(
+                            event_queue.put_nowait,
+                            {"type": "text_delta", "delta": visible_delta}
+                        )
+                        sentences = extractor.feed(visible_delta)
+                        if not client_disconnected.is_set():
+                            for sent in sentences:
+                                seq = sentence_seq
+                                sentence_seq += 1
+                                loop.call_soon_threadsafe(
+                                    event_queue.put_nowait,
+                                    {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                                )
+                                loop.call_soon_threadsafe(
+                                    tts_queue.put_nowait,
+                                    (seq, sent)
+                                )
 
             was_cancelled = cancel_event.is_set() or bool(turn_result.get("cancelled"))
             if was_cancelled:
@@ -792,6 +796,25 @@ async def voice_chat_stream(
                 return
 
             # Flush 剩餘未結尾句子（若客戶端已離線則略過 TTS 合成，直接完成任務寫入歷史與 Telegram）
+            rem_visible = widget_filter.flush()
+            if rem_visible:
+                _update_active_turn(active_turn_id, text_delta=rem_visible)
+                loop.call_soon_threadsafe(
+                    event_queue.put_nowait,
+                    {"type": "text_delta", "delta": rem_visible}
+                )
+                if not client_disconnected.is_set():
+                    for sent in extractor.feed(rem_visible):
+                        seq = sentence_seq
+                        sentence_seq += 1
+                        loop.call_soon_threadsafe(
+                            event_queue.put_nowait,
+                            {"type": "tts_sentence", "sentence": sent, "seq": seq}
+                        )
+                        loop.call_soon_threadsafe(
+                            tts_queue.put_nowait,
+                            (seq, sent)
+                        )
             if not client_disconnected.is_set():
                 for sent in extractor.flush():
                     seq = sentence_seq
@@ -820,7 +843,8 @@ async def voice_chat_stream(
 
             total_latency = round(time.perf_counter() - start_ts, 3)
             full_reply = "".join(full_reply_parts) or turn_result.get("response", "") or turn_result.get("clean_reply", "")
-            clean_reply = full_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
+            stripped_reply, extracted_widget = extract_widget_html(full_reply)
+            clean_reply = stripped_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
 
             new_reports = [
                 f for f in settings.REPORTS_DIR.glob("*.html")
@@ -835,6 +859,9 @@ async def voice_chat_stream(
                 report_link_html = f"\n\n🌐 <b>線上報告已生成</b>：\n👉 <a href=\"{report_url}\">點此開啟報告</a> ｜ 📂 <a href=\"{portal_url}\">報告總覽中心</a>"
 
             quick_replies = turn_result.get("quick_replies") or []
+            meta_payload = dict(turn_result.get("metadata") or {})
+            if extracted_widget and not meta_payload.get("widget_html"):
+                meta_payload["widget_html"] = extracted_widget
             done_payload = {
                 "type": "done",
                 "full_reply": clean_reply,
@@ -842,7 +869,7 @@ async def voice_chat_stream(
                 "thinking_level": level or "med",
                 "report_url": report_url,
                 "quick_replies": quick_replies,
-                "metadata": turn_result.get("metadata"),
+                "metadata": meta_payload or None,
             }
             loop.call_soon_threadsafe(event_queue.put_nowait, done_payload)
 

@@ -26,6 +26,7 @@ from typing import Generator, List, Optional, Tuple, Union, Any
 from config import settings
 from memory_manager import memory_manager
 from thinking_router import classify_thinking_level, clean_query_prefix
+from widget_html_utils import extract_widget_html
 
 logger = logging.getLogger("AgyBrainPool")
 
@@ -1130,9 +1131,11 @@ class AgyWorker:
                 self.last_active_time = time.time()
                 full_reply = "".join(full_reply_parts) or turn_result.get("response", "")
                 full_thought = "".join(full_thought_parts).strip()
-                clean_reply = full_reply.replace("**", "").replace("#", "").replace("`", "").strip()
+                reply_without_widget, widget_html = extract_widget_html(full_reply)
+                clean_reply = reply_without_widget.replace("**", "").replace("#", "").replace("`", "").strip()
 
                 turn_result["clean_reply"] = clean_reply
+                turn_result["widget_html"] = widget_html
                 turn_result["thought"] = full_thought
                 turn_result["quick_replies"] = [] if was_cancelled else extract_quick_replies(clean_reply, user_query=query)
                 turn_result["cancelled"] = was_cancelled or turn_result.get("cancelled", False)
@@ -1390,6 +1393,8 @@ class AgyBrainPool:
                     },
                     "estimated_cost_usd": est_cost,
                 }
+                if turn_result.get("widget_html"):
+                    metadata["widget_html"] = turn_result["widget_html"]
                 turn_result["metadata"] = metadata
                 actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
                 saved_images = memory_manager.save_compressed_history_images(media)

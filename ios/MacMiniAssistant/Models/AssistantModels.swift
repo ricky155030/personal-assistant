@@ -233,6 +233,7 @@ public struct TurnMetadata: Codable, Equatable {
     public var total_sec: Double?
     public var usage: TurnUsage?
     public var estimated_cost_usd: Double?
+    public var widget_html: String?
 
     public var summaryText: String {
         var parts: [String] = []
@@ -276,6 +277,11 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
 
     public var isBackgroundReport: Bool {
         source == "background_report"
+    }
+
+    public var widgetHtml: String? {
+        let trimmed = metadata?.widget_html?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     public init(

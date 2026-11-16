@@ -2057,6 +2057,11 @@ struct GeminiMessageRow: View {
                 }
 
                 // HTML 報告連結（若有）
+                if let widgetHtml = message.widgetHtml {
+                    HTMLWidgetView(html: widgetHtml)
+                        .padding(.top, 4)
+                }
+
                 if let reportUrl = message.reportUrl, let url = URL(string: reportUrl) {
                     Link(destination: url) {
                         HStack(spacing: 6) {

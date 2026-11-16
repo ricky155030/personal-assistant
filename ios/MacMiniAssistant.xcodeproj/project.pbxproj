@@ -16,6 +16,7 @@
 		28FAFDA2EBEBAF446629FFF8 /* AssistantIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B062E93276233E7C7607CC9F /* AssistantIntents.swift */; };
 		29AC55C091BA4643B0712B4F /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8698A4936B34827490B2B14 /* ShareViewController.swift */; };
 		2AA208B1BFE4D49D99E44DE3 /* VisionCameraView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */; };
+		4D469D332427F6DE54FFA2E2 /* HTMLWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */; };
 		5CF5EE3FBEB32167C82FD014 /* AssistantSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */; };
 		638941A114F939B59684F173 /* MacMiniAssistantShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EE24F695E22BBDFA8119C838 /* MacMiniAssistantShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6A6A8170008C85920BE624CB /* MacMiniAssistantWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4A0888283E7B60BE268B7C5 /* MacMiniAssistantWidgetBundle.swift */; };
@@ -71,6 +72,7 @@
 		49E2934B8427DE9E5F82FA1E /* MacMiniAssistantWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAssistantWidget.swift; sourceTree = "<group>"; };
 		4A41A7AA54B96AC2F085BFF2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4CC36A28C8617C294FB5D57E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLWidgetView.swift; sourceTree = "<group>"; };
 		5E3BF0D3B8802C1B5F3975F0 /* NativeSpeechPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechPlayer.swift; sourceTree = "<group>"; };
 		6C09085774DDCD3C95C4D9D3 /* MacMiniAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAPIClient.swift; sourceTree = "<group>"; };
 		76787B20330917235ABB0C96 /* MacMiniAssistantWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantWidget.entitlements; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 			children = (
 				FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */,
 				2DB522D8D90D32751E9D9DDB /* HandsFreeMainView.swift */,
+				51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */,
 				0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */,
 				D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */,
 			);
@@ -303,6 +306,7 @@
 				160A0F392D26BB2EEA3C2E75 /* AssistantModels.swift in Sources */,
 				5CF5EE3FBEB32167C82FD014 /* AssistantSettingsView.swift in Sources */,
 				D6E5AC665BF3AFF54F0077F5 /* AudioRecorderVAD.swift in Sources */,
+				4D469D332427F6DE54FFA2E2 /* HTMLWidgetView.swift in Sources */,
 				F1495C95B0622D8A8F88876E /* HandsFreeMainView.swift in Sources */,
 				07C38680368D7C7D2E18978C /* MacMiniAPIClient.swift in Sources */,
 				722749E618BC2FA5FF592C90 /* MacMiniAssistantApp.swift in Sources */,
