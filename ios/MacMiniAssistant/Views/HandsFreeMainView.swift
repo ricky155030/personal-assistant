@@ -984,6 +984,7 @@ struct HandsFreeMainView: View {
             ("今日簡報", "calendar.badge.clock", "請給我今日簡報與待辦事項"),
             ("待買清單", "cart.fill", "查詢目前待買清單"),
             ("酷澎盯價", "tag.fill", "查詢酷澎最新追蹤價格與狀態"),
+            ("FB巡檢", "text.magnifyingglass", "查詢FB社團近期巡檢狀態與貼文"),
             ("家電狀態", "house.fill", "查詢目前家裡電器與溫濕度狀態"),
             ("任務狀態", "bolt.fill", nil),
         ]

@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from fast_intent import format_coupang_fast_reply, try_fast_intent
+from fast_intent import format_coupang_fast_reply, format_fb_monitor_fast_reply, try_fast_intent
 from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
 
 
@@ -100,4 +100,48 @@ def test_try_fast_intent_strips_length_constraint_prefix(monkeypatch):
     monkeypatch.setattr("fast_intent.format_coupang_fast_reply", lambda: "OK<widget_html><div>x</div></widget_html>")
     q = "【回覆長度約束：細節模式】以結構化條理分明方式回覆\n\n查詢酷澎最新追蹤價格與狀態"
     assert try_fast_intent(q) == "OK<widget_html><div>x</div></widget_html>"
+
+
+def test_format_fb_monitor_fast_reply_builds_fixed_widget():
+    sample = {
+        "group_title": "(6) 竹北測試社團 <XSS> | Facebook",
+        "group_url": "https://www.facebook.com/groups/123/",
+        "daemon": {"is_running": True, "uptime": "2 小時 10 分"},
+        "last_poll_at": "2026-11-16 11:49:39",
+        "total_seen_posts": 120,
+        "recent_polls": [{"cycle": 55}],
+        "recent_posts": [
+            {
+                "checked_at": "2026-11-16 11:35:30",
+                "author": "王小明",
+                "image_count": 2,
+                "status": "MATCHED",
+                "summary": "免費贈送嬰兒推車",
+                "permalink": "https://www.facebook.com/groups/123/posts/1/",
+            },
+            {
+                "checked_at": "2026-11-16 11:20:00",
+                "author": "匿名成員",
+                "image_count": 0,
+                "status": "EXCLUDED",
+                "reason": "付費販售",
+                "permalink": "https://www.facebook.com/groups/123/posts/2/",
+            },
+        ],
+    }
+    reply = format_fb_monitor_fast_reply(data=sample)
+    assert reply is not None
+    spoken, widget = extract_widget_html(reply)
+    assert "運行中" in spoken
+    assert "1 篇命中通知" in spoken
+    assert widget is not None
+    assert "竹北測試社團 &lt;XSS&gt;" in widget
+    assert "✅ 命中通知" in widget
+    assert "免費贈送嬰兒推車" in widget
+
+
+def test_try_fast_intent_fb_trigger(monkeypatch):
+    monkeypatch.setattr("fast_intent.format_fb_monitor_fast_reply", lambda: "FB_OK<widget_html><div>fb</div></widget_html>")
+    q = "【回覆長度約束：細節模式】...\n\n查詢FB社團近期巡檢狀態與貼文"
+    assert try_fast_intent(q) == "FB_OK<widget_html><div>fb</div></widget_html>"
 

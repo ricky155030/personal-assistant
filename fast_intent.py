@@ -3,6 +3,7 @@ import sys
 import re
 import json
 import html
+import subprocess
 import time
 import urllib.request
 import urllib.error
@@ -93,6 +94,113 @@ _COUPANG_TRIGGERS = {
     "查酷澎最新狀態",
     "酷澎巡檢狀況",
 }
+
+_FB_MONITOR_TRIGGERS = {
+    "查詢fb社團近期巡檢狀態與貼文",
+    "fb巡檢",
+    "fb社團巡檢",
+    "fb監控狀態",
+    "查詢fb巡檢",
+    "近期的巡檢有些什麼",
+    "近期巡檢有些什麼",
+    "社團最近巡檢到了什麼",
+}
+
+
+def format_fb_monitor_fast_reply(data: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """零 LLM Token 組裝 FB 社團巡檢固定格式 HTML 卡片與語音摘要。"""
+    if data is None:
+        script = BASE_DIR / ".agents" / "skills" / "fb-group-monitor" / "scripts" / "fb_group_monitor.py"
+        if not script.exists():
+            return None
+        try:
+            res = subprocess.run(
+                [sys.executable, str(script), "--recent", "5", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=6,
+                cwd=str(BASE_DIR),
+            )
+            if res.returncode != 0 or not res.stdout.strip():
+                return None
+            data = json.loads(res.stdout)
+        except Exception:
+            return None
+
+    group_title = re.sub(r"^\(\d+\)\s*", "", str(data.get("group_title") or "FB 監控社團")).replace(" | Facebook", "").strip()
+    daemon = data.get("daemon") or {}
+    is_running = bool(daemon.get("is_running"))
+    uptime = str(daemon.get("uptime") or "")
+    last_poll_raw = str(data.get("last_poll_at") or "")
+    poll_hhmm = last_poll_raw[11:16] if len(last_poll_raw) >= 16 else "近期"
+    recent_polls = data.get("recent_polls") or []
+    latest_cycle = recent_polls[0].get("cycle") if recent_polls else None
+    total_seen = int(data.get("total_seen_posts") or 0)
+    posts = data.get("recent_posts") or []
+
+    matched_cnt = sum(1 for p in posts if "MATCH" in str(p.get("status") or "").upper())
+    status_word = "運行中" if is_running else "目前未運行"
+    spoken = (
+        f"FB 社團巡檢守護進程{status_word}（最後巡檢 {poll_hhmm}），"
+        f"最近 {len(posts)} 篇新貼文中共有 {matched_cnt} 篇命中通知，詳細清單請看下方卡片。"
+    )
+
+    badge_text = f"🟢 運行中 {uptime}".strip() if is_running else "⚪ 已停止"
+    badge_bg = "rgba(52,211,153,0.15)" if is_running else "rgba(148,163,184,0.15)"
+    badge_fg = "#34d399" if is_running else "#94a3b8"
+    cycle_line = f"{poll_hhmm} 巡檢 · 第 {latest_cycle} 輪" if latest_cycle else f"{poll_hhmm} 巡檢"
+
+    post_cards = []
+    for p in posts[:5]:
+        checked = str(p.get("checked_at") or "")
+        hhmm = checked[11:16] if len(checked) >= 16 else str(p.get("posted_ago") or "近期")
+        author = html.escape(str(p.get("author") or "成員"))
+        img_cnt = int(p.get("image_count") or 0)
+        img_str = f" · {img_cnt}圖" if img_cnt > 0 else ""
+        is_match = "MATCH" in str(p.get("status") or "").upper()
+        tag_text = "✅ 命中通知" if is_match else "已排除"
+        tag_fg = "#4ade80" if is_match else "#94a3b8"
+        tag_bg = "rgba(34,197,94,0.18)" if is_match else "rgba(148,163,184,0.15)"
+        card_bg = "rgba(34,197,94,0.10)" if is_match else "rgba(255,255,255,0.04)"
+        card_border = "rgba(34,197,94,0.28)" if is_match else "rgba(255,255,255,0.08)"
+        desc = html.escape(str(p.get("summary") or p.get("reason") or p.get("text_preview") or "")[:90])
+        permalink = html.escape(str(p.get("permalink") or data.get("group_url") or "#"), quote=True)
+
+        post_cards.append(
+            f"<a href=\"{permalink}\" style=\"text-decoration:none;display:block;padding:7px 9px;border-radius:10px;"
+            f"background:{card_bg};border:1px solid {card_border};\">"
+            "<div style=\"display:flex;justify-content:space-between;align-items:center;\">"
+            f"<span style=\"font-size:11px;color:#94a3b8;\">{html.escape(hhmm)} · {author}{img_str}</span>"
+            f"<span style=\"font-size:10.5px;font-weight:600;color:{tag_fg};background:{tag_bg};padding:1px 6px;border-radius:6px;\">{tag_text}</span>"
+            "</div>"
+            f"<div style=\"font-size:12.5px;color:#f1f5f9;margin-top:3px;font-weight:500;\">{desc}</div>"
+            "</a>"
+        )
+
+    if not post_cards:
+        post_cards.append(
+            "<div style=\"font-size:12px;color:#94a3b8;padding:8px;text-align:center;\">近期尚無新貼文判讀紀錄</div>"
+        )
+
+    widget_html = (
+        "<div style=\"display:flex;flex-direction:column;gap:8px;font-family:-apple-system,sans-serif;\">"
+        "<div style=\"display:flex;justify-content:space-between;align-items:center;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.1);\">"
+        "<div>"
+        "<div style=\"font-size:14px;font-weight:700;color:#f8fafc;\">📘 FB 社團巡檢看板</div>"
+        f"<div style=\"font-size:11px;color:#94a3b8;margin-top:2px;\">{html.escape(group_title)}</div>"
+        "</div>"
+        "<div style=\"text-align:right;white-space:nowrap;margin-left:8px;\">"
+        f"<div style=\"font-size:11px;color:{badge_fg};background:{badge_bg};padding:2px 8px;border-radius:999px;font-weight:600;\">{html.escape(badge_text)}</div>"
+        f"<div style=\"font-size:10.5px;color:#64748b;margin-top:3px;\">{html.escape(cycle_line)}</div>"
+        "</div></div>"
+        "<div style=\"display:flex;justify-content:space-between;font-size:11px;color:#cbd5e1;background:rgba(255,255,255,0.04);padding:6px 8px;border-radius:8px;\">"
+        f"<span>已累計判讀 <b>{total_seen:,}</b> 篇</span>"
+        f"<span>近期命中 <b>{matched_cnt}</b> / {len(posts)} 篇</span>"
+        "</div>"
+        + "".join(post_cards)
+        + "</div>"
+    )
+    return f"{spoken}\n\n<widget_html>\n{widget_html}\n</widget_html>"
 
 
 def format_coupang_fast_reply(state_path: Optional[Path] = None) -> Optional[str]:
@@ -221,11 +329,16 @@ def try_fast_intent(query: str) -> Optional[str]:
     stripped = re.sub(r"^\s*【回覆長度約束：[^】]*】[^\n]*\s*", "", query)
     clean_q = re.sub(r"[，。！？\s]+", "", stripped).strip()
 
-    # 0. 酷澎盯價零 Token HTML 卡片快查 (~0.01s)
+    # 0. 酷澎盯價 & FB 社團巡檢 零 Token HTML 卡片快查 (~0.01s)
     if clean_q in _COUPANG_TRIGGERS:
         coupang_reply = format_coupang_fast_reply()
         if coupang_reply:
             return coupang_reply
+
+    if clean_q.lower() in _FB_MONITOR_TRIGGERS:
+        fb_reply = format_fb_monitor_fast_reply()
+        if fb_reply:
+            return fb_reply
     
     # 1. 系統時間/日期秒回 (<0.001s)
     time_reply = get_current_time_intent(clean_q)
