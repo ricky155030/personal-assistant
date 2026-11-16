@@ -74,6 +74,8 @@ struct HandsFreeMainView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
 
     @State private var showQuotaSheet: Bool = false
+    @State private var showQuickPromptDrawer: Bool = false
+    @State private var quickPrompts: [QuickPromptPreset] = QuickPromptStore.loadPresets()
     @State private var showSettings: Bool = false
     @State private var showModelPopover: Bool = false
     @State private var isAtBottom: Bool = true
@@ -142,6 +144,15 @@ struct HandsFreeMainView: View {
             QuotaDetailSheetView(coordinator: coordinator)
                 .presentationDetents([.height(435), .medium])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showQuickPromptDrawer) {
+            QuickPromptDrawerView(presets: $quickPrompts) { prompt in
+                haptic.impactOccurred()
+                isInputFocused = false
+                coordinator.sendQuickReply(prompt)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showSettings) {
             AssistantSettingsView(coordinator: coordinator)
@@ -979,17 +990,6 @@ struct HandsFreeMainView: View {
         }
     }
 
-    private var quickSkillChips: [(title: String, icon: String, prompt: String?)] {
-        [
-            ("今日簡報", "calendar.badge.clock", "請給我今日簡報與待辦事項"),
-            ("待買清單", "cart.fill", "查詢目前待買清單"),
-            ("酷澎盯價", "tag.fill", "查詢酷澎最新追蹤價格與狀態"),
-            ("FB巡檢", "text.magnifyingglass", "查詢FB社團近期巡檢狀態與貼文"),
-            ("家電狀態", "house.fill", "查詢目前家裡電器與溫濕度狀態"),
-            ("任務狀態", "bolt.fill", nil),
-        ]
-    }
-
     private var zeroStateDashboard: some View {
         let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
         let ctx = latestContextUsage
@@ -1126,16 +1126,29 @@ struct HandsFreeMainView: View {
             } else if showQuickSkillBar && coordinator.pendingImagesData.isEmpty && coordinator.pendingImageData == nil {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(quickSkillChips, id: \.title) { chip in
+                        Button(action: {
+                            haptic.impactOccurred()
+                            isInputFocused = false
+                            showQuickPromptDrawer = true
+                        }) {
+                            Label("抽屜", systemImage: "square.grid.2x2")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.cyan)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 34)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.cyan.opacity(0.14))
+                                        .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        ForEach(quickPrompts) { chip in
                             Button(action: {
                                 haptic.impactOccurred()
                                 isInputFocused = false
-                                if let prompt = chip.prompt {
-                                    coordinator.sendQuickReply(prompt)
-                                } else {
-                                    coordinator.refreshQuotaStatus(force: true)
-                                    showQuotaSheet = true
-                                }
+                                coordinator.sendQuickReply(chip.prompt)
                             }) {
                                 Label(chip.title, systemImage: chip.icon)
                                     .font(.caption.weight(.semibold))

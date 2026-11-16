@@ -574,3 +574,82 @@ public final class VisionPresetStore {
         }
     }
 }
+
+public struct QuickPromptPreset: Identifiable, Codable, Equatable {
+    public let id: String
+    public var title: String
+    public var icon: String
+    public var prompt: String
+    public var isBuiltIn: Bool
+
+    public init(
+        id: String = UUID().uuidString,
+        title: String,
+        icon: String,
+        prompt: String,
+        isBuiltIn: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.icon = icon
+        self.prompt = prompt
+        self.isBuiltIn = isBuiltIn
+    }
+
+    public static let defaultPresets: [QuickPromptPreset] = [
+        QuickPromptPreset(
+            id: "quick_briefing",
+            title: "今日簡報",
+            icon: "calendar.badge.clock",
+            prompt: "請給我今日簡報與待辦事項",
+            isBuiltIn: true
+        ),
+        QuickPromptPreset(
+            id: "quick_shopping",
+            title: "待買清單",
+            icon: "cart.fill",
+            prompt: "查詢目前待買清單",
+            isBuiltIn: true
+        ),
+        QuickPromptPreset(
+            id: "quick_coupang",
+            title: "酷澎盯價",
+            icon: "tag.fill",
+            prompt: "查詢酷澎最新追蹤價格與狀態",
+            isBuiltIn: true
+        ),
+        QuickPromptPreset(
+            id: "quick_fb_monitor",
+            title: "FB巡檢",
+            icon: "text.magnifyingglass",
+            prompt: "查詢FB社團近期巡檢狀態與貼文",
+            isBuiltIn: true
+        ),
+        QuickPromptPreset(
+            id: "quick_home",
+            title: "家電狀態",
+            icon: "house.fill",
+            prompt: "查詢目前家裡電器與溫濕度狀態",
+            isBuiltIn: true
+        ),
+    ]
+}
+
+public final class QuickPromptStore {
+    private static let userDefaultsKey = "macmini_quick_prompt_presets"
+
+    public static func loadPresets() -> [QuickPromptPreset] {
+        if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+           let list = try? JSONDecoder().decode([QuickPromptPreset].self, from: data),
+           !list.isEmpty {
+            return list
+        }
+        return QuickPromptPreset.defaultPresets
+    }
+
+    public static func savePresets(_ presets: [QuickPromptPreset]) {
+        if let data = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+        }
+    }
+}
