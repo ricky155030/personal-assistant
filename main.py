@@ -928,7 +928,11 @@ async def voice_chat_stream(
     async def event_generator():
         try:
             while True:
-                item = await event_queue.get()
+                try:
+                    item = await asyncio.wait_for(event_queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
                 if item is None:
                     break
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"

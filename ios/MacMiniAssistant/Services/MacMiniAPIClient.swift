@@ -32,7 +32,7 @@ public final class MacMiniAPIClient {
     public init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60.0
-        config.timeoutIntervalForResource = 180.0
+        config.timeoutIntervalForResource = 600.0
         config.waitsForConnectivity = true
         config.httpShouldUsePipelining = false
         self.session = URLSession(configuration: config)
@@ -308,6 +308,7 @@ public final class MacMiniAPIClient {
 
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
+                request.timeoutInterval = 300.0
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(self.apiKey, forHTTPHeaderField: "X-Agent-Key")
                 request.setValue("close", forHTTPHeaderField: "Connection")

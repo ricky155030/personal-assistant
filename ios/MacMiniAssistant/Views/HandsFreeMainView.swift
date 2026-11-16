@@ -279,41 +279,70 @@ struct HandsFreeMainView: View {
         )
     }
 
-    // MARK: - 錯誤卡片（附重試按鈕）
+    // MARK: - 錯誤卡片（同步進度 / 帶回輸入框）
     private func errorCard(_ err: String) -> some View {
         let lastUserText = coordinator.messages.last(where: { $0.role == .user })?.content
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        return HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 14))
-                .foregroundColor(.red.opacity(0.9))
-                .padding(.top, 1)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(.red.opacity(0.9))
+                    .padding(.top, 1)
 
-            Text(err)
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.88))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+                Text(err)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.88))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
 
-            if !lastUserText.isEmpty && !coordinator.isProcessingOrSpeaking {
+            HStack(spacing: 8) {
                 Button(action: {
                     haptic.impactOccurred()
                     coordinator.errorMessage = nil
-                    coordinator.sendQuickReply(lastUserText)
+                    Task {
+                        await coordinator.rebuildTimelineFromServer()
+                    }
                 }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
+                        Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 11, weight: .bold))
-                        Text("重試")
+                        Text("同步進度")
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
                     .frame(height: 30)
-                    .background(Capsule().fill(Color.red.opacity(0.55)))
+                    .background(Capsule().fill(Color.cyan.opacity(0.35)))
                 }
                 .buttonStyle(.plain)
+
+                if !lastUserText.isEmpty && !coordinator.isProcessingOrSpeaking {
+                    Button(action: {
+                        haptic.impactOccurred()
+                        coordinator.errorMessage = nil
+                        if coordinator.textInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            coordinator.textInput = lastUserText
+                        }
+                        isInputFocused = true
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("帶回輸入框")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(Capsule().fill(Color.red.opacity(0.50)))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
             }
         }
         .padding(12)
