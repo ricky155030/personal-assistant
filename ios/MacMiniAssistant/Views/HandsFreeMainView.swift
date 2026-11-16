@@ -500,26 +500,28 @@ struct HandsFreeMainView: View {
                         .monospacedDigit()
                 }
 
-                Rectangle()
-                    .fill(Color.white.opacity(0.14))
-                    .frame(width: 1, height: 16)
+                if coordinator.currentEngineSupportsQuota {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.14))
+                        .frame(width: 1, height: 16)
 
-                // 當前模型剩餘配額（環形進度）
-                HStack(spacing: 5) {
-                    ZStack {
-                        Circle()
-                            .stroke(Color.white.opacity(0.12), lineWidth: 2.2)
-                        Circle()
-                            .trim(from: 0, to: CGFloat(max(0.03, min(1.0, quota.pct / 100.0))))
-                            .stroke(quota.tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
+                    // 當前模型剩餘配額（環形進度）
+                    HStack(spacing: 5) {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white.opacity(0.12), lineWidth: 2.2)
+                            Circle()
+                                .trim(from: 0, to: CGFloat(max(0.03, min(1.0, quota.pct / 100.0))))
+                                .stroke(quota.tint, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                        }
+                        .frame(width: 15, height: 15)
+
+                        Text(quotaText)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .monospacedDigit()
                     }
-                    .frame(width: 15, height: 15)
-
-                    Text(quotaText)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .monospacedDigit()
                 }
 
                 if activeTasks > 0 {
@@ -547,7 +549,9 @@ struct HandsFreeMainView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("用量：Context \(ctx.pctText)，配額剩餘 \(quotaText)\(activeTasks > 0 ? "，執行中任務 \(activeTasks) 個" : "")")
+        .accessibilityLabel(coordinator.currentEngineSupportsQuota
+            ? "用量：Context \(ctx.pctText)，配額剩餘 \(quotaText)\(activeTasks > 0 ? "，執行中任務 \(activeTasks) 個" : "")"
+            : "用量：Context \(ctx.pctText)\(activeTasks > 0 ? "，執行中任務 \(activeTasks) 個" : "")")
     }
 
     // MARK: - Context 佔比圓形填充指示器 (與 ACP 統一大腦 Context 用量同步，點擊檢視明細 / 切換音訊)
@@ -643,7 +647,7 @@ struct HandsFreeMainView: View {
                 ]
                 ForEach(engineList) { eng in
                     popoverOptionRow(
-                        title: eng.supportsQuota ? eng.label : "\(eng.label) · 無額度限制",
+                        title: eng.label,
                         icon: eng.id == "agy" ? "sparkles" : "cpu",
                         isSelected: coordinator.selectedEngineId == eng.id
                     ) {
