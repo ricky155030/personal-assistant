@@ -17,6 +17,8 @@ from omp_singleton import OmpBrainEngine
 
 
 class _DummyEngine(BaseBrainEngine):
+    handles_own_postprocess = True
+
     def __init__(self, eid: str, supports_quota: bool, models: list[dict]) -> None:
         self.engine_id = eid
         self.display_name = f"Engine {eid}"
@@ -130,7 +132,7 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
 
     with patch.object(eng, "_resolve_omp_bin", return_value="/usr/local/bin/omp"), patch(
         "omp_singleton.subprocess.Popen", return_value=fake_proc
-    ), patch("omp_singleton.memory_manager.log_interaction") as mock_log:
+    ):
         gen = eng._send_query_stream_subprocess("hi", level="med", model_override="muse-spark-1.3-contributor")
         collected = []
         result = {}
@@ -158,7 +160,6 @@ def test_omp_stream_parses_jsonl_events(tmp_path):
         "cached_read_tokens": 20,
         "total_tokens": 321,
     }
-    mock_log.assert_called_once()
     stat = eng.get_status()
     assert stat["current_tokens"] == 321
     assert stat["usage"]["input_tokens"] == 200
@@ -264,3 +265,39 @@ def test_omp_cleans_history_query_and_extracts_widget_html():
     cleaned = _finalize_reply_and_metadata("目前正常<widget_html><div>OK</div></widget_html>", meta)
     assert cleaned == "目前正常"
     assert meta["widget_html"] == "<div>OK</div>"
+
+
+def test_brain_router_shared_postprocess_pipeline(tmp_path):
+    class _RawEngine(_DummyEngine):
+        handles_own_postprocess = False
+
+        def send_query_stream(self, query, media=None, level=None, model_override=None):
+            yield ("text", "ok<widget_html><span>hi</span></widget_html>")
+            return {
+                "status": "OK",
+                "clean_reply": "ok<widget_html><span>hi</span></widget_html>",
+                "actions": ["engine:omp"],
+                "metadata": {"model": "m1"},
+            }
+
+    router = BrainRouter(prefs_path=tmp_path / "prefs.json", history_path=tmp_path / "h.jsonl")
+    router.register_engine(_RawEngine("omp", False, [{"id": "m1", "label": "M1"}]))
+    router.select_engine("omp", "m1")
+
+    with patch("brain_engine.memory_manager.log_interaction") as mock_log, patch(
+        "agy_singleton.extract_quick_replies", return_value=["再問詳細點"]
+    ):
+        gen = router.send_query_stream("【回覆長度約束：細節模式】250字\n\n查狀態")
+        res = {}
+        try:
+            while True:
+                next(gen)
+        except StopIteration as stop_ex:
+            res = stop_ex.value
+
+    assert res["clean_reply"] == "ok"
+    assert res["metadata"]["widget_html"] == "<span>hi</span>"
+    assert res["quick_replies"] == ["再問詳細點"]
+    mock_log.assert_called_once()
+    assert mock_log.call_args.args[0] == "查狀態"
+    assert mock_log.call_args.args[1] == "ok"

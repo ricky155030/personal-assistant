@@ -9,6 +9,26 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional, Tuple
 
 from config import settings
+from memory_manager import memory_manager
+from thinking_router import classify_thinking_level, clean_query_prefix
+from widget_html_utils import extract_widget_html
+
+
+def clean_query_for_history(raw_query: str) -> str:
+    """Strip system prefixes and cross-brain handoff blocks before writing history.jsonl."""
+    q = (raw_query or "").strip()
+    markers = (
+        "[跨大腦記憶交接提要",
+        "[來源管道:",
+        "【語音輸出嚴格規範】",
+        "【回覆長度約束",
+    )
+    if any(m in q for m in markers):
+        parts = q.split("\n\n")
+        while len(parts) > 1 and any(m in parts[0] for m in markers):
+            parts.pop(0)
+        q = "\n\n".join(parts).strip()
+    return q
 
 
 class BaseBrainEngine(ABC):
@@ -17,6 +37,7 @@ class BaseBrainEngine(ABC):
     engine_id: str = "base"
     display_name: str = "Base Engine"
     supports_quota: bool = False
+    handles_own_postprocess: bool = False
 
     @property
     def primary_worker(self):
@@ -102,6 +123,7 @@ class AgyEngineAdapter(BaseBrainEngine):
     engine_id = "agy"
     display_name = "Antigravity (agy)"
     supports_quota = True
+    handles_own_postprocess = True
 
     def __init__(self, pool) -> None:
         self._pool = pool
@@ -366,15 +388,79 @@ class BrainRouter:
     ) -> Generator[Tuple[str, str], None, dict]:
         eng = self.get_engine()
         effective_override = model_override or self.get_selected_model(eng.engine_id)
-        effective_query = self._consume_handoff_prefix(eng.engine_id, query)
-        return (
-            yield from eng.send_query_stream(
-                effective_query,
-                media=media,
-                level=level,
-                model_override=effective_override,
+        resolved_level = level or classify_thinking_level(query)
+        raw_clean_query = clean_query_for_history(query)
+
+        if eng.handles_own_postprocess:
+            effective_query = self._consume_handoff_prefix(eng.engine_id, query)
+            return (
+                yield from eng.send_query_stream(
+                    effective_query,
+                    media=media,
+                    level=resolved_level,
+                    model_override=effective_override,
+                )
             )
+
+        # 共用前處理：移除前綴路由標籤並於首輪注入跨大腦交接提要
+        cleaned_prompt = clean_query_prefix(query)
+        effective_query = self._consume_handoff_prefix(eng.engine_id, cleaned_prompt)
+        stream_gen = eng.send_query_stream(
+            effective_query,
+            media=media,
+            level=resolved_level,
+            model_override=effective_override,
         )
+        turn_result: dict = {}
+        collected_text: List[str] = []
+        try:
+            while True:
+                item = next(stream_gen)
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "text":
+                    collected_text.append(str(item[1]))
+                yield item
+        except StopIteration as stop_ex:
+            turn_result = stop_ex.value or {}
+        finally:
+            try:
+                stream_gen.close()
+            except Exception:
+                pass
+
+            raw_reply = (turn_result.get("clean_reply") or "".join(collected_text)).strip()
+            meta = dict(turn_result.get("metadata") or {})
+            clean_reply, widget_html = extract_widget_html(raw_reply)
+            clean_reply = clean_reply.strip()
+            if widget_html and not meta.get("widget_html"):
+                meta["widget_html"] = widget_html
+            turn_result["clean_reply"] = clean_reply
+            if meta:
+                turn_result["metadata"] = meta
+
+            if clean_reply and "quick_replies" not in turn_result:
+                try:
+                    from agy_singleton import extract_quick_replies
+                    qr = extract_quick_replies(clean_reply, raw_clean_query)
+                    if qr:
+                        turn_result["quick_replies"] = qr
+                except Exception:
+                    pass
+
+            if not turn_result.get("cancelled") or clean_reply:
+                try:
+                    saved_images = memory_manager.save_compressed_history_images(media)
+                    actions = turn_result.get("actions") or [f"engine:{eng.engine_id}"]
+                    memory_manager.log_interaction(
+                        raw_clean_query or query,
+                        clean_reply,
+                        actions,
+                        images=saved_images,
+                        metadata=meta or None,
+                    )
+                except Exception as log_ex:
+                    print(f"[BrainRouter] ⚠️ 寫入對話紀錄失敗: {log_ex}")
+
+        return turn_result
 
     def send_query(
         self,
@@ -383,15 +469,26 @@ class BrainRouter:
         level: Optional[str] = None,
         model_override: Optional[str] = None,
     ) -> Tuple[str, List[str], float, float]:
-        eng = self.get_engine()
-        effective_override = model_override or self.get_selected_model(eng.engine_id)
-        effective_query = self._consume_handoff_prefix(eng.engine_id, query)
-        return eng.send_query(
-            effective_query,
+        gen = self.send_query_stream(
+            query,
             media=media,
             level=level,
-            model_override=effective_override,
+            model_override=model_override,
         )
+        reply_parts: List[str] = []
+        turn_result: dict = {}
+        try:
+            while True:
+                item = next(gen)
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "text":
+                    reply_parts.append(str(item[1]))
+        except StopIteration as stop_ex:
+            turn_result = stop_ex.value or {}
+        clean_reply = (turn_result.get("clean_reply") or "".join(reply_parts)).strip()
+        actions = turn_result.get("actions") or [f"engine:{self.active_engine_id}"]
+        ttft = float(turn_result.get("time_to_first_token") or 0.0)
+        total = float(turn_result.get("total_latency") or 0.0)
+        return clean_reply, actions, ttft, total
 
 
 def create_default_brain_router() -> BrainRouter:

@@ -14,28 +14,12 @@ import time
 from pathlib import Path
 from typing import Generator, List, Optional, Tuple
 
-from brain_engine import BaseBrainEngine
+from brain_engine import BaseBrainEngine, clean_query_for_history
 from config import settings
-from memory_manager import memory_manager
-from thinking_router import clean_query_prefix
 from widget_html_utils import extract_widget_html
 
 
-def _clean_query_for_history(raw_query: str) -> str:
-    """移除系統前綴規範與跨大腦交接提要，僅保留純淨使用者提問寫入 history.jsonl。"""
-    q = (raw_query or "").strip()
-    markers = (
-        "[跨大腦記憶交接提要",
-        "[來源管道:",
-        "【語音輸出嚴格規範】",
-        "【回覆長度約束",
-    )
-    if any(m in q for m in markers):
-        parts = q.split("\n\n")
-        while len(parts) > 1 and any(m in parts[0] for m in markers):
-            parts.pop(0)
-        q = "\n\n".join(parts).strip()
-    return q
+_clean_query_for_history = clean_query_for_history
 
 
 def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
@@ -44,6 +28,16 @@ def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
     if widget_html:
         metadata["widget_html"] = widget_html
     return clean_reply.strip()
+
+
+def _load_agents_md_text() -> str:
+    try:
+        agents_path = settings.BASE_DIR / "AGENTS.md"
+        if agents_path.exists():
+            return agents_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
 DEFAULT_OMP_MODELS: List[dict] = [
     {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3"},
     {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版"},
@@ -187,6 +181,7 @@ class OmpResidentWorker:
             self._is_ready = False
         if force_new_session:
             self._clear_saved_session()
+            self._agents_injected = False
         omp_bin = self._resolve_omp_bin()
         if not omp_bin:
             print("[OmpResident] ❌ 找不到 omp 執行檔，無法啟動常駐進程")
@@ -477,12 +472,18 @@ class OmpResidentWorker:
             req_id = self._next_rpc_id()
             self._active_turn_id = req_id
             self._cancel_requested = False
+            prompt_text = query
+            if not getattr(self, "_agents_injected", False):
+                agents_doc = _load_agents_md_text()
+                if agents_doc:
+                    prompt_text = f"[系統行為規範（AGENTS.md）]\n{agents_doc}\n[規範結束]\n\n{query}"
+                self._agents_injected = True
             self._send_rpc(
                 {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "method": "session/prompt",
-                    "params": {"sessionId": self.session_id, "prompt": self._build_prompt_blocks(query, media)},
+                    "params": {"sessionId": self.session_id, "prompt": self._build_prompt_blocks(prompt_text, media)},
                 }
             )
         start_t = time.perf_counter()
@@ -612,17 +613,9 @@ class OmpResidentWorker:
                 "model": self.model,
                 "metadata": metadata,
             }
-        try:
-            saved_images = memory_manager.save_compressed_history_images(media)
-            memory_manager.log_interaction(
-                _clean_query_for_history(query),
-                clean_reply,
-                [f"engine:omp-resident ({self.model})"],
-                images=saved_images,
-                metadata=metadata,
-            )
-        except Exception as log_ex:
-            print(f"[OmpResident] ⚠️ 寫入對話紀錄失敗: {log_ex}")
+        if self.last_tokens >= settings.CONTEXT_RESTART_THRESHOLD:
+            print(f"[OmpResident] 🔄 Context 已達門檻 ({self.last_tokens} >= {settings.CONTEXT_RESTART_THRESHOLD})，背景重啟全新 Session...")
+            threading.Thread(target=self.restart, kwargs={"force_new_session": True}, daemon=True).start()
         return {
             "status": "OK",
             "clean_reply": clean_reply,
@@ -859,6 +852,9 @@ class OmpBrainEngine(BaseBrainEngine):
             f"--session-dir={self._session_dir}",
             f"--cwd={settings.BASE_DIR}",
         ]
+        agents_path = settings.BASE_DIR / "AGENTS.md"
+        if agents_path.exists():
+            cmd.append(f"--append-system-prompt={agents_path}")
         if chosen_model:
             cmd.append(f"--model={chosen_model}")
         thinking = self._map_thinking_level(level)
@@ -1013,18 +1009,6 @@ class OmpBrainEngine(BaseBrainEngine):
             clean_reply = err_msg
 
         clean_reply = _finalize_reply_and_metadata(clean_reply, metadata)
-        try:
-            saved_images = memory_manager.save_compressed_history_images(media)
-            memory_manager.log_interaction(
-                _clean_query_for_history(query),
-                clean_reply,
-                [f"engine:omp ({chosen_model})"],
-                images=saved_images,
-                metadata=metadata,
-            )
-        except Exception as log_ex:
-            print(f"[OmpBrainEngine] ⚠️ 寫入對話紀錄失敗: {log_ex}")
-
         return {
             "status": "OK",
             "clean_reply": clean_reply,
