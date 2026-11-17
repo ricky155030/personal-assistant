@@ -133,6 +133,42 @@ def test_safe_reload_endpoint_schedules_task(monkeypatch):
         app_main.app.dependency_overrides.pop(app_main.verify_token, None)
 
 
+def test_history_search_endpoint_filters_user_and_assistant(tmp_path, monkeypatch):
+    import json
+    from fastapi.testclient import TestClient
+    import main as app_main
+
+    hist_file = tmp_path / "history.jsonl"
+    rows = [
+        {"timestamp": "2026-11-17T10:00:00", "query": "竹北天氣如何", "reply": "竹北今天晴時多雲"},
+        {"timestamp": "2026-11-17T11:00:00", "query": "幫我看廁所電燈", "reply": "已偵測到 Zigbee 路由異常"},
+        {"timestamp": "2026-11-17T12:00:00", "query": "酷澎價格多少", "reply": "目前特價 50730 元"},
+    ]
+    hist_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    monkeypatch.setattr(app_main.settings, "HISTORY_LOG_PATH", hist_file)
+    app_main.app.dependency_overrides[app_main.verify_token] = lambda: True
+    try:
+        client = TestClient(app_main.app)
+        # 搜助理回覆
+        r1 = client.get("/api/history/search", params={"q": "Zigbee", "role": "assistant"})
+        assert r1.status_code == 200
+        assert len(r1.json()["results"]) == 1
+        assert r1.json()["results"][0]["matched_in"] == "assistant"
+
+        # 搜提問
+        r2 = client.get("/api/history/search", params={"q": "竹北 天氣", "role": "user"})
+        assert r2.status_code == 200
+        assert len(r2.json()["results"]) == 1
+        assert r2.json()["results"][0]["matched_in"] == "user"
+
+        # 空查詢
+        r3 = client.get("/api/history/search", params={"q": "   "})
+        assert r3.status_code == 200
+        assert r3.json()["results"] == []
+    finally:
+        app_main.app.dependency_overrides.pop(app_main.verify_token, None)
+
+
 def test_omp_stream_parses_jsonl_events(tmp_path):
     eng = OmpBrainEngine()
     eng._session_dir = tmp_path / "omp_sessions"

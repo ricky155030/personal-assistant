@@ -1141,6 +1141,70 @@ def chat_history(
     }
 
 
+@app.get("/api/history/search")
+def search_chat_history(
+    q: str = "",
+    role: str = "all",
+    limit: int = 50,
+    _authorized: bool = Depends(verify_token),
+):
+    """全文搜尋對話紀錄（同時搜尋提問與助理回覆，由新到舊回傳）"""
+    terms = [t.strip().lower() for t in (q or "").split() if t.strip()]
+    if not terms:
+        return {"results": [], "total": 0}
+
+    role_norm = (role or "all").strip().lower()
+    if role_norm not in ("all", "user", "assistant"):
+        role_norm = "all"
+    limit = max(1, min(limit, 100))
+
+    raw_lines: list[str] = []
+    try:
+        with open(settings.HISTORY_LOG_PATH, encoding="utf-8") as f:
+            raw_lines = f.readlines()
+    except FileNotFoundError:
+        return {"results": [], "total": 0}
+
+    results = []
+    for line in reversed(raw_lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+
+        raw_q = item.get("query", "") or ""
+        clean_q = "" if raw_q.startswith("[背景任務 · ") else _clean_history_query(raw_q)
+        reply = item.get("reply", "") or ""
+
+        q_lower = clean_q.lower()
+        r_lower = reply.lower()
+        user_match = bool(clean_q) and all(t in q_lower for t in terms)
+        ast_match = bool(reply) and all(t in r_lower for t in terms)
+
+        if role_norm == "user" and not user_match:
+            continue
+        if role_norm == "assistant" and not ast_match:
+            continue
+        if role_norm == "all" and not (user_match or ast_match):
+            continue
+
+        matched_in = "both" if (user_match and ast_match) else ("user" if user_match else "assistant")
+        results.append({
+            "timestamp": item.get("timestamp", ""),
+            "query": clean_q,
+            "reply": reply,
+            "matched_in": matched_in,
+            "source": item.get("source") or _infer_history_source(raw_q, item.get("actions")),
+        })
+        if len(results) >= limit:
+            break
+
+    return {"results": results, "total": len(results)}
+
+
 @app.get("/api/history/images/{filename}")
 def get_history_image(
     filename: str,

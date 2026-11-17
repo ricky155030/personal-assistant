@@ -78,6 +78,8 @@ struct HandsFreeMainView: View {
     @State private var showQuickPromptDrawer: Bool = false
     @State private var quickPrompts: [QuickPromptPreset] = QuickPromptStore.loadPresets()
     @State private var showSettings: Bool = false
+    @State private var showSearchSheet: Bool = false
+    @State private var scrollToMessageId: UUID? = nil
     @State private var showModelPopover: Bool = false
     @State private var isAtBottom: Bool = true
     @State private var hasUnseenUpdates: Bool = false
@@ -160,6 +162,23 @@ struct HandsFreeMainView: View {
         }
         .sheet(isPresented: $showSettings) {
             AssistantSettingsView(coordinator: coordinator)
+        }
+        .sheet(isPresented: $showSearchSheet) {
+            HistorySearchSheetView(
+                coordinator: coordinator,
+                onJumpToMessage: { targetId in
+                    showSearchSheet = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        scrollToMessageId = targetId
+                    }
+                },
+                onQuoteSnippet: { text in
+                    showSearchSheet = false
+                    coordinator.textInput = "針對先前這段紀錄追問：\n「\(text.prefix(180))」\n\n"
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $showVisionCamera) {
             VisionCameraView(coordinator: coordinator)
@@ -447,6 +466,21 @@ struct HandsFreeMainView: View {
 
             // 右側：合併式「用量」膠囊（Context 佔比 + 當前模型配額），點擊開啟完整系統狀態面板
             usageCapsuleButton
+
+            // 搜尋對話按鈕
+            Button(action: {
+                haptic.impactOccurred()
+                isInputFocused = false
+                showSearchSheet = true
+            }) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.88))
+                    .frame(width: 40, height: 40)
+                    .liquidGlass(in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("搜尋對話")
 
             // 設定按鈕
             Button(action: {
@@ -998,6 +1032,14 @@ struct HandsFreeMainView: View {
                 } else {
                     hasUnseenUpdates = true
                 }
+            }
+            .onChange(of: scrollToMessageId) { _, targetId in
+                guard let targetId = targetId else { return }
+                isAtBottom = false
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(targetId, anchor: .center)
+                }
+                scrollToMessageId = nil
             }
             .onChange(of: coordinator.currentStreamingText) { _, _ in
                 if isAtBottom {
@@ -3269,6 +3311,244 @@ struct TaskLogViewerSheet: View {
                 isLoading = true
                 logResp = await coordinator.apiClient.fetchTaskLog(taskId: task.task_id, tail: tailCount)
                 isLoading = false
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - 對話全文搜尋面板（同時搜尋提問與回覆，支援本地即時與後端全量紀錄）
+private struct HistorySearchSheetView: View {
+    @ObservedObject var coordinator: VoiceSessionCoordinator
+    let onJumpToMessage: (UUID) -> Void
+    let onQuoteSnippet: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText: String = ""
+    @State private var roleFilter: String = "all"
+    @State private var remoteHits: [HistorySearchHit] = []
+    @State private var isSearchingRemote: Bool = false
+    @State private var searchTask: Task<Void, Never>? = nil
+    @State private var expandedHitIds: Set<String> = []
+
+    private var localMatches: [ChatMessage] {
+        let terms = searchText
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { $0.lowercased() }
+        guard !terms.isEmpty else { return [] }
+        return coordinator.messages.reversed().filter { msg in
+            if roleFilter == "user" && msg.role != .user { return false }
+            if roleFilter == "assistant" && msg.role != .assistant { return false }
+            let lower = msg.content.lowercased()
+            return !lower.isEmpty && terms.allSatisfy { lower.contains($0) }
+        }
+    }
+
+    private func triggerSearch() {
+        searchTask?.cancel()
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else {
+            remoteHits = []
+            isSearchingRemote = false
+            return
+        }
+        isSearchingRemote = true
+        let role = roleFilter
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let hits = await coordinator.apiClient.searchHistory(query: q, role: role, limit: 50)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                remoteHits = hits
+                isSearchingRemote = false
+            }
+        }
+    }
+
+    private func findLocalMessageId(for hit: HistorySearchHit) -> UUID? {
+        let targetText = (hit.matchedIn == "user" ? hit.query : hit.reply)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !targetText.isEmpty else { return nil }
+        return coordinator.messages.last(where: {
+            $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == targetText
+        })?.id
+    }
+
+    private func highlightedText(_ text: String) -> AttributedString {
+        var attr = AttributedString(text)
+        let terms = searchText
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { String($0) }
+        for term in terms where !term.isEmpty {
+            var searchStart = attr.startIndex
+            while searchStart < attr.endIndex,
+                  let range = attr[searchStart...].range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) {
+                attr[range].foregroundColor = .cyan
+                attr[range].font = .system(size: 13.5, weight: .bold)
+                searchStart = range.upperBound
+            }
+        }
+        return attr
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("搜尋你的提問或助理回覆...", text: $searchText)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                        .submitLabel(.search)
+                        .onChange(of: searchText) { triggerSearch() }
+
+                    if !searchText.isEmpty {
+                        Button(action: {
+                            searchText = ""
+                            remoteHits = []
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.08)))
+                .padding(.horizontal, 16)
+
+                Picker("篩選", selection: $roleFilter) {
+                    Text("全部").tag("all")
+                    Text("我問的").tag("user")
+                    Text("助理答的").tag("assistant")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .onChange(of: roleFilter) { triggerSearch() }
+
+                if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(spacing: 10) {
+                        Spacer()
+                        Image(systemName: "text.magnifyingglass")
+                            .font(.system(size: 36))
+                            .foregroundColor(.cyan.opacity(0.75))
+                        Text("輸入關鍵字搜尋所有歷史對話")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.secondary)
+                        Text("支援多個關鍵字空白分隔，同時搜尋提問與回覆")
+                            .font(.caption)
+                            .foregroundColor(Color(white: 0.45))
+                        Spacer()
+                    }
+                } else {
+                    List {
+                        if !remoteHits.isEmpty {
+                            Section("雲端完整紀錄（\(remoteHits.count) 筆）") {
+                                ForEach(remoteHits) { hit in
+                                    let isExpanded = expandedHitIds.contains(hit.id)
+                                    let localId = findLocalMessageId(for: hit)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack {
+                                            Text(hit.matchedIn == "user" ? "你的提問" : (hit.matchedIn == "both" ? "問答皆命中" : "助理回覆"))
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundColor(hit.matchedIn == "user" ? .blue : .cyan)
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 2)
+                                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                                            Spacer()
+                                            Text(String(hit.timestamp.prefix(16)).replacingOccurrences(of: "T", with: " "))
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+
+                                        if !hit.query.isEmpty {
+                                            Text(highlightedText("問：\(hit.query)"))
+                                                .font(.system(size: 13.5))
+                                                .lineLimit(isExpanded ? nil : 2)
+                                        }
+                                        if !hit.reply.isEmpty {
+                                            Text(highlightedText("答：\(hit.reply)"))
+                                                .font(.system(size: 13))
+                                                .foregroundColor(Color(white: 0.85))
+                                                .lineLimit(isExpanded ? nil : 3)
+                                        }
+
+                                        HStack(spacing: 12) {
+                                            if let lid = localId {
+                                                Button("跳轉到對話") {
+                                                    onJumpToMessage(lid)
+                                                }
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundColor(.cyan)
+                                            } else {
+                                                Button(isExpanded ? "收合" : "展開全文") {
+                                                    if isExpanded { expandedHitIds.remove(hit.id) }
+                                                    else { expandedHitIds.insert(hit.id) }
+                                                }
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundColor(.cyan)
+                                            }
+
+                                            Button("引用追問") {
+                                                let snippet = hit.reply.isEmpty ? hit.query : hit.reply
+                                                onQuoteSnippet(snippet)
+                                            }
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.blue)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .padding(.top, 2)
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                        } else if !localMatches.isEmpty {
+                            Section("近期對話（\(localMatches.count) 筆）") {
+                                ForEach(localMatches) { msg in
+                                    Button(action: { onJumpToMessage(msg.id) }) {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            HStack {
+                                                Text(msg.role == .user ? "你的提問" : "助理回覆")
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundColor(msg.role == .user ? .blue : .cyan)
+                                                Spacer()
+                                                Text(msg.timestamp.formatted(date: .abbreviated, time: .shortened))
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Text(highlightedText(msg.content))
+                                                .font(.system(size: 13.5))
+                                                .foregroundColor(.primary)
+                                                .lineLimit(3)
+                                        }
+                                    }
+                                }
+                            }
+                        } else if isSearchingRemote {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("正在搜尋 Mac mini 完整歷史紀錄...")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            Text("找不到符合「\(searchText)」的對話紀錄")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .padding(.top, 8)
+            .navigationTitle("搜尋對話")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("關閉") { dismiss() }
+                }
             }
         }
         .preferredColorScheme(.dark)

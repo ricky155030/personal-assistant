@@ -656,4 +656,31 @@ public final class MacMiniAPIClient {
             return (false, "連線異常：\(error.localizedDescription)")
         }
     }
+
+    public func searchHistory(query: String, role: String = "all", limit: Int = 50) async -> [HistorySearchHit] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var comps = URLComponents(string: "\(cleanBase)/api/history/search")
+        comps?.queryItems = [
+            URLQueryItem(name: "q", value: trimmed),
+            URLQueryItem(name: "role", value: role),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let url = comps?.url else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(HistorySearchResponse.self, from: data)
+            return decoded.results
+        } catch {
+            return []
+        }
+    }
 }

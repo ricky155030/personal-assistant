@@ -721,3 +721,34 @@ public struct BrainCatalogResponse: Codable, Equatable, Sendable {
         case engines
     }
 }
+
+public struct HistorySearchHit: Codable, Identifiable, Equatable, Sendable {
+    public let timestamp: String
+    public let query: String
+    public let reply: String
+    public let matchedIn: String
+    public let source: String?
+
+    public var id: String { "\(timestamp)_\(matchedIn)_\(query.prefix(16))" }
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp
+        case query
+        case reply
+        case matchedIn = "matched_in"
+        case source
+    }
+
+    public init(timestamp: String, query: String, reply: String, matchedIn: String, source: String? = nil) {
+        self.timestamp = timestamp
+        self.query = query
+        self.reply = reply
+        self.matchedIn = matchedIn
+        self.source = source
+    }
+}
+
+public struct HistorySearchResponse: Codable, Sendable {
+    public let results: [HistorySearchHit]
+    public let total: Int?
+}
