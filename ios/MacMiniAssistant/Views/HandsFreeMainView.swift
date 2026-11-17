@@ -81,6 +81,7 @@ struct HandsFreeMainView: View {
     @State private var showModelPopover: Bool = false
     @State private var isAtBottom: Bool = true
     @State private var hasUnseenUpdates: Bool = false
+    @State private var lastFollowScrollAt: Date = .distantPast
     @State private var isDraggingBottom: Bool = false
     @State private var startedDragAtBottom: Bool = false
     @State private var bottomPullOffset: CGFloat = 0
@@ -890,6 +891,12 @@ struct HandsFreeMainView: View {
                                 startedDragAtBottom = isAtBottom
                                 bottomPullHapticTriggered = false
                             }
+                            // 手指往下滑（translation.height > 0）= 正在離開底部看歷史：
+                            // 立刻解釘，讓錨點 onDisappear 前就停止跟隨；反之不搶回，
+                            // 等 bottom_anchor 重新出現才重釘，避免串流中誤判。
+                            if startedDragAtBottom && value.translation.height > 40 && isAtBottom {
+                                isAtBottom = false
+                            }
                             guard startedDragAtBottom && !isRefreshingHistory else { return }
                             let pullUp = -value.translation.height
                             if pullUp > 0 {
@@ -988,16 +995,16 @@ struct HandsFreeMainView: View {
             }
             .onChange(of: coordinator.currentStreamingText) { _, _ in
                 if isAtBottom {
-                    scrollToBottom(proxy: proxy, animated: false)
+                    followBottom(proxy: proxy)
                 } else if !coordinator.currentStreamingText.isEmpty {
                     hasUnseenUpdates = true
                 }
             }
             .onChange(of: coordinator.messages.last?.content) { _, _ in
+                // 與 currentStreamingText 同一 token 的雙重寫入，只用節流跟隨，
+                // 不再另排動畫延遲捲動，避免兩者互搶造成跳動。
                 if isAtBottom {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        scrollToBottom(proxy: proxy, animated: true)
-                    }
+                    followBottom(proxy: proxy)
                 }
             }
             .onChange(of: coordinator.messages.last?.status) { _, newStatus in
@@ -1008,32 +1015,47 @@ struct HandsFreeMainView: View {
                     }
                 }
             }
-            .onChange(of: coordinator.liveTranscript) { _, _ in
+            .onChange(of: coordinator.liveTranscript) { old, _ in
+                // 新氣泡剛插入（空→非空）立即跟一次，之後邊講邊長高交給節流跟隨；
+                // 清空（送出後）不捲動，避免多餘跳動。
                 if isAtBottom {
-                    scrollToBottom(proxy: proxy, animated: false)
+                    if old.isEmpty && !coordinator.liveTranscript.isEmpty {
+                        scrollToBottom(proxy: proxy, animated: false)
+                    } else if !coordinator.liveTranscript.isEmpty {
+                        followBottom(proxy: proxy)
+                    }
+                } else if !coordinator.liveTranscript.isEmpty {
+                    hasUnseenUpdates = true
                 }
             }
         }
     }
 
+    /// 置底：永遠只對 bottom_anchor 快照一次，避免 lastId→anchor 兩連跳造成閃爍。
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        let performSnap = {
-            if let lastId = coordinator.messages.last?.id {
-                proxy.scrollTo(lastId, anchor: .bottom)
-            }
-            proxy.scrollTo("bottom_anchor", anchor: .bottom)
-        }
+        lastFollowScrollAt = Date()
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
-                performSnap()
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
+            }
+            // LazyVStack 長訊息展開後高度會變動，離散事件才需要一次沉降對齊
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                if isAtBottom {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                }
             }
         } else {
-            performSnap()
-        }
-        // LazyVStack 展開底部長訊息後實際高度會變動，延遲一幀二次對齊避免捲過頭全空
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             proxy.scrollTo("bottom_anchor", anchor: .bottom)
         }
+    }
+
+    /// 高頻跟隨（串流 token / 即時轉錄 partial）：不做動畫、不排延遲二次捲動，
+    /// 0.15s 節流一次，避免與手勢互搶造成跳動。
+    private func followBottom(proxy: ScrollViewProxy, minInterval: TimeInterval = 0.15) {
+        let now = Date()
+        guard now.timeIntervalSince(lastFollowScrollAt) >= minInterval else { return }
+        lastFollowScrollAt = now
+        proxy.scrollTo("bottom_anchor", anchor: .bottom)
     }
 
     private func isSpeakingMessage(_ msg: ChatMessage) -> Bool {
