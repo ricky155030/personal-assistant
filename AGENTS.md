@@ -140,4 +140,4 @@
    - **改完自測即提交 (Auto-Commit on Green)**：每次程式碼改完，助理必須自行跑對應 build/test（Python 跑全量 `uv run pytest`；改 `ios/` 加跑 `./package_ios.sh`）加機敏掃描，全綠後直接 `git commit`，免等主人確認；一事一 commit，commit message 一律使用英文（Conventional Commits、祈使句、範圍明確，如 `feat(calendar): add retry on timeout`）；commit 後依第 7 條決定是否 push 並跟 CI 到綠燈。
    - **嚴守修改範圍 (Minimal Diff & Scope Discipline)**：只改當前任務相關程式碼，不順手重構無關模組或刪除既有防呆與註解；發現其他問題應另外排單處理。
    - **前後端契約相容 (Contract-First Compatibility)**：後端 API 與 iOS App 有欄位連動時，必須保留向下相容性，確保舊版 App 尚未更新也不會閃退。
-   - **服務安全重啟 (Safe Service Reload)**：修改常駐後端後，嚴禁在語音串流進行中直接強殺服務，應改用延遲重載或待對話結束後再行套用。
+   - **服務安全重啟 (Safe Service Reload)**：修改常駐後端後，嚴禁在語音串流進行中直接強殺服務；但完成開發、通過本機測試與 GitHub CI 驗證且判定需要重載套用時，助理可直接主動透過 `scripts/idle_safe_reload.py --quiet 8 --interval 2` 排程安全重載（免再反問主人確認，允許服務短暫重啟數秒）。

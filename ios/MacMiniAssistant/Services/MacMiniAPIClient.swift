@@ -632,4 +632,28 @@ public final class MacMiniAPIClient {
             return nil
         }
     }
+
+    public func triggerSafeReload() async -> (Bool, String) {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/system/safe-reload") else {
+            return (false, "無效網址")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return (false, "排程失敗，請確認連線狀態")
+            }
+            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let msg = root["message"] as? String {
+                return (true, msg)
+            }
+            return (true, "已排程安全重載，約 10~15 秒完成")
+        } catch {
+            return (false, "連線異常：\(error.localizedDescription)")
+        }
+    }
 }

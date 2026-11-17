@@ -1446,6 +1446,48 @@ def compact_context(_authorized: bool = Depends(verify_token)):
         "context": stat
     }
 
+
+@app.post("/api/system/safe-reload")
+def trigger_safe_reload(_authorized: bool = Depends(verify_token)):
+    """排程背景安全重載（等語音空檔後透過 launchd 重啟後端服務）"""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    cmd = [
+        sys.executable,
+        "task_manager.py",
+        "spawn-cmd",
+        "--name",
+        "App手動安全重載",
+        "--cmd",
+        f"{sys.executable} scripts/idle_safe_reload.py --quiet 4 --interval 2 </dev/null",
+        "--notify",
+        "telegram",
+        "--ttl",
+        "5",
+    ]
+    proc = subprocess.run(
+        cmd,
+        cwd=str(Path(__file__).resolve().parent),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail=proc.stderr.strip() or "無法排程安全重載")
+    task_id = ""
+    try:
+        task_id = json.loads(proc.stdout).get("task_id", "")
+    except Exception:
+        pass
+    return {
+        "status": "scheduled",
+        "task_id": task_id,
+        "message": "已排程安全重載，將於語音空檔自動重啟 Mac mini 後端。",
+    }
+
 @app.get("/api/demands")
 def get_demands():
     """查看已記錄的需求日誌清單"""

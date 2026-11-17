@@ -15,6 +15,8 @@ struct AssistantSettingsView: View {
     @State private var newPromptTitle: String = ""
     @State private var newPromptBody: String = ""
     @State private var newPromptIcon: String = "sparkles"
+    @State private var isTriggeringReload: Bool = false
+    @State private var reloadFeedback: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -163,6 +165,42 @@ struct AssistantSettingsView: View {
                     Text("開啟後會在主畫面頂部顯示 Mac mini 連線狀態、語音辨識引擎與收音診斷資訊。")
                         .font(.footnote)
                         .foregroundColor(.secondary)
+
+                    Button(action: {
+                        guard !isTriggeringReload else { return }
+                        isTriggeringReload = true
+                        reloadFeedback = nil
+                        Task {
+                            let (_, msg) = await coordinator.apiClient.triggerSafeReload()
+                            await MainActor.run {
+                                isTriggeringReload = false
+                                reloadFeedback = msg
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 10) {
+                            if isTriggeringReload {
+                                ProgressView()
+                                    .scaleEffect(0.85)
+                            } else {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                                    .foregroundColor(.orange)
+                            }
+                            Text("安全重載 Mac mini 後端服務")
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .disabled(isTriggeringReload)
+
+                    if let fb = reloadFeedback {
+                        Text(fb)
+                            .font(.footnote)
+                            .foregroundColor(.green)
+                    } else {
+                        Text("會在語音空檔自動透過 launchd 重啟後端服務（約 10 秒恢復），不中斷進行中的對話。")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Section("對話紀錄與快取") {

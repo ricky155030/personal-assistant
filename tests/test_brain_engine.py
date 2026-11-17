@@ -111,6 +111,28 @@ def test_clean_query_for_history_strips_multiline_handoff():
     assert clean_query_for_history(raw) == "問一下廁所燈"
 
 
+def test_safe_reload_endpoint_schedules_task(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main as app_main
+
+    class _FakeProc:
+        returncode = 0
+        stdout = '{"success": true, "task_id": "task_test_reload"}'
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: _FakeProc())
+    app_main.app.dependency_overrides[app_main.verify_token] = lambda: True
+    try:
+        client = TestClient(app_main.app)
+        resp = client.post("/api/system/safe-reload")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "scheduled"
+        assert data["task_id"] == "task_test_reload"
+    finally:
+        app_main.app.dependency_overrides.pop(app_main.verify_token, None)
+
+
 def test_omp_stream_parses_jsonl_events(tmp_path):
     eng = OmpBrainEngine()
     eng._session_dir = tmp_path / "omp_sessions"
