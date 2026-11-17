@@ -1981,6 +1981,50 @@ private struct PreviewPhotoItem: Identifiable {
     let initialIndex: Int
 }
 
+private final class PhotoAlbumSaver: NSObject {
+    static let shared = PhotoAlbumSaver()
+    private var completions: [UnsafeMutableRawPointer: (Bool, String) -> Void] = [:]
+
+    func save(_ source: GalleryPhotoSource, completion: @escaping @MainActor (Bool, String) -> Void) {
+        Task {
+            let imageData: Data?
+            switch source {
+            case .data(let data, _):
+                imageData = data
+            case .url(let url):
+                imageData = try? await URLSession.shared.data(from: url).0
+            }
+            guard let data = imageData, let uiImage = UIImage(data: data) else {
+                await completion(false, "無法取得圖片資料")
+                return
+            }
+            await MainActor.run {
+                let box = Unmanaged.passRetained(NSObject()).toOpaque()
+                self.completions[box] = { ok, msg in
+                    Task { @MainActor in completion(ok, msg) }
+                }
+                UIImageWriteToSavedPhotosAlbum(
+                    uiImage,
+                    self,
+                    #selector(self.image(_:didFinishSavingWithError:contextInfo:)),
+                    box
+                )
+            }
+        }
+    }
+
+    @objc private func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeMutableRawPointer?) {
+        guard let ptr = contextInfo else { return }
+        Unmanaged<NSObject>.fromOpaque(ptr).release()
+        let cb = completions.removeValue(forKey: ptr)
+        if let err = error {
+            cb?(false, "儲存失敗：\(err.localizedDescription)")
+        } else {
+            cb?(true, "已儲存至相簿")
+        }
+    }
+}
+
 private struct ZoomableGalleryPhotoPage: View {
     let source: GalleryPhotoSource
     let dragOffset: CGFloat
@@ -2053,11 +2097,30 @@ private struct FullScreenPhotoViewer: View {
     @State private var currentIndex: Int = 0
     @State private var scale: CGFloat = 1.0
     @State private var dragOffset: CGFloat = 0
+    @State private var saveFeedback: String? = nil
+    @State private var isSaving: Bool = false
 
     init(photos: [GalleryPhotoSource], initialIndex: Int = 0) {
         self.photos = photos
         self.initialIndex = max(0, min(initialIndex, max(0, photos.count - 1)))
         self._currentIndex = State(initialValue: self.initialIndex)
+    }
+
+    private func saveCurrentPhoto() {
+        guard !isSaving, photos.indices.contains(currentIndex) else { return }
+        isSaving = true
+        PhotoAlbumSaver.shared.save(photos[currentIndex]) { _, message in
+            isSaving = false
+            withAnimation(.easeInOut(duration: 0.2)) {
+                saveFeedback = message
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if saveFeedback == message { saveFeedback = nil }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -2073,6 +2136,13 @@ private struct FullScreenPhotoViewer: View {
                         dragOffset: dragOffset,
                         currentScale: $scale
                     )
+                    .contextMenu {
+                        Button {
+                            saveCurrentPhoto()
+                        } label: {
+                            Label("儲存到相簿", systemImage: "square.and.arrow.down")
+                        }
+                    }
                     .tag(idx)
                 }
             }
@@ -2103,7 +2173,7 @@ private struct FullScreenPhotoViewer: View {
                     }
             )
 
-            HStack {
+            HStack(spacing: 12) {
                 if photos.count > 1 {
                     Text("\(currentIndex + 1) / \(photos.count)")
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -2113,6 +2183,20 @@ private struct FullScreenPhotoViewer: View {
                         .background(Capsule().fill(Color.black.opacity(0.55)))
                 }
                 Spacer()
+                Button(action: { saveCurrentPhoto() }) {
+                    Group {
+                        if isSaving {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(.white.opacity(0.85))
+                        }
+                    }
+                    .frame(width: 32, height: 32)
+                }
+                .disabled(isSaving)
+
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 30))
@@ -2122,6 +2206,20 @@ private struct FullScreenPhotoViewer: View {
             .padding(.horizontal, 20)
             .padding(.top, 16)
             .opacity(dragOffset > 20 ? 0.4 : 1.0)
+
+            if let msg = saveFeedback {
+                VStack {
+                    Spacer()
+                    Text(msg)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.black.opacity(0.78)))
+                        .padding(.bottom, 42)
+                }
+                .transition(.opacity)
+            }
         }
         .presentationBackground(.clear)
     }
@@ -2448,6 +2546,13 @@ struct GeminiMessageRow: View {
                                 .onTapGesture {
                                     previewPhoto = PreviewPhotoItem(photos: [.url(singleUrl)], initialIndex: 0)
                                 }
+                                .contextMenu {
+                                    Button {
+                                        PhotoAlbumSaver.shared.save(.url(singleUrl)) { _, _ in }
+                                    } label: {
+                                        Label("儲存圖片到相簿", systemImage: "square.and.arrow.down")
+                                    }
+                                }
                         case .failure:
                             HStack(spacing: 6) {
                                 Image(systemName: "photo.badge.exclamationmark")
@@ -2482,6 +2587,13 @@ struct GeminiMessageRow: View {
                                             .onTapGesture {
                                                 let sources = assistantUrls.map { GalleryPhotoSource.url($0) }
                                                 previewPhoto = PreviewPhotoItem(photos: sources, initialIndex: idx)
+                                            }
+                                            .contextMenu {
+                                                Button {
+                                                    PhotoAlbumSaver.shared.save(.url(imgUrl)) { _, _ in }
+                                                } label: {
+                                                    Label("儲存圖片到相簿", systemImage: "square.and.arrow.down")
+                                                }
                                             }
                                     case .failure:
                                         RoundedRectangle(cornerRadius: 14, style: .continuous)
