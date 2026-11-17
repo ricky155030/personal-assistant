@@ -1141,14 +1141,17 @@ def chat_history(
                     continue
                 raw_q = item.get("query", "")
                 clean_q = "" if raw_q.startswith("[背景任務 · ") else _clean_history_query(raw_q)
+                meta_obj = item.get("metadata")
+                qr_list = (meta_obj.get("quick_replies") if isinstance(meta_obj, dict) else None) or item.get("quick_replies") or []
                 entries.append({
                     "timestamp": ts,
                     "query": clean_q,
                     "reply": item.get("reply", ""),
                     "source": item.get("source") or _infer_history_source(raw_q, item.get("actions")),
                     "actions": item.get("actions", []),
-                    "metadata": item.get("metadata"),
+                    "metadata": meta_obj,
                     "images": item.get("images", []),
+                    "quick_replies": qr_list,
                 })
     except FileNotFoundError:
         pass

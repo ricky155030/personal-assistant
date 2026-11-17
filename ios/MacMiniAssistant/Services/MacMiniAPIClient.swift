@@ -463,6 +463,7 @@ public final class MacMiniAPIClient {
         public let source: String?
         public let metadata: TurnMetadata?
         public let images: [String]?
+        public let quick_replies: [String]?
     }
 
     public struct ActiveTurnSnapshot: Codable {

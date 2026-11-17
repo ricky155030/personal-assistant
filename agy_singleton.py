@@ -1401,6 +1401,8 @@ class AgyBrainPool:
                     metadata["widget_html"] = turn_result["widget_html"]
                 if turn_result.get("image_urls"):
                     metadata["image_urls"] = turn_result["image_urls"]
+                if turn_result.get("quick_replies"):
+                    metadata["quick_replies"] = turn_result["quick_replies"]
                 turn_result["metadata"] = metadata
                 actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
                 saved_images = memory_manager.save_compressed_history_images(media)

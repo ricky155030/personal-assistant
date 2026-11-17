@@ -856,8 +856,11 @@ struct HandsFreeMainView: View {
                                         )
                                     }
 
-                                    ShareLink(item: msg.content) {
-                                        Label("分享", systemImage: "square.and.arrow.up")
+                                    Button {
+                                        haptic.impactOccurred()
+                                        shareMessageAsScreenshot(msg)
+                                    } label: {
+                                        Label("截圖分享", systemImage: "square.and.arrow.up")
                                     }
 
                                     if msg.role == .user {
@@ -3623,5 +3626,119 @@ private extension View {
                 )
                 .shadow(color: Color.black.opacity(0.28), radius: 12, x: 0, y: 6)
         }
+    }
+}
+
+// MARK: - 單則對話截圖分享卡片與渲染輔助
+extension HandsFreeMainView {
+    @MainActor
+    func shareMessageAsScreenshot(_ message: ChatMessage) {
+        let card = MessageScreenshotCard(message: message, baseFontSize: chatBaseFontSize)
+        let renderer = ImageRenderer(content: card)
+        renderer.scale = UIScreen.main.scale
+        guard let image = renderer.uiImage else { return }
+
+        let activityVC = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            return
+        }
+        var topVC = root
+        while let presented = topVC.presentedViewController {
+            topVC = presented
+        }
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = topVC.view
+            popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        topVC.present(activityVC, animated: true)
+    }
+}
+
+private struct MessageScreenshotCard: View {
+    let message: ChatMessage
+    let baseFontSize: Double
+
+    private var formattedTime: String {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "zh_TW")
+        df.dateFormat = "yyyy/MM/dd HH:mm"
+        return df.string(from: message.timestamp)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                if message.role == .assistant {
+                    GeminiSparkleIcon(size: 20, isAnimating: false)
+                    Text("Mac mini 隨身助理")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                } else {
+                    Image(systemName: "person.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(Color(red: 0.48, green: 0.78, blue: 1.0))
+                    Text("我的提問")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                }
+                Spacer()
+                Text(formattedTime)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(Color(white: 0.55))
+            }
+
+            if let fileNames = message.attachedFileNames, !fileNames.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(fileNames, id: \.self) { name in
+                        HStack(spacing: 5) {
+                            Image(systemName: name.lowercased().hasSuffix(".pdf") ? "doc.richtext.fill" : "doc.fill")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(red: 0.45, green: 0.72, blue: 1.0))
+                            Text(name)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white.opacity(0.9))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.18))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+            }
+
+            if let imgData = message.attachedImageData, let uiImg = UIImage(data: imgData) {
+                Image(uiImage: uiImg)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            Text(LocalizedStringKey(message.content))
+                .font(.system(size: max(14.0, baseFontSize)))
+                .foregroundColor(.white.opacity(0.95))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .frame(width: 390, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.04, green: 0.06, blue: 0.13),
+                    Color(red: 0.07, green: 0.11, blue: 0.24)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }

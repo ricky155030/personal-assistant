@@ -1090,6 +1090,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
             if !rText.isEmpty {
                 let normR = normalizeForDedup(rText)
                 let oldAst = existingSnapshot.last(where: { $0.role == .assistant && normalizeForDedup($0.content) == normR })
+                let serverQR = item.quick_replies ?? []
+                let resolvedQR = !serverQR.isEmpty ? serverQR : (oldAst?.quickReplies ?? [])
                 rebuilt.append(ChatMessage(
                     role: .assistant,
                     content: rText,
@@ -1097,7 +1099,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     status: .completed,
                     toolHistory: oldAst?.toolHistory ?? [],
                     thoughtProcess: oldAst?.thoughtProcess ?? "",
-                    quickReplies: oldAst?.quickReplies ?? [],
+                    quickReplies: resolvedQR,
                     reportUrl: oldAst?.reportUrl,
                     metadata: item.metadata ?? oldAst?.metadata,
                     source: item.source ?? oldAst?.source

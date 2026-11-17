@@ -454,6 +454,10 @@ class BrainRouter:
                 except Exception:
                     pass
 
+            if turn_result.get("quick_replies"):
+                meta["quick_replies"] = turn_result["quick_replies"]
+                turn_result["metadata"] = meta
+
             if not turn_result.get("cancelled") or clean_reply:
                 try:
                     saved_images = memory_manager.save_compressed_history_images(media)
