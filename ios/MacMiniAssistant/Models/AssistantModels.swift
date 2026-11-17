@@ -92,6 +92,7 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
     case low = "low"
     case med = "med"
     case high = "high"
+    case xhigh = "xhigh"
 
     public var id: String { rawValue }
 
@@ -103,6 +104,8 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
             return "中等 (Med)"
         case .high:
             return "深度 (High)"
+        case .xhigh:
+            return "極深 (XHigh)"
         }
     }
 
@@ -114,6 +117,8 @@ public enum ThinkingLevel: String, CaseIterable, Identifiable {
             return "平衡速度與邏輯推理 (預設)"
         case .high:
             return "複雜架構設計與深度專案分析"
+        case .xhigh:
+            return "最高深度推理與極致複雜任務"
         }
     }
 }
@@ -672,10 +677,18 @@ public final class QuickPromptStore {
 public struct BrainModelOption: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let label: String
+    public let thinkingLevels: [String]?
 
-    public init(id: String, label: String) {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case thinkingLevels = "thinking_levels"
+    }
+
+    public init(id: String, label: String, thinkingLevels: [String]? = nil) {
         self.id = id
         self.label = label
+        self.thinkingLevels = thinkingLevels
     }
 }
 

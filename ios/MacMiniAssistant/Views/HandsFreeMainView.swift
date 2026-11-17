@@ -664,6 +664,7 @@ struct HandsFreeMainView: View {
                         popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
                             coordinator.selectedModelFamily = fam
                             coordinator.selectBrainEngine("agy", modelId: fam.rawValue)
+                            coordinator.clampThinkingLevelIfNeeded()
                             showModelPopover = false
                         }
                     }
@@ -683,7 +684,7 @@ struct HandsFreeMainView: View {
 
                 Divider().opacity(0.25).padding(.vertical, 3)
                 popoverSectionHeader("思考深度")
-                ForEach(ThinkingLevel.allCases) { level in
+                ForEach(coordinator.supportedThinkingLevels) { level in
                     popoverOptionRow(title: "\(level.headerTitle) — \(level.menuSubtitle)", isSelected: coordinator.thinkingLevel == level) {
                         coordinator.thinkingLevel = level
                         showModelPopover = false
@@ -755,6 +756,7 @@ struct HandsFreeMainView: View {
         case .low: return "快速"
         case .med: return "中等"
         case .high: return "深度"
+        case .xhigh: return "極深"
         }
     }
 

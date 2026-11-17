@@ -89,8 +89,8 @@ def test_omp_curated_models_override(monkeypatch):
     eng = OmpBrainEngine()
     models = eng.get_available_models()
     assert models == [
-        {"id": "gpt-5.4", "label": "GPT 5.4"},
-        {"id": "claude-sonnet", "label": "Sonnet"},
+        {"id": "gpt-5.4", "label": "GPT 5.4", "thinking_levels": ["low", "med", "high"]},
+        {"id": "claude-sonnet", "label": "Sonnet", "thinking_levels": ["low", "med", "high"]},
     ]
     assert eng.supports_quota is False
 

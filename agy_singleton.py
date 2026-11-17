@@ -1346,6 +1346,8 @@ class AgyBrainPool:
             target_model = self.low_model
         elif chosen_level == "high":
             target_model = self.high_model
+        elif chosen_level == "xhigh":
+            target_model = family_map["hydrogen"]["xhigh"]
         else:
             target_model = self.med_model
             chosen_level = "med"

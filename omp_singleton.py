@@ -52,15 +52,15 @@ def _load_agents_md_text() -> str:
         pass
     return ""
 DEFAULT_OMP_MODELS: List[dict] = [
-    {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3"},
-    {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版"},
+    {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3", "thinking_levels": ["low", "med", "high"]},
+    {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版", "thinking_levels": ["low", "med", "high"]},
 ]
 
 
 def _load_curated_omp_models() -> List[dict]:
     raw = os.getenv("OMP_CURATED_MODELS", "").strip()
     if not raw:
-        return list(DEFAULT_OMP_MODELS)
+        return [dict(m) for m in DEFAULT_OMP_MODELS]
     models: List[dict] = []
     for entry in raw.split(","):
         item = entry.strip()
@@ -68,10 +68,14 @@ def _load_curated_omp_models() -> List[dict]:
             continue
         if "|" in item:
             mid, label = item.split("|", 1)
-            models.append({"id": mid.strip(), "label": label.strip() or mid.strip()})
+            models.append({
+                "id": mid.strip(),
+                "label": label.strip() or mid.strip(),
+                "thinking_levels": ["low", "med", "high"],
+            })
         else:
-            models.append({"id": item, "label": item})
-    return models or list(DEFAULT_OMP_MODELS)
+            models.append({"id": item, "label": item, "thinking_levels": ["low", "med", "high"]})
+    return models or [dict(m) for m in DEFAULT_OMP_MODELS]
 class OmpResidentWorker:
     """常駐 omp acp 進程（與 agy 同協定）：開機啟動、長連線問答、毫秒級取消。"""
 
@@ -789,8 +793,11 @@ class OmpBrainEngine(BaseBrainEngine):
     def _map_thinking_level(level: Optional[str]) -> Optional[str]:
         if not level:
             return None
+        norm = level.lower().strip()
+        if ":" in norm:
+            norm = norm.split(":", 1)[1].strip()
         mapping = {"low": "low", "med": "medium", "medium": "medium", "high": "high"}
-        return mapping.get(level.lower().strip())
+        return mapping.get(norm)
 
     def send_query_stream(
         self,

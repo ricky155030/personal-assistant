@@ -54,7 +54,35 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var isForcedSpeaker: Bool = true
 
     public var effectiveLevel: String {
-        return "\(selectedModelFamily.rawValue):\(thinkingLevel.rawValue)"
+        if selectedEngineId == "agy" {
+            return "\(selectedModelFamily.rawValue):\(thinkingLevel.rawValue)"
+        }
+        return thinkingLevel.rawValue
+    }
+
+    /// 依目前選擇的引擎與模型，動態回傳支援的思考深度清單
+    public var supportedThinkingLevels: [ThinkingLevel] {
+        let currentModelId = selectedEngineId == "agy" ? selectedModelFamily.rawValue : selectedEngineModelId
+        if let eng = brainCatalog?.engines.first(where: { $0.id == selectedEngineId }),
+           let modelOpt = eng.models.first(where: { $0.id == currentModelId }),
+           let rawLevels = modelOpt.thinkingLevels, !rawLevels.isEmpty {
+            let mapped = rawLevels.compactMap { ThinkingLevel(rawValue: $0.lowercased()) }
+            if !mapped.isEmpty {
+                return mapped
+            }
+        }
+        if selectedEngineId == "agy" && selectedModelFamily == .hydrogen {
+            return [.low, .med, .high, .xhigh]
+        }
+        return [.low, .med, .high]
+    }
+
+    /// 切換模型或引擎後，若現行思考深度不被新模型支援則自動降級回預設值
+    public func clampThinkingLevelIfNeeded() {
+        let supported = supportedThinkingLevels
+        if !supported.contains(thinkingLevel) {
+            thinkingLevel = supported.contains(.med) ? .med : (supported.first ?? .med)
+        }
     }
     @Published public var sttMode: STTRecognitionMode = {
         let saved = UserDefaults.standard.string(forKey: "macmini_stt_mode") ?? "hybrid"
@@ -223,6 +251,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             } else if let eng = cat.engines.first(where: { $0.id == cat.activeEngine }) {
                 self.selectedEngineModelId = eng.selectedModel
             }
+            self.clampThinkingLevelIfNeeded()
         }
     }
 
@@ -233,6 +262,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         } else if let eng = brainCatalog?.engines.first(where: { $0.id == engineId }) {
             self.selectedEngineModelId = eng.selectedModel
         }
+        self.clampThinkingLevelIfNeeded()
         Task {
             if let updated = await apiClient.selectBrainEngine(engine: engineId, model: modelId) {
                 self.brainCatalog = updated
@@ -240,6 +270,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 if !updated.activeModel.isEmpty {
                     self.selectedEngineModelId = updated.activeModel
                 }
+                self.clampThinkingLevelIfNeeded()
             }
         }
     }
