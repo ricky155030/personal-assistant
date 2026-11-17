@@ -652,7 +652,7 @@ async def voice_chat_stream(
 
     file_contexts: List[str] = []
     if payload.files:
-        from share_file_parser import extract_file_preview, sanitize_filename
+        from share_file_parser import sanitize_filename
         upload_dir.mkdir(parents=True, exist_ok=True)
         for item in payload.files[:5]:
             b64_data = (item.get("data_base64") or "").strip() if isinstance(item, dict) else ""
@@ -663,14 +663,8 @@ async def voice_chat_stream(
                 safe_name = sanitize_filename(str(item.get("filename") or "upload.bin"), fallback="upload.bin")
                 saved_file = upload_dir / f"ios_doc_{int(time.time())}_{uuid.uuid4().hex[:6]}_{safe_name}"
                 saved_file.write_bytes(raw_bytes)
-                if saved_file.suffix.lower() == ".pdf":
-                    effective_media.append({
-                        "mime_type": "application/pdf",
-                        "uri": str(saved_file.resolve())
-                    })
-                preview = extract_file_preview(saved_file)
-                header = f"📎 檔案：{safe_name}（本機路徑：{saved_file.resolve()}）"
-                file_contexts.append(f"{header}\n{preview}" if preview else header)
+                # 僅傳遞本機檔案路徑給大腦（agy / omp），由大腦自行決定讀取方式，避免全文預覽或 PDF media 導致 token 暴衝或空回覆
+                file_contexts.append(f"📎 檔案：{safe_name}（本機路徑：{saved_file.resolve()}）")
             except Exception as ex:
                 print(f"[voice_chat_stream] Failed to decode uploaded file: {ex}")
 
@@ -1374,7 +1368,7 @@ async def receive_ios_share(
     import base64
     import time
     import uuid
-    from share_file_parser import extract_file_preview, sanitize_filename
+    from share_file_parser import sanitize_filename
 
     prompt = (payload.prompt or "").strip() or "幫我快速摘要重點"
     url = (payload.url or "").strip()
@@ -1412,14 +1406,7 @@ async def receive_ios_share(
                 safe_name = sanitize_filename(item.filename, fallback="shared_doc.bin")
                 saved_file = upload_dir / f"share_{int(time.time())}_{uuid.uuid4().hex[:6]}_{safe_name}"
                 saved_file.write_bytes(raw_bytes)
-                if saved_file.suffix.lower() == ".pdf":
-                    effective_media.append({
-                        "mime_type": "application/pdf",
-                        "uri": str(saved_file.resolve()),
-                    })
-                preview = extract_file_preview(saved_file)
-                header = f"📎 檔案：{safe_name}（本機路徑：{saved_file.resolve()}）"
-                file_contexts.append(f"{header}\n{preview}" if preview else header)
+                file_contexts.append(f"📎 檔案：{safe_name}（本機路徑：{saved_file.resolve()}）")
             except Exception as ex:
                 print(f"[Share] Failed to decode shared file {item.filename}: {ex}")
 

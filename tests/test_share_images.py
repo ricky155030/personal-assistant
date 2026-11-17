@@ -68,8 +68,9 @@ def test_share_endpoint_accepts_documents(tmp_path):
             assert body["status"] == "accepted"
             assert body["file_count"] == 2
             assert len(captured["file_contexts"]) == 2
-            assert "這是會議紀錄重點" in captured["file_contexts"][0]
-            assert any(m["mime_type"] == "application/pdf" for m in captured["media"])
+            assert "📎 檔案：notes.txt（本機路徑：" in captured["file_contexts"][0]
+            assert "📎 檔案：bill.pdf（本機路徑：" in captured["file_contexts"][1]
+            assert captured["media"] is None
     finally:
         main.app.dependency_overrides.clear()
 
@@ -157,7 +158,8 @@ def test_share_endpoint_accepts_documents(tmp_path):
             assert body["status"] == "accepted"
             assert body["file_count"] == 2
             assert len(captured["file_contexts"]) == 2
-            assert "這是會議紀錄重點" in captured["file_contexts"][0]
-            assert any(m["mime_type"] == "application/pdf" for m in captured["media"])
+            assert "📎 檔案：notes.txt（本機路徑：" in captured["file_contexts"][0]
+            assert "📎 檔案：bill.pdf（本機路徑：" in captured["file_contexts"][1]
+            assert captured["media"] is None
     finally:
         main.app.dependency_overrides.clear()
