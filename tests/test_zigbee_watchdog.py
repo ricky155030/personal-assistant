@@ -18,8 +18,9 @@ DUMMY_CFG = {
 
 
 @patch("scripts.zigbee_watchdog.notify_alert")
+@patch("scripts.zigbee_watchdog.check_container_and_logs", return_value=("ok", ""))
 @patch("scripts.zigbee_watchdog.fetch_bridge_state", return_value="on")
-def test_watchdog_healthy(mock_fetch, mock_notify):
+def test_watchdog_healthy(mock_fetch, mock_container, mock_notify):
     ctx = {"alert_sent": False}
     assert check_and_heal_once(ctx, DUMMY_CFG) == "healthy"
     mock_notify.assert_not_called()
@@ -56,3 +57,30 @@ def test_watchdog_auto_heals_when_usb_present(mock_fetch, mock_ssh, mock_notify,
     assert ctx["alert_sent"] is False
     mock_notify.assert_called_once()
     assert mock_notify.call_args[1]["critical"] is False
+
+
+@patch("scripts.zigbee_watchdog.time.sleep")
+@patch("scripts.zigbee_watchdog.notify_alert")
+@patch("scripts.zigbee_watchdog.run_ssh_command")
+@patch("scripts.zigbee_watchdog.fetch_bridge_state", return_value="on")
+def test_watchdog_heals_nwk_no_route_logs_and_respects_cooldown(mock_fetch, mock_ssh, mock_notify, _mock_sleep):
+    err_logs = (
+        "true\n---LOGS---\n"
+        "[2026-11-17 18:35:39] error: z2m: Publish 'set' failed (Error: 'NWK_NO_ROUTE' (0xcd))\n"
+        "[2026-11-17 18:37:10] error: z2m: Publish 'set' failed (Error: 'NWK_NO_ROUTE' (0xcd))\n"
+    )
+    mock_ssh.side_effect = [
+        (0, err_logs, ""),
+        (0, "/dev/ttyUSB0", ""),
+        (0, "zigbee2mqtt", ""),
+        # 第二次巡檢仍在冷卻期，應只檢查日誌不再重啟
+        (0, err_logs, ""),
+    ]
+    ctx = {"alert_sent": False}
+    assert check_and_heal_once(ctx, DUMMY_CFG) == "auto_healed"
+    assert "last_log_restart_ts" in ctx
+    mock_notify.assert_called_once()
+
+    mock_notify.reset_mock()
+    assert check_and_heal_once(ctx, DUMMY_CFG) == "healthy"
+    mock_notify.assert_not_called()

@@ -29,6 +29,8 @@ if str(BASE_DIR) not in sys.path:
 load_dotenv(BASE_DIR / ".env", override=True)
 
 BRIDGE_ENTITY = "binary_sensor.zigbee2mqtt_bridge_connection_state"
+LOG_ERROR_PATTERNS = ("NWK_NO_ROUTE", "Data request failed", "SRSP -", "Adapter disconnected")
+LOG_RESTART_COOLDOWN_SEC = 900
 
 
 def get_config() -> Dict[str, str]:
@@ -87,6 +89,38 @@ def notify_alert(title: str, message: str, critical: bool = False) -> None:
             print(f"[ZigbeeWatchdog] iOS 通知失敗: {e}", file=sys.stderr)
 
 
+def check_container_and_logs(ssh_user: str, ha_host: str) -> Tuple[str, str]:
+    """透過 SSH 檢查 zigbee2mqtt 容器運行狀態與近 5 分鐘日誌是否有重複路由/通訊錯誤。
+
+    回傳 (status, detail):
+    - ("ok", "")：容器運行中且近期日誌無異常
+    - ("container_down", detail)：容器未運行
+    - ("route_errors", detail)：近期日誌出現 >= 2 次 Zigbee 路由/通訊失敗
+    - ("ssh_failed", detail)：SSH 連線失敗（不誤判重啟）
+    """
+    cmd = (
+        "docker inspect -f '{{.State.Running}}' zigbee2mqtt 2>/dev/null || echo 'false'; "
+        "echo '---LOGS---'; "
+        "docker logs --since 5m zigbee2mqtt 2>&1 | tail -n 100 || true"
+    )
+    rc, out, err = run_ssh_command(ssh_user, ha_host, cmd, timeout=15.0)
+    if rc != 0:
+        return "ssh_failed", err
+
+    running_part, _, logs_part = out.partition("---LOGS---")
+    if running_part.strip().lower() != "true":
+        return "container_down", running_part.strip() or "not running"
+
+    err_lines = [
+        line.strip()
+        for line in logs_part.splitlines()
+        if any(pat in line for pat in LOG_ERROR_PATTERNS)
+    ]
+    if len(err_lines) >= 2:
+        return "route_errors", f"近 5 分鐘出現 {len(err_lines)} 次通訊/路由錯誤（如 {err_lines[-1][:80]}）"
+    return "ok", ""
+
+
 def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]] = None) -> str:
     """執行單次巡檢與自愈邏輯，回傳狀態代碼"""
     cfg = cfg or get_config()
@@ -96,15 +130,31 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
         print(f"[ZigbeeWatchdog] ⚠️ 查詢 HA 狀態失敗: {e}", file=sys.stderr)
         return "ha_unreachable"
 
-    if bridge_state == "on":
-        if state_ctx.get("alert_sent"):
-            notify_alert("✅ Zigbee2MQTT 已恢復連線", "橋接器狀態已回到正常連線。", critical=False)
-        state_ctx["alert_sent"] = False
-        return "healthy"
-
     ha_host = cfg["ha_host"]
     ssh_user = cfg["ssh_user"]
     compose_dir = cfg["compose_dir"]
+
+    need_heal_reason = ""
+    if bridge_state == "on":
+        if ha_host:
+            c_status, c_detail = check_container_and_logs(ssh_user, ha_host)
+            if c_status == "container_down":
+                need_heal_reason = f"容器未運行（{c_detail}）"
+            elif c_status == "route_errors":
+                last_ts = float(state_ctx.get("last_log_restart_ts", 0.0) or 0.0)
+                if time.time() - last_ts >= LOG_RESTART_COOLDOWN_SEC:
+                    need_heal_reason = c_detail
+                else:
+                    print(f"[ZigbeeWatchdog] ⏳ 偵測到路由錯誤但仍在冷卻期內，略過重啟: {c_detail}")
+
+        if not need_heal_reason:
+            if state_ctx.get("alert_sent"):
+                notify_alert("✅ Zigbee2MQTT 已恢復連線", "橋接器狀態已回到正常連線。", critical=False)
+            state_ctx["alert_sent"] = False
+            return "healthy"
+    else:
+        need_heal_reason = f"橋接器離線（state={bridge_state}）"
+
     if not ha_host:
         return "missing_host"
 
@@ -128,15 +178,17 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
             state_ctx["alert_sent"] = True
         return "usb_missing"
 
-    # USB 還在 -> 嘗試重建容器自愈
-    print(f"[ZigbeeWatchdog] 🔧 偵測到橋接器離線但 USB 存在 ({out})，嘗試重建 zigbee2mqtt 容器...")
-    rc_up, _, err_up = run_ssh_command(
-        ssh_user,
-        ha_host,
-        f"cd {compose_dir} && docker compose up -d --force-recreate zigbee2mqtt",
-        timeout=45.0,
+    # USB 還在 -> 嘗試重啟/重建容器自愈
+    print(f"[ZigbeeWatchdog] 🔧 {need_heal_reason}，但 USB 存在 ({out})，嘗試重啟 zigbee2mqtt 容器...")
+    heal_cmd = (
+        "docker restart zigbee2mqtt"
+        if bridge_state == "on"
+        else f"cd {compose_dir} && docker compose up -d --force-recreate zigbee2mqtt"
     )
+    rc_up, _, err_up = run_ssh_command(ssh_user, ha_host, heal_cmd, timeout=45.0)
     if rc_up == 0:
+        if bridge_state == "on":
+            state_ctx["last_log_restart_ts"] = time.time()
         time.sleep(8)
         try:
             new_state = fetch_bridge_state(cfg["hass_url"], cfg["hass_token"])
@@ -144,7 +196,11 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
             new_state = None
         if new_state == "on":
             state_ctx["alert_sent"] = False
-            notify_alert("🔧 Zigbee2MQTT 已自動修復", "偵測到橋接器斷線，已自動重建容器恢復連線。", critical=False)
+            notify_alert(
+                "🔧 Zigbee2MQTT 已自動修復",
+                f"觸發原因：{need_heal_reason}，已自動重啟容器恢復。",
+                critical=False,
+            )
             return "auto_healed"
 
     if not state_ctx.get("alert_sent"):
