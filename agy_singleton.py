@@ -26,6 +26,7 @@ from typing import Generator, List, Optional, Tuple, Union, Any
 from config import settings
 from memory_manager import memory_manager
 from thinking_router import classify_thinking_level, clean_query_prefix
+from brain_engine import clean_query_for_history
 from widget_html_utils import extract_rich_blocks
 
 logger = logging.getLogger("AgyBrainPool")
@@ -1404,7 +1405,7 @@ class AgyBrainPool:
                 actions_str = f"singleton_agy_acp ({chosen_level}) (ttft: {ttft:.2f}s, total: {tot:.2f}s)"
                 saved_images = memory_manager.save_compressed_history_images(media)
                 memory_manager.log_interaction(
-                    query,
+                    clean_query_for_history(query),
                     clean_reply_text or turn_result.get("clean_reply", ""),
                     [actions_str],
                     metadata=metadata,

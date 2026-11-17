@@ -17,6 +17,9 @@ from widget_html_utils import extract_rich_blocks
 def clean_query_for_history(raw_query: str) -> str:
     """Strip system prefixes and cross-brain handoff blocks before writing history.jsonl."""
     q = (raw_query or "").strip()
+    handoff_end = "[交接結束，以下為主人本次新訊息]"
+    if handoff_end in q:
+        q = q.split(handoff_end, 1)[1].strip()
     markers = (
         "[跨大腦記憶交接提要",
         "[來源管道:",

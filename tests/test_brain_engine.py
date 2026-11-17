@@ -95,6 +95,22 @@ def test_omp_curated_models_override(monkeypatch):
     assert eng.supports_quota is False
 
 
+def test_clean_query_for_history_strips_multiline_handoff():
+    from brain_engine import clean_query_for_history
+
+    raw = (
+        "[跨大腦記憶交接提要（由 omp 切換至 agy）]\n"
+        "- 主人：hi\n"
+        "  助理：第一段\n\n"
+        "第二段內容\n"
+        "[交接結束，以下為主人本次新訊息]\n\n"
+        "[來源管道: iOS]\n"
+        "【回覆長度約束：細節模式】\n\n"
+        "問一下廁所燈"
+    )
+    assert clean_query_for_history(raw) == "問一下廁所燈"
+
+
 def test_omp_stream_parses_jsonl_events(tmp_path):
     eng = OmpBrainEngine()
     eng._session_dir = tmp_path / "omp_sessions"
