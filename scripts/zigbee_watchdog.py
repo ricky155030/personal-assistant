@@ -89,6 +89,29 @@ def notify_alert(title: str, message: str, critical: bool = False) -> None:
             print(f"[ZigbeeWatchdog] iOS 通知失敗: {e}", file=sys.stderr)
 
 
+def os_usb_replug_and_restart(ssh_user: str, ha_host: str, compose_dir: str) -> Tuple[int, str, str]:
+    """OS 層軟體停用再啟用 Zigbee USB 裝置（模擬拔插），再重建啟動 zigbee2mqtt 容器。"""
+    remote_cmd = (
+        "docker stop zigbee2mqtt >/dev/null 2>&1 || true; "
+        "USB_DEV=''; "
+        "for d in /sys/bus/usb/devices/*; do "
+        "  if [ -f \"$d/idVendor\" ] && [ -f \"$d/idProduct\" ] && "
+        "     [ \"$(cat \"$d/idVendor\" 2>/dev/null)\" = '1a86' ] && "
+        "     [ \"$(cat \"$d/idProduct\" 2>/dev/null)\" = '7523' ]; then "
+        "    USB_DEV=\"$d\"; break; "
+        "  fi; "
+        "done; "
+        "if [ -n \"$USB_DEV\" ] && [ -f \"$USB_DEV/authorized\" ]; then "
+        "  echo 0 | sudo -n tee \"$USB_DEV/authorized\" >/dev/null && sleep 2 && "
+        "  echo 1 | sudo -n tee \"$USB_DEV/authorized\" >/dev/null && sleep 3; "
+        "elif command -v usbreset >/dev/null 2>&1; then "
+        "  sudo -n usbreset 1a86:7523 >/dev/null 2>&1 || true; sleep 2; "
+        "fi; "
+        f"cd {compose_dir} && docker compose up -d --force-recreate zigbee2mqtt"
+    )
+    return run_ssh_command(ssh_user, ha_host, remote_cmd, timeout=60.0)
+
+
 def check_container_and_logs(ssh_user: str, ha_host: str) -> Tuple[str, str]:
     """透過 SSH 檢查 zigbee2mqtt 容器運行狀態與近 5 分鐘日誌是否有重複路由/通訊錯誤。
 
@@ -151,6 +174,8 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
             if state_ctx.get("alert_sent"):
                 notify_alert("✅ Zigbee2MQTT 已恢復連線", "橋接器狀態已回到正常連線。", critical=False)
             state_ctx["alert_sent"] = False
+            if c_status == "ok":
+                state_ctx["consecutive_route_heals"] = 0
             return "healthy"
     else:
         need_heal_reason = f"橋接器離線（state={bridge_state}）"
@@ -178,17 +203,27 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
             state_ctx["alert_sent"] = True
         return "usb_missing"
 
-    # USB 還在 -> 嘗試重啟/重建容器自愈
-    print(f"[ZigbeeWatchdog] 🔧 {need_heal_reason}，但 USB 存在 ({out})，嘗試重啟 zigbee2mqtt 容器...")
-    heal_cmd = (
-        "docker restart zigbee2mqtt"
-        if bridge_state == "on"
-        else f"cd {compose_dir} && docker compose up -d --force-recreate zigbee2mqtt"
-    )
-    rc_up, _, err_up = run_ssh_command(ssh_user, ha_host, heal_cmd, timeout=45.0)
+    # 兩段式自愈：第一次先重啟容器；若連續復發則升級為 OS 層 USB 軟體拔插 + 重建容器
+    heal_stage = int(state_ctx.get("consecutive_route_heals", 0) or 0)
+    use_usb_replug = (bridge_state == "on" and heal_stage >= 1)
+    if use_usb_replug:
+        print(f"[ZigbeeWatchdog] 🔌 {need_heal_reason}，重啟容器仍復發，升級執行 OS 層 USB 停用/啟用並重建容器...")
+        rc_up, _, err_up = os_usb_replug_and_restart(ssh_user, ha_host, compose_dir)
+        stage_label = "已執行 OS 層 USB 軟體拔插並重建容器"
+    else:
+        print(f"[ZigbeeWatchdog] 🔧 {need_heal_reason}，但 USB 存在 ({out})，嘗試重啟 zigbee2mqtt 容器...")
+        heal_cmd = (
+            "docker restart zigbee2mqtt"
+            if bridge_state == "on"
+            else f"cd {compose_dir} && docker compose up -d --force-recreate zigbee2mqtt"
+        )
+        rc_up, _, err_up = run_ssh_command(ssh_user, ha_host, heal_cmd, timeout=45.0)
+        stage_label = "已自動重啟容器恢復"
+
     if rc_up == 0:
         if bridge_state == "on":
             state_ctx["last_log_restart_ts"] = time.time()
+            state_ctx["consecutive_route_heals"] = heal_stage + 1
         time.sleep(8)
         try:
             new_state = fetch_bridge_state(cfg["hass_url"], cfg["hass_token"])
@@ -198,7 +233,7 @@ def check_and_heal_once(state_ctx: Dict[str, Any], cfg: Optional[Dict[str, str]]
             state_ctx["alert_sent"] = False
             notify_alert(
                 "🔧 Zigbee2MQTT 已自動修復",
-                f"觸發原因：{need_heal_reason}，已自動重啟容器恢復。",
+                f"觸發原因：{need_heal_reason}，{stage_label}。",
                 critical=False,
             )
             return "auto_healed"

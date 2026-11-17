@@ -84,3 +84,25 @@ def test_watchdog_heals_nwk_no_route_logs_and_respects_cooldown(mock_fetch, mock
     mock_notify.reset_mock()
     assert check_and_heal_once(ctx, DUMMY_CFG) == "healthy"
     mock_notify.assert_not_called()
+
+
+@patch("scripts.zigbee_watchdog.time.sleep")
+@patch("scripts.zigbee_watchdog.notify_alert")
+@patch("scripts.zigbee_watchdog.os_usb_replug_and_restart", return_value=(0, "Started", ""))
+@patch("scripts.zigbee_watchdog.run_ssh_command")
+@patch("scripts.zigbee_watchdog.fetch_bridge_state", return_value="on")
+def test_watchdog_escalates_to_os_usb_replug_on_repeat(mock_fetch, mock_ssh, mock_replug, mock_notify, _mock_sleep):
+    err_logs = (
+        "true\n---LOGS---\n"
+        "[2026-11-17 18:35:39] error: z2m: Publish 'set' failed (Error: 'NWK_NO_ROUTE' (0xcd))\n"
+        "[2026-11-17 18:37:10] error: z2m: Publish 'set' failed (Error: 'NWK_NO_ROUTE' (0xcd))\n"
+    )
+    mock_ssh.side_effect = [
+        (0, err_logs, ""),
+        (0, "/dev/ttyUSB0", ""),
+    ]
+    ctx = {"alert_sent": False, "consecutive_route_heals": 1, "last_log_restart_ts": 0.0}
+    assert check_and_heal_once(ctx, DUMMY_CFG) == "auto_healed"
+    mock_replug.assert_called_once()
+    assert ctx["consecutive_route_heals"] == 2
+    assert "USB 軟體拔插" in mock_notify.call_args[0][1]
