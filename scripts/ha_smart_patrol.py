@@ -355,9 +355,12 @@ def main():
                     else:
                         # 有人回到家，重置離家狀態
                         if not_home_since is not None:
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 歡迎回家 ({', '.join(pres_details)})，巡檢重置進入待命狀態。")
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🟢 歡迎回家 ({', '.join(pres_details)})，巡檢重置進入待命狀態。", flush=True)
                         not_home_since = None
                         handled_for_this_away_session = False
+                    # 每輪心跳：供 TaskManager 健康度判定，避免靜默超時誤殺
+                    away_info = f"已無人{int((now_ts - not_home_since)//60)}分鐘" if not_home_since is not None else "有人在家"
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 💓 待命心跳：{away_info}，{', '.join(pres_details)}", flush=True)
 
             except Exception as loop_err:
                 print(f"[SmartPatrol] ⚠️ 巡檢異常: {loop_err}", file=sys.stderr)
