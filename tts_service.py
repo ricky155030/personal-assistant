@@ -20,13 +20,15 @@ _AUDIO_CACHE: Dict[str, str] = {}
 _CACHE_MAX_SIZE = 100
 
 def sanitize_text_for_tts(text: str) -> str:
-    """清理多餘 markdown、表情符號與空白，提高語音朗讀流暢度"""
+    """清理多餘 markdown、連結目標、表情符號與空白，提高語音朗讀流暢度"""
     if not text:
         return ""
+    # Markdown 連結 [顯示文字](url) 僅保留顯示文字
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # 去除殘留 URL 或 file:// 連結
+    t = re.sub(r"(?:https?|file)://\S+", "", t)
     # 去除 markdown 粗體、斜體、反引號、標題符號
-    t = re.sub(r"[\*#`_~>]", "", text)
-    # 去除 URL 連結
-    t = re.sub(r"https?://\S+", "", t)
+    t = re.sub(r"[\*#`_~>]", "", t)
     # 去除常用 Emoji 表情（保持純口語文字）
     t = re.sub(r"[\U00010000-\U0010ffff]", "", t)
     # 壓縮空白

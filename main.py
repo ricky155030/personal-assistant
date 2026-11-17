@@ -36,8 +36,10 @@ from task_supervisor import (
 EMOJI_PATTERN = re.compile(r"[\U00010000-\U0010ffff\u2600-\u27bf\u2300-\u23ff\u2b50\u200d\ufe0f]", flags=re.UNICODE)
 
 def sanitize_for_tts(text: str) -> str:
-    """全面清除所有 Emoji、Markdown 標記與網址，確保 Siri 語音朗讀純淨無雜音"""
-    clean = re.sub(r"https?://\S+", "", text)
+    """全面清除所有 Emoji、Markdown 標記、連結目標與網址，確保語音朗讀純淨無雜音"""
+    # Markdown 連結 [顯示文字](url) 僅保留顯示文字，避免唸出 file:// 或 https:// 路徑
+    clean = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    clean = re.sub(r"(?:https?|file)://\S+", "", clean)
     clean = re.sub(r"(📍\s*)?地圖連結[：:]\s*", "", clean)
     clean = EMOJI_PATTERN.sub("", clean)
     clean = re.sub(r"[*#`_~>\[\]]", "", clean)

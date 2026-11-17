@@ -31,6 +31,13 @@ def test_clean_history_query_strips_expanded_file_preview():
     assert cleaned == "整理這份投資報告並告訴我值得投資的產業\n\n📎 Report_2026Q4.pdf"
 
 
+def test_tts_sanitizes_markdown_file_links():
+    import tts_service
+    sample = "請檢查 [task_manager.py](file:///Users/demo/project/task_manager.py#L163-L195) 與 https://example.com"
+    assert main.sanitize_for_tts(sample) == "請檢查 taskmanager.py 與"
+    assert tts_service.sanitize_text_for_tts(sample) == "請檢查 taskmanager.py 與"
+
+
 def test_save_compressed_history_images_and_log_interaction(tmp_path):
     src_img = tmp_path / "big.png"
     Image.new("RGBA", (1600, 1200), color=(255, 0, 0, 255)).save(src_img)
