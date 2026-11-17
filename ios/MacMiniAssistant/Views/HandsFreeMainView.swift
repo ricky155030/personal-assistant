@@ -2265,8 +2265,43 @@ struct GeminiMessageRow: View {
 
     @State private var isThoughtExpanded: Bool = false
     @State private var isToolsExpanded: Bool = false
+    @State private var isReportExpandedOverride: Bool? = nil
     @State private var previewPhoto: PreviewPhotoItem? = nil
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
+
+    private var isBackgroundReportError: Bool {
+        guard message.isBackgroundReport else { return false }
+        let text = message.content
+        if text.contains("執行失敗") || text.contains("失敗") || text.contains("逾時終止")
+            || text.contains("Fatal Python error") || text.contains("OSError") {
+            return true
+        }
+        if let range = text.range(of: #"Exit=[1-9]\d*"#, options: .regularExpression), !range.isEmpty {
+            return true
+        }
+        let cleaned = text.replacingOccurrences(of: "無任何異常", with: "").replacingOccurrences(of: "無異常", with: "")
+        return cleaned.contains("異常")
+    }
+
+    private var isBackgroundReportExpanded: Bool {
+        isReportExpandedOverride ?? isBackgroundReportError
+    }
+
+    private var backgroundReportTitle: String {
+        let text = message.content
+        if let start = text.range(of: "「"), let end = text[start.upperBound...].range(of: "」") {
+            let name = String(text[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { return name }
+        }
+        if text.contains("CI 監控") {
+            return "CI 監控"
+        }
+        let firstLine = text.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !firstLine.isEmpty {
+            return firstLine.count > 18 ? String(firstLine.prefix(18)) + "…" : firstLine
+        }
+        return "背景任務"
+    }
 
     private var isUser: Bool {
         message.role == .user
@@ -2383,20 +2418,41 @@ struct GeminiMessageRow: View {
                     )
 
                     if message.isBackgroundReport {
-                        HStack(spacing: 4) {
-                            Image(systemName: "bell.badge.fill")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text("背景回報")
-                                .font(.system(size: 11.5, weight: .semibold))
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isReportExpandedOverride = !isBackgroundReportExpanded
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: isBackgroundReportError ? "exclamationmark.triangle.fill" : "bell.badge.fill")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                    Text("背景回報")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                }
+                                .foregroundColor(isBackgroundReportError ? Color(red: 1.0, green: 0.56, blue: 0.58) : Color(red: 0.48, green: 0.80, blue: 1.0))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(isBackgroundReportError ? Color.red.opacity(0.22) : Color.blue.opacity(0.18))
+                                .overlay(
+                                    Capsule().stroke(isBackgroundReportError ? Color.red.opacity(0.45) : Color.blue.opacity(0.36), lineWidth: 0.8)
+                                )
+                                .clipShape(Capsule())
+
+                                Text(backgroundReportTitle)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.92))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 10.5, weight: .bold))
+                                    .foregroundColor(Color(white: 0.65))
+                                    .rotationEffect(.degrees(isBackgroundReportExpanded ? 180 : 0))
+                            }
+                            .contentShape(Rectangle())
                         }
-                        .foregroundColor(Color(red: 0.48, green: 0.80, blue: 1.0))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.blue.opacity(0.18))
-                        .overlay(
-                            Capsule().stroke(Color.blue.opacity(0.36), lineWidth: 0.8)
-                        )
-                        .clipShape(Capsule())
+                        .buttonStyle(.plain)
                     }
 
                     if message.status == .streaming && message.content.isEmpty && message.toolHistory.isEmpty && !hasThoughts {
@@ -2549,10 +2605,12 @@ struct GeminiMessageRow: View {
                     }
                 }
 
-                // 助理回覆正文（完整 Markdown 渲染 + 動態字體）
-                if !message.content.isEmpty {
-                    MarkdownMessageView(content: message.content)
-                        .textSelection(.enabled)
+                // 助理回覆正文（背景回報預設摺疊，異常時預設展開，點擊標題列可切換）
+                if !message.isBackgroundReport || isBackgroundReportExpanded {
+                    if !message.content.isEmpty {
+                        MarkdownMessageView(content: message.content)
+                            .textSelection(.enabled)
+                    }
                 }
 
                 // 反問確認時自動生成的一鍵快速回覆膠囊 (Quick-Reply Chips)
@@ -2714,7 +2772,11 @@ struct GeminiMessageRow: View {
                 Group {
                     if message.isBackgroundReport {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(Color(red: 0.09, green: 0.14, blue: 0.22).opacity(0.88))
+                            .fill(
+                                isBackgroundReportError
+                                    ? Color(red: 0.30, green: 0.10, blue: 0.13).opacity(0.88)
+                                    : Color(red: 0.09, green: 0.14, blue: 0.22).opacity(0.88)
+                            )
                     }
                 }
             )
@@ -2722,7 +2784,12 @@ struct GeminiMessageRow: View {
                 Group {
                     if message.isBackgroundReport {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.blue.opacity(0.28), lineWidth: 1)
+                            .stroke(
+                                isBackgroundReportError
+                                    ? Color(red: 0.95, green: 0.42, blue: 0.46).opacity(0.45)
+                                    : Color.blue.opacity(0.28),
+                                lineWidth: 1
+                            )
                     }
                 }
             )
