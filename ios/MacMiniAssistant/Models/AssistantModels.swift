@@ -278,6 +278,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public var reportUrl: String?
     public var attachedImageData: Data?
     public var attachedImagesData: [Data]?
+    public var attachedFileNames: [String]?
     public var metadata: TurnMetadata?
     public var source: String?
 
@@ -314,6 +315,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         reportUrl: String? = nil,
         attachedImageData: Data? = nil,
         attachedImagesData: [Data]? = nil,
+        attachedFileNames: [String]? = nil,
         metadata: TurnMetadata? = nil,
         source: String? = nil
     ) {
@@ -328,12 +330,13 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.reportUrl = reportUrl
         self.attachedImageData = attachedImageData ?? attachedImagesData?.first
         self.attachedImagesData = attachedImagesData ?? (attachedImageData != nil ? [attachedImageData!] : nil)
+        self.attachedFileNames = attachedFileNames
         self.metadata = metadata
         self.source = source
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData, metadata, source
+        case id, role, content, timestamp, status, toolHistory, thoughtProcess, quickReplies, reportUrl, attachedImageData, attachedImagesData, attachedFileNames, metadata, source
     }
 
     public init(from decoder: Decoder) throws {
@@ -349,6 +352,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         self.reportUrl = try container.decodeIfPresent(String.self, forKey: .reportUrl)
         self.attachedImageData = try container.decodeIfPresent(Data.self, forKey: .attachedImageData)
         self.attachedImagesData = try container.decodeIfPresent([Data].self, forKey: .attachedImagesData)
+        self.attachedFileNames = try container.decodeIfPresent([String].self, forKey: .attachedFileNames)
         self.metadata = try container.decodeIfPresent(TurnMetadata.self, forKey: .metadata)
         self.source = try container.decodeIfPresent(String.self, forKey: .source)
     }

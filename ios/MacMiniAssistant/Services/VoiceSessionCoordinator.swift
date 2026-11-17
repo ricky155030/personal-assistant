@@ -1067,20 +1067,23 @@ public final class VoiceSessionCoordinator: ObservableObject {
             let rText = item.reply.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if !qText.isEmpty {
-                let normQ = normalizeForDedup(qText)
+                let (cleanQText, parsedFiles) = Self.extractAttachedFiles(from: qText)
+                let normQ = normalizeForDedup(cleanQText)
                 let oldUser = existingSnapshot.last(where: { $0.role == .user && normalizeForDedup($0.content) == normQ })
                 var imgList = oldUser?.attachedImagesData
                 if (imgList == nil || imgList?.isEmpty == true), oldUser?.attachedImageData == nil {
                     let fetched = await fetchImagesForHistoryItem(item.images)
                     if !fetched.isEmpty { imgList = fetched }
                 }
+                let finalFileNames = parsedFiles.isEmpty ? oldUser?.attachedFileNames : parsedFiles
                 rebuilt.append(ChatMessage(
                     role: .user,
-                    content: qText,
+                    content: cleanQText.isEmpty && !(finalFileNames?.isEmpty ?? true) ? "📎 附加檔案" : cleanQText,
                     timestamp: parsedDate,
                     status: .completed,
                     attachedImageData: oldUser?.attachedImageData ?? imgList?.first,
-                    attachedImagesData: imgList
+                    attachedImagesData: imgList,
+                    attachedFileNames: finalFileNames
                 ))
             }
 
@@ -1569,6 +1572,23 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
+    private static func extractAttachedFiles(from rawText: String) -> (cleanText: String, fileNames: [String]) {
+        let lines = rawText.components(separatedBy: "\n")
+        var fileNames: [String] = []
+        var keptLines: [String] = []
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("📎 ") {
+                let name = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { fileNames.append(name) }
+            } else {
+                keptLines.append(line)
+            }
+        }
+        let cleaned = keptLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cleaned, fileNames)
+    }
+
     private func processTranscript(_ text: String) {
         guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
 
@@ -1590,11 +1610,15 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let speakThisTurn = shouldSpeakCurrentTurn
         let clientTag = speakThisTurn ? "ios-voice" : "telegram"
 
+        let displayContent = fullQuery.isEmpty && !attachedFiles.isEmpty
+            ? (attachedFiles.count > 1 ? "請幫我解析這 \(attachedFiles.count) 份檔案。" : "請幫我解析這份檔案。")
+            : text
         let userMessage = ChatMessage(
             role: .user,
-            content: text,
+            content: displayContent,
             attachedImageData: effectiveImagesData.first,
-            attachedImagesData: effectiveImagesData.isEmpty ? nil : effectiveImagesData
+            attachedImagesData: effectiveImagesData.isEmpty ? nil : effectiveImagesData,
+            attachedFileNames: attachedFiles.isEmpty ? nil : attachedFiles.map(\.filename)
         )
         messages.append(userMessage)
 

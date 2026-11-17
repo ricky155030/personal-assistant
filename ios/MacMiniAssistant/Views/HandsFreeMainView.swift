@@ -93,6 +93,7 @@ struct HandsFreeMainView: View {
     @State private var showCameraPicker: Bool = false
     @State private var showPhotoLibraryPicker: Bool = false
     @State private var showFileImporter: Bool = false
+    @State private var showAttachmentSheet: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var quotedMessage: ChatMessage? = nil
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
@@ -1556,36 +1557,32 @@ struct HandsFreeMainView: View {
 
             // Gemini 標誌性深色膠囊輸入列
             HStack(alignment: .bottom, spacing: 8) {
-                // 左側 [ + ] 相簿選圖 / 附加檔案 / 帶入目前位置
-                Menu {
-                    Button(action: {
-                        isInputFocused = false
-                        showPhotoLibraryPicker = true
-                    }) {
-                        Label("從相簿選取圖片", systemImage: "photo.on.rectangle")
-                    }
-
-                    Button(action: {
-                        isInputFocused = false
-                        showFileImporter = true
-                    }) {
-                        Label("附加檔案或文件", systemImage: "doc.badge.plus")
-                    }
-
-                    Button(action: {
-                        haptic.impactOccurred()
-                        isInputFocused = false
-                        coordinator.attachCurrentLocation()
-                    }) {
-                        Label("帶入目前位置", systemImage: "location.fill")
-                    }
-                } label: {
+                // 左側 [ + ] 相簿選圖 / 附加檔案 / 帶入目前位置（改用 Button + confirmationDialog 避免在多行 TextField 取得焦點時 Menu 觸控失效）
+                Button(action: {
+                    haptic.impactOccurred()
+                    isInputFocused = false
+                    showAttachmentSheet = true
+                }) {
                     Image(systemName: "plus")
                         .font(.system(size: 21, weight: .medium))
                         .foregroundColor(.white.opacity(0.88))
-                        .frame(minWidth: 44, minHeight: 44)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("附加圖片、檔案或目前位置")
+                .confirmationDialog("附加內容", isPresented: $showAttachmentSheet, titleVisibility: .hidden) {
+                    Button("從相簿選取圖片") {
+                        showPhotoLibraryPicker = true
+                    }
+                    Button("附加檔案或文件") {
+                        showFileImporter = true
+                    }
+                    Button("帶入目前位置") {
+                        coordinator.attachCurrentLocation()
+                    }
+                    Button("取消", role: .cancel) {}
+                }
 
                 // 文字輸入框：「問問助理」
                 TextField(
@@ -2326,6 +2323,30 @@ struct GeminiMessageRow: View {
                                     initialIndex: 0
                                 )
                             }
+                    }
+
+                    if let fileNames = message.attachedFileNames, !fileNames.isEmpty {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            ForEach(fileNames, id: \.self) { name in
+                                HStack(spacing: 8) {
+                                    Image(systemName: name.lowercased().hasSuffix(".pdf") ? "doc.richtext.fill" : "doc.fill")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(Color(red: 0.45, green: 0.72, blue: 1.0))
+                                    Text(name)
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.92))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .liquidGlass(
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous),
+                                    tint: Color.blue.opacity(0.18),
+                                    interactive: false
+                                )
+                            }
+                        }
                     }
 
                     Text(message.content)

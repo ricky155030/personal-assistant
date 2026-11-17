@@ -1066,7 +1066,7 @@ def chat_task_result(task_id: str, _authorized: bool = Depends(verify_token)):
 
 
 def _clean_history_query(raw_query: str) -> str:
-    """移除 iOS/Watch/HomePod 的系統前綴規範與跨大腦交接提要，完整保留多段使用者對話文字"""
+    """移除 iOS/Watch/HomePod 的系統前綴規範、跨大腦交接提要與展開的檔案內文，保留使用者對話文字與精簡檔案標記"""
     q = (raw_query or "").strip()
     prefix_markers = (
         "[來源管道:",
@@ -1079,6 +1079,30 @@ def _clean_history_query(raw_query: str) -> str:
         while len(parts) > 1 and any(marker in parts[0] for marker in prefix_markers):
             parts.pop(0)
         q = "\n\n".join(parts).strip()
+
+    # 若包含由上傳檔案展開的「📎 檔案：<檔名>（本機路徑：...）」與全文預覽，僅保留精簡的「📎 <檔名>」標籤
+    file_marker = "📎 檔案："
+    if file_marker in q:
+        idx = q.find(f"\n\n{file_marker}")
+        if idx != -1:
+            user_part = q[:idx].strip()
+            file_part = q[idx + 2:]
+        elif q.startswith(file_marker):
+            user_part = ""
+            file_part = q
+        else:
+            user_part = q
+            file_part = ""
+
+        if file_part:
+            filenames = re.findall(r"📎 檔案：([^\n（(]+)", file_part)
+            cleaned_tags = [f"📎 {name.strip()}" for name in filenames if name.strip()]
+            if cleaned_tags:
+                tags_block = "\n".join(cleaned_tags)
+                q = f"{user_part}\n\n{tags_block}".strip() if user_part else tags_block
+            else:
+                q = user_part
+
     return q
 
 

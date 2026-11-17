@@ -20,6 +20,17 @@ def test_clean_history_query_preserves_multiline_user_query():
     assert cleaned == "請詳細說明眼前這張照片的物品名稱。\n\n（主人補充語音：這是要怎麼用？）"
 
 
+def test_clean_history_query_strips_expanded_file_preview():
+    raw = (
+        "【回覆長度約束：細節模式】重點。\n\n"
+        "整理這份投資報告並告訴我值得投資的產業\n\n"
+        "📎 檔案：Report_2026Q4.pdf（本機路徑：/tmp/ios_doc_123_Report_2026Q4.pdf）\n"
+        "[第 1 頁]\n這是第一頁的大量內文...\n\n[第 2 頁]\n這是第二頁的大量內文..."
+    )
+    cleaned = main._clean_history_query(raw)
+    assert cleaned == "整理這份投資報告並告訴我值得投資的產業\n\n📎 Report_2026Q4.pdf"
+
+
 def test_save_compressed_history_images_and_log_interaction(tmp_path):
     src_img = tmp_path / "big.png"
     Image.new("RGBA", (1600, 1200), color=(255, 0, 0, 255)).save(src_img)
