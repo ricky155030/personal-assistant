@@ -32,10 +32,13 @@ def test_clean_history_query_strips_expanded_file_preview():
 
 
 def test_tts_sanitizes_markdown_file_links():
-    import tts_service
-    sample = "請檢查 [task_manager.py](file:///Users/demo/project/task_manager.py#L163-L195) 與 https://example.com"
-    assert main.sanitize_for_tts(sample) == "請檢查 taskmanager.py 與"
-    assert tts_service.sanitize_text_for_tts(sample) == "請檢查 taskmanager.py 與"
+    import sys
+    from unittest.mock import MagicMock
+    with patch.dict(sys.modules, {"edge_tts": MagicMock()}):
+        import tts_service
+        sample = "請檢查 [task_manager.py](file:///Users/demo/project/task_manager.py#L163-L195) 與 https://example.com"
+        assert main.sanitize_for_tts(sample) == "請檢查 taskmanager.py 與"
+        assert tts_service.sanitize_text_for_tts(sample) == "請檢查 taskmanager.py 與"
 
 
 def test_save_compressed_history_images_and_log_interaction(tmp_path):
