@@ -12,7 +12,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Deque, Dict, Any, Tuple
+from typing import Any, Deque, Dict, Optional, Tuple
 
 from task_manager import task_manager
 
@@ -28,13 +28,19 @@ def get_pending_memo_count() -> int:
         return len(_PENDING_MEMOS)
 
 
-def enqueue_memory_sync(summary: str, source: str, report_to_user: bool = False) -> int:
+def enqueue_memory_sync(
+    summary: str,
+    source: str,
+    report_to_user: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> int:
     """將主大腦忙碌時無法即時注入的備忘加入待送佇列，回傳目前佇列長度"""
     with _MEMO_QUEUE_LOCK:
         _PENDING_MEMOS.append({
             "summary": summary,
             "source": source,
             "report_to_user": report_to_user,
+            "metadata": metadata,
             "queued_at": time.time(),
         })
         return len(_PENDING_MEMOS)
@@ -44,6 +50,7 @@ def try_inject_memory_sync(
     summary: str,
     source: str,
     report_to_user: bool = False,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
     """嘗試趁主大腦閒置時注入備忘；若 report_to_user=True 則由大腦釐清後寫入純助理回報紀錄"""
     from agy_singleton import agy_singleton
@@ -83,6 +90,7 @@ def try_inject_memory_sync(
                     "",
                     report_text,
                     actions=[f"task_report ({source})"],
+                    metadata=metadata,
                 )
             except Exception as log_ex:
                 print(f"[TaskSupervisor] 寫入任務回報紀錄失敗: {log_ex}")
@@ -110,6 +118,7 @@ def flush_memory_sync_queue() -> int:
             item["summary"],
             item["source"],
             report_to_user=bool(item.get("report_to_user", False)),
+            metadata=item.get("metadata"),
         )
         if ok:
             with _MEMO_QUEUE_LOCK:

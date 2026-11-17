@@ -1254,6 +1254,9 @@ class InternalMemorySyncRequest(BaseModel):
     summary: str
     source: str = "herdr-coordinator"
     report_to_user: bool = False
+    task_name: Optional[str] = None
+    task_status: Optional[str] = None
+    exit_code: Optional[int] = None
 
 
 @app.post("/api/internal/memory-sync")
@@ -1266,6 +1269,16 @@ async def internal_memory_sync(
     if not summary:
         return {"status": "ignored", "synced": False, "reason": "empty_summary"}
 
+    task_meta = {
+        k: v
+        for k, v in {
+            "task_name": payload.task_name,
+            "task_status": payload.task_status,
+            "exit_code": payload.exit_code,
+        }.items()
+        if v is not None
+    } or None
+
     loop = asyncio.get_running_loop()
     ok, reason = await loop.run_in_executor(
         None,
@@ -1273,11 +1286,17 @@ async def internal_memory_sync(
         summary,
         payload.source,
         payload.report_to_user,
+        task_meta,
     )
     if ok:
         return {"status": "ok", "synced": True}
     if reason in ("brain_busy", "worker_not_ready"):
-        q_len = enqueue_memory_sync(summary, payload.source, report_to_user=payload.report_to_user)
+        q_len = enqueue_memory_sync(
+            summary,
+            payload.source,
+            report_to_user=payload.report_to_user,
+            metadata=task_meta,
+        )
         return {"status": "queued", "synced": False, "reason": reason, "queued_count": q_len}
     return {"status": "skipped", "synced": False, "reason": reason}
 

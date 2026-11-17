@@ -161,6 +161,14 @@ def _sync_task_result_to_memory(
 ) -> None:
     """通知主大腦釐清本次任務內容與結果並寫入純助理回報紀錄；若主大腦離線則降級本地留底"""
     dur_str = _format_duration(elapsed_sec)
+    is_error = timed_out or (returncode not in (0, None))
+    task_status = "error" if is_error else "ok"
+    exit_code = -1 if timed_out else returncode
+    task_meta = {
+        "task_name": name,
+        "task_status": task_status,
+        "exit_code": exit_code,
+    }
     status_str = "逾時終止" if timed_out else ("成功完成" if returncode == 0 else f"失敗 (exit={returncode})")
     snippet = tail_text[-800:].strip() if tail_text else "無輸出"
     summary = f"背景任務「{name}」（{task_id}）{status_str}，耗時 {dur_str}。"
@@ -182,6 +190,9 @@ def _sync_task_result_to_memory(
             "summary": memo,
             "source": f"task:{task_id}",
             "report_to_user": True,
+            "task_name": name,
+            "task_status": task_status,
+            "exit_code": exit_code,
         }).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -200,6 +211,7 @@ def _sync_task_result_to_memory(
                 "",
                 summary,
                 actions=[f"task_report ({task_id})", f"status={status_str}"],
+                metadata=task_meta,
             )
         except Exception as e:
             print(f"[TaskManager] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)

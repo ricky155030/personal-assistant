@@ -2271,16 +2271,14 @@ struct GeminiMessageRow: View {
 
     private var isBackgroundReportError: Bool {
         guard message.isBackgroundReport else { return false }
-        let text = message.content
-        if text.contains("執行失敗") || text.contains("失敗") || text.contains("逾時終止")
-            || text.contains("Fatal Python error") || text.contains("OSError") {
-            return true
+        if let status = message.metadata?.task_status?.lowercased() {
+            return status == "error" || status == "failed"
         }
-        if let range = text.range(of: #"Exit=[1-9]\d*"#, options: .regularExpression), !range.isEmpty {
-            return true
+        if let code = message.metadata?.exit_code {
+            return code != 0
         }
-        let cleaned = text.replacingOccurrences(of: "無任何異常", with: "").replacingOccurrences(of: "無異常", with: "")
-        return cleaned.contains("異常")
+        // 舊紀錄尚未帶入結構化狀態碼時，一律視為正常（藍色預設收合）
+        return false
     }
 
     private var isBackgroundReportExpanded: Bool {
@@ -2288,6 +2286,10 @@ struct GeminiMessageRow: View {
     }
 
     private var backgroundReportTitle: String {
+        if let metaName = message.metadata?.task_name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !metaName.isEmpty {
+            return metaName
+        }
         let text = message.content
         if let start = text.range(of: "「"), let end = text[start.upperBound...].range(of: "」") {
             let name = String(text[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)

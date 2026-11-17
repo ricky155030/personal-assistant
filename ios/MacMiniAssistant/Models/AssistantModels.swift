@@ -240,6 +240,9 @@ public struct TurnMetadata: Codable, Equatable {
     public var estimated_cost_usd: Double?
     public var widget_html: String?
     public var image_urls: [String]?
+    public var task_name: String?
+    public var task_status: String?
+    public var exit_code: Int?
 
     public var summaryText: String {
         var parts: [String] = []
