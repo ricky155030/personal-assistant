@@ -14,7 +14,7 @@ from config import settings
 from agent import personal_agent
 from memory_manager import memory_manager
 from brain_engine import brain_router
-from widget_html_utils import WidgetHtmlStreamFilter, extract_widget_html
+from widget_html_utils import WidgetHtmlStreamFilter, extract_rich_blocks
 from fast_intent import try_fast_intent
 from task_queue import task_queue
 from turn_queue import shared_turn_queue
@@ -345,10 +345,12 @@ def chat(
             send_telegram_sync(tg_text, parse_mode="HTML")
 
             try:
-                _stripped, _widget = extract_widget_html(output_reply)
+                _stripped, _widget, _image_urls = extract_rich_blocks(output_reply)
                 _meta = {"engine": "fast-path"}
                 if _widget:
                     _meta["widget_html"] = _widget
+                if _image_urls:
+                    _meta["image_urls"] = _image_urls
                 memory_manager.log_interaction(
                     _clean_history_query(user_query),
                     _stripped.strip() or output_reply,
@@ -872,7 +874,7 @@ async def voice_chat_stream(
 
             total_latency = round(time.perf_counter() - start_ts, 3)
             full_reply = "".join(full_reply_parts) or turn_result.get("response", "") or turn_result.get("clean_reply", "")
-            stripped_reply, extracted_widget = extract_widget_html(full_reply)
+            stripped_reply, extracted_widget, extracted_image_urls = extract_rich_blocks(full_reply)
             clean_reply = stripped_reply.replace("[TELEGRAM_FULL_REPORT]", "\n\n").strip()
 
             new_reports = [
@@ -891,6 +893,8 @@ async def voice_chat_stream(
             meta_payload = dict(turn_result.get("metadata") or {})
             if extracted_widget and not meta_payload.get("widget_html"):
                 meta_payload["widget_html"] = extracted_widget
+            if extracted_image_urls and not meta_payload.get("image_urls"):
+                meta_payload["image_urls"] = extracted_image_urls
             done_payload = {
                 "type": "done",
                 "full_reply": clean_reply,

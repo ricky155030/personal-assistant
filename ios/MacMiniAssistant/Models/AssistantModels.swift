@@ -234,6 +234,7 @@ public struct TurnMetadata: Codable, Equatable {
     public var usage: TurnUsage?
     public var estimated_cost_usd: Double?
     public var widget_html: String?
+    public var image_urls: [String]?
 
     public var summaryText: String {
         var parts: [String] = []
@@ -282,6 +283,18 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public var widgetHtml: String? {
         let trimmed = metadata?.widget_html?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
+    }
+
+    public var assistantImageUrls: [URL] {
+        guard let rawUrls = metadata?.image_urls, !rawUrls.isEmpty else { return [] }
+        return rawUrls.compactMap { raw in
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
+                return url
+            }
+            return nil
+        }
     }
 
     public init(

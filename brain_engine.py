@@ -11,7 +11,7 @@ from typing import Dict, Generator, List, Optional, Tuple
 from config import settings
 from memory_manager import memory_manager
 from thinking_router import classify_thinking_level, clean_query_prefix
-from widget_html_utils import extract_widget_html
+from widget_html_utils import extract_rich_blocks
 
 
 def clean_query_for_history(raw_query: str) -> str:
@@ -429,10 +429,12 @@ class BrainRouter:
 
             raw_reply = (turn_result.get("clean_reply") or "".join(collected_text)).strip()
             meta = dict(turn_result.get("metadata") or {})
-            clean_reply, widget_html = extract_widget_html(raw_reply)
+            clean_reply, widget_html, image_urls = extract_rich_blocks(raw_reply)
             clean_reply = clean_reply.strip()
             if widget_html and not meta.get("widget_html"):
                 meta["widget_html"] = widget_html
+            if image_urls and not meta.get("image_urls"):
+                meta["image_urls"] = image_urls
             turn_result["clean_reply"] = clean_reply
             if meta:
                 turn_result["metadata"] = meta

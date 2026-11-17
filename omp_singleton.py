@@ -16,17 +16,19 @@ from typing import Generator, List, Optional, Tuple
 
 from brain_engine import BaseBrainEngine, clean_query_for_history
 from config import settings
-from widget_html_utils import extract_widget_html
+from widget_html_utils import extract_rich_blocks
 
 
 _clean_query_for_history = clean_query_for_history
 
 
 def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
-    """抽離 <widget_html> 區塊並寫入 metadata，避免原始標籤污染 history.jsonl。"""
-    clean_reply, widget_html = extract_widget_html(raw_reply)
+    """抽離 <widget_html> 與 <image_urls> 區塊並寫入 metadata，避免原始標籤污染 history.jsonl。"""
+    clean_reply, widget_html, image_urls = extract_rich_blocks(raw_reply)
     if widget_html:
         metadata["widget_html"] = widget_html
+    if image_urls:
+        metadata["image_urls"] = image_urls
     return clean_reply.strip()
 
 def _quick_replies_for(clean_reply: str, user_query: str = "", was_cancelled: bool = False) -> List[str]:

@@ -1961,76 +1961,164 @@ struct GeminiLiveWaveformIcon: View {
 }
 
 // MARK: - Gemini 風格對話訊息列
+private enum GalleryPhotoSource: Identifiable, Equatable {
+    case data(Data, id: String)
+    case url(URL)
+
+    var id: String {
+        switch self {
+        case .data(_, let id): return "data_\(id)"
+        case .url(let url): return "url_\(url.absoluteString)"
+        }
+    }
+}
+
 private struct PreviewPhotoItem: Identifiable {
     let id = UUID()
-    let data: Data
+    let photos: [GalleryPhotoSource]
+    let initialIndex: Int
+}
+
+private struct ZoomableGalleryPhotoPage: View {
+    let source: GalleryPhotoSource
+    let dragOffset: CGFloat
+    @Binding var currentScale: CGFloat
+
+    var body: some View {
+        Group {
+            switch source {
+            case .data(let data, _):
+                if let uiImg = UIImage(data: data) {
+                    styledImage(Image(uiImage: uiImg))
+                }
+            case .url(let url):
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        styledImage(image)
+                    case .failure:
+                        VStack(spacing: 10) {
+                            Image(systemName: "photo.badge.exclamationmark")
+                                .font(.system(size: 36))
+                                .foregroundColor(.white.opacity(0.6))
+                            Text("圖片載入失敗")
+                                .font(.footnote)
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    case .empty:
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.2)
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func styledImage(_ image: Image) -> some View {
+        image
+            .resizable()
+            .scaledToFit()
+            .scaleEffect(currentScale * max(0.85, 1.0 - dragOffset / 1200.0))
+            .offset(y: dragOffset)
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { val in
+                        currentScale = max(1.0, min(val, 4.0))
+                    }
+                    .onEnded { _ in
+                        if currentScale < 1.1 {
+                            withAnimation(.spring()) { currentScale = 1.0 }
+                        }
+                    }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.spring()) {
+                    currentScale = currentScale > 1.2 ? 1.0 : 2.2
+                }
+            }
+    }
 }
 
 private struct FullScreenPhotoViewer: View {
-    let imageData: Data
+    let photos: [GalleryPhotoSource]
+    let initialIndex: Int
     @Environment(\.dismiss) private var dismiss
+    @State private var currentIndex: Int = 0
     @State private var scale: CGFloat = 1.0
     @State private var dragOffset: CGFloat = 0
 
+    init(photos: [GalleryPhotoSource], initialIndex: Int = 0) {
+        self.photos = photos
+        self.initialIndex = max(0, min(initialIndex, max(0, photos.count - 1)))
+        self._currentIndex = State(initialValue: self.initialIndex)
+    }
+
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .top) {
             Color.black
                 .opacity(max(0.15, 1.0 - Double(dragOffset / 380.0)))
                 .ignoresSafeArea()
 
-            if let uiImg = UIImage(data: imageData) {
-                Image(uiImage: uiImg)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(scale * max(0.85, 1.0 - dragOffset / 1200.0))
-                    .offset(y: dragOffset)
-                    .gesture(
-                        MagnificationGesture()
-                            .onChanged { val in
-                                scale = max(1.0, min(val, 4.0))
-                            }
-                            .onEnded { _ in
-                                if scale < 1.1 {
-                                    withAnimation(.spring()) { scale = 1.0 }
-                                }
-                            }
+            TabView(selection: $currentIndex) {
+                ForEach(Array(photos.enumerated()), id: \.offset) { idx, src in
+                    ZoomableGalleryPhotoPage(
+                        source: src,
+                        dragOffset: dragOffset,
+                        currentScale: $scale
                     )
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 18)
-                            .onChanged { value in
-                                guard scale <= 1.05 else { return }
-                                if value.translation.height > 0 {
-                                    dragOffset = value.translation.height
-                                }
-                            }
-                            .onEnded { value in
-                                guard scale <= 1.05 else {
-                                    dragOffset = 0
-                                    return
-                                }
-                                if value.translation.height > 110 || value.predictedEndTranslation.height > 220 {
-                                    dismiss()
-                                } else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                        dragOffset = 0
-                                    }
-                                }
-                            }
-                    )
-                    .onTapGesture(count: 2) {
-                        withAnimation(.spring()) {
-                            scale = scale > 1.2 ? 1.0 : 2.2
+                    .tag(idx)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .onChange(of: currentIndex) {
+                scale = 1.0
+            }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 18)
+                    .onChanged { value in
+                        guard scale <= 1.05 else { return }
+                        if value.translation.height > 0 && abs(value.translation.height) > abs(value.translation.width) {
+                            dragOffset = value.translation.height
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+                    .onEnded { value in
+                        guard scale <= 1.05 else {
+                            dragOffset = 0
+                            return
+                        }
+                        if value.translation.height > 110 || value.predictedEndTranslation.height > 220 {
+                            dismiss()
+                        } else {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                dragOffset = 0
+                            }
+                        }
+                    }
+            )
 
-            Button(action: { dismiss() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(20)
+            HStack {
+                if photos.count > 1 {
+                    Text("\(currentIndex + 1) / \(photos.count)")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                }
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundColor(.white.opacity(0.85))
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
             .opacity(dragOffset > 20 ? 0.4 : 1.0)
         }
         .presentationBackground(.clear)
@@ -2086,7 +2174,8 @@ struct GeminiMessageRow: View {
                                             .frame(width: 110, height: 110)
                                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                             .onTapGesture {
-                                                previewPhoto = PreviewPhotoItem(data: multi[idx])
+                                                let sources = multi.enumerated().map { GalleryPhotoSource.data($0.element, id: "\(message.id.uuidString)_\($0.offset)") }
+                                                previewPhoto = PreviewPhotoItem(photos: sources, initialIndex: idx)
                                             }
                                     }
                                 }
@@ -2100,7 +2189,10 @@ struct GeminiMessageRow: View {
                             .frame(maxWidth: 200, maxHeight: 200)
                             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                             .onTapGesture {
-                                previewPhoto = PreviewPhotoItem(data: imgData)
+                                previewPhoto = PreviewPhotoItem(
+                                    photos: [.data(imgData, id: message.id.uuidString)],
+                                    initialIndex: 0
+                                )
                             }
                     }
 
@@ -2122,7 +2214,7 @@ struct GeminiMessageRow: View {
                 }
             }
             .fullScreenCover(item: $previewPhoto) { item in
-                FullScreenPhotoViewer(imageData: item.data)
+                FullScreenPhotoViewer(photos: item.photos, initialIndex: item.initialIndex)
             }
         } else {
             // 助理回覆：左側 Gemini 四色星芒標頭 + 乾淨無框全寬文字與工具膠囊
@@ -2340,6 +2432,78 @@ struct GeminiMessageRow: View {
                     }
                 }
 
+                // 助理附帶圖片（支援單張與多張橫向滑動，點擊全螢幕左右滑動瀏覽）
+                let assistantUrls = message.assistantImageUrls
+                if assistantUrls.count == 1, let singleUrl = assistantUrls.first {
+                    AsyncImage(url: singleUrl) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: 260, maxHeight: 220)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .onTapGesture {
+                                    previewPhoto = PreviewPhotoItem(photos: [.url(singleUrl)], initialIndex: 0)
+                                }
+                        case .failure:
+                            HStack(spacing: 6) {
+                                Image(systemName: "photo.badge.exclamationmark")
+                                Text("圖片載入失敗")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+                        case .empty:
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.06))
+                                .frame(width: 220, height: 160)
+                                .overlay(ProgressView().tint(.white))
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    .padding(.top, 4)
+                } else if assistantUrls.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(Array(assistantUrls.enumerated()), id: \.offset) { idx, imgUrl in
+                                AsyncImage(url: imgUrl) { phase in
+                                    switch phase {
+                                    case .success(let image):
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 136, height: 136)
+                                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                            .onTapGesture {
+                                                let sources = assistantUrls.map { GalleryPhotoSource.url($0) }
+                                                previewPhoto = PreviewPhotoItem(photos: sources, initialIndex: idx)
+                                            }
+                                    case .failure:
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .fill(Color.white.opacity(0.06))
+                                            .frame(width: 136, height: 136)
+                                            .overlay(
+                                                Image(systemName: "photo.badge.exclamationmark")
+                                                    .foregroundColor(.secondary)
+                                            )
+                                    case .empty:
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .fill(Color.white.opacity(0.06))
+                                            .frame(width: 136, height: 136)
+                                            .overlay(ProgressView().tint(.white))
+                                    @unknown default:
+                                        EmptyView()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+
                 // HTML 報告連結（若有）
                 if let widgetHtml = message.widgetHtml {
                     HTMLWidgetView(html: widgetHtml)
@@ -2391,6 +2555,9 @@ struct GeminiMessageRow: View {
                     }
                 }
             )
+            .fullScreenCover(item: $previewPhoto) { item in
+                FullScreenPhotoViewer(photos: item.photos, initialIndex: item.initialIndex)
+            }
         }
     }
 }

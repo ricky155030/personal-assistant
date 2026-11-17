@@ -145,3 +145,39 @@ def test_try_fast_intent_fb_trigger(monkeypatch):
     q = "【回覆長度約束：細節模式】...\n\n查詢FB社團近期巡檢狀態與貼文"
     assert try_fast_intent(q) == "FB_OK<widget_html><div>fb</div></widget_html>"
 
+
+def test_extract_image_urls_supports_multiline_and_json_and_dedups():
+    from widget_html_utils import extract_image_urls, extract_rich_blocks
+
+    raw = (
+        "幫你找到三張風景照。\n\n"
+        "<image_urls>\n"
+        "https://example.com/a.jpg\n"
+        "https://example.com/b.jpg\n"
+        "https://example.com/a.jpg\n"
+        "invalid-url\n"
+        "</image_urls>\n"
+        "<widget_html><div>card</div></widget_html>"
+    )
+    cleaned, widget, imgs = extract_rich_blocks(raw)
+    assert cleaned == "幫你找到三張風景照。"
+    assert widget == "<div>card</div>"
+    assert imgs == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+
+    json_raw = '看這裡\n```image-urls\n["/static/1.png", "https://example.com/2.png"]\n```'
+    c2, imgs2 = extract_image_urls(json_raw)
+    assert c2 == "看這裡"
+    assert imgs2 == ["/static/1.png", "https://example.com/2.png"]
+
+
+def test_stream_filter_strips_image_urls_in_chunks():
+    from widget_html_utils import WidgetHtmlStreamFilter
+
+    f = WidgetHtmlStreamFilter()
+    text = "前面說明。<image_urls>\nhttps://example.com/1.jpg\n</image_urls>後面結尾。"
+    out = []
+    for i in range(0, len(text), 4):
+        out.append(f.feed(text[i:i + 4]))
+    out.append(f.flush())
+    assert "".join(out) == "前面說明。後面結尾。"
+

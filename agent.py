@@ -38,11 +38,13 @@ class PersonalAgent:
     def _log_fast(self, query: str, reply: str) -> None:
         try:
             from memory_manager import memory_manager as _mm
-            from widget_html_utils import extract_widget_html as _extract
-            _stripped, _widget = _extract(reply)
+            from widget_html_utils import extract_rich_blocks as _extract
+            _stripped, _widget, _image_urls = _extract(reply)
             _meta = {"engine": "fast-path"}
             if _widget:
                 _meta["widget_html"] = _widget
+            if _image_urls:
+                _meta["image_urls"] = _image_urls
             _mm.log_interaction(
                 query,
                 (_stripped or "").strip() or reply,
