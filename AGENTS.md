@@ -133,6 +133,7 @@
    - **小步原子推進 (Small Atomic Commits)**：一次只完成單一功能或修復單一 Bug，絕不將重構與新功能混成一大包一次提交，確保每筆改動都能獨立測試與快速回滾。
    - **改動必補測試 (Test-With-Change)**：新增業務邏輯或修復 Bug 時，必須同步補上對應單元測試與邊界條件，避免後續回歸破壞。
    - **本機先驗再推送 (Local Pre-Push Gate)**：每次 Commit 與 Push 前，Python 必跑全量 `uv run pytest`，修改 `ios/` 必執行 `./package_ios.sh` 驗證編譯無誤與無新增警告，並通過機敏資訊掃描。
+   - **改完自測即提交 (Auto-Commit on Green)**：每次程式碼改完，助理必須自行跑對應 build/test（Python 跑全量 `uv run pytest`；改 `ios/` 加跑 `./package_ios.sh`）加機敏掃描，全綠後直接 `git commit`，免等主人確認；一事一 commit，訊息寫清範圍；commit 後依第 7 條決定是否 push 並跟 CI 到綠燈。
    - **嚴守修改範圍 (Minimal Diff & Scope Discipline)**：只改當前任務相關程式碼，不順手重構無關模組或刪除既有防呆與註解；發現其他問題應另外排單處理。
    - **前後端契約相容 (Contract-First Compatibility)**：後端 API 與 iOS App 有欄位連動時，必須保留向下相容性，確保舊版 App 尚未更新也不會閃退。
    - **服務安全重啟 (Safe Service Reload)**：修改常駐後端後，嚴禁在語音串流進行中直接強殺服務，應改用延遲重載或待對話結束後再行套用。
