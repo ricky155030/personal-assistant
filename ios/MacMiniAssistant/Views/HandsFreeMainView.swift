@@ -357,19 +357,35 @@ struct HandsFreeMainView: View {
         )
     }
 
-    // MARK: - 1. 背景漸層 (Live 模式時底部泛起動態藍光)
+    // MARK: - 1. 背景漸層 (深邃環境光暈 + Live 模式底部動態藍光，襯托液態玻璃折射)
     private var geminiBackground: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color(red: 0.03, green: 0.04, blue: 0.08).ignoresSafeArea()
+
+            RadialGradient(
+                colors: [Color(red: 0.14, green: 0.45, blue: 0.88).opacity(0.24), Color.clear],
+                center: .topLeading,
+                startRadius: 20,
+                endRadius: 360
+            )
+            .ignoresSafeArea()
+
+            RadialGradient(
+                colors: [Color(red: 0.45, green: 0.24, blue: 0.85).opacity(0.18), Color.clear],
+                center: UnitPoint(x: 0.88, y: 0.55),
+                startRadius: 20,
+                endRadius: 340
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
                 LinearGradient(
                     gradient: Gradient(colors: [
                         Color.clear,
-                        Color(red: 0.03, green: 0.06, blue: 0.18).opacity(coordinator.isLiveMode ? 0.95 : 0.75),
-                        Color(red: 0.06, green: 0.12, blue: 0.32).opacity(coordinator.isLiveMode ? 0.85 : 0.45),
-                        Color(red: 0.02, green: 0.04, blue: 0.12).opacity(0.9)
+                        Color(red: 0.04, green: 0.09, blue: 0.24).opacity(coordinator.isLiveMode ? 0.95 : 0.72),
+                        Color(red: 0.07, green: 0.16, blue: 0.40).opacity(coordinator.isLiveMode ? 0.88 : 0.42),
+                        Color(red: 0.02, green: 0.04, blue: 0.12).opacity(0.92)
                     ]),
                     startPoint: .top,
                     endPoint: .bottom
@@ -417,11 +433,7 @@ struct HandsFreeMainView: View {
                 .padding(.leading, 12)
                 .padding(.trailing, 14)
                 .frame(height: 42)
-                .background(
-                    Capsule()
-                        .fill(Color(white: 0.11))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
-                )
+                .liquidGlass(in: Capsule())
                 .fixedSize(horizontal: true, vertical: false)
             }
             .buttonStyle(.plain)
@@ -445,11 +457,7 @@ struct HandsFreeMainView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white.opacity(0.88))
                     .frame(width: 42, height: 42)
-                    .background(
-                        Circle()
-                            .fill(Color(white: 0.11))
-                            .overlay(Circle().stroke(Color.white.opacity(0.08), lineWidth: 1))
-                    )
+                    .liquidGlass(in: Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("設定")
@@ -543,11 +551,7 @@ struct HandsFreeMainView: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 44)
-            .background(
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                    .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
-            )
+            .liquidGlass(in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(coordinator.currentEngineSupportsQuota
@@ -1302,11 +1306,7 @@ struct HandsFreeMainView: View {
                                     .foregroundColor(.primary)
                                     .padding(.horizontal, 12)
                                     .frame(minHeight: 34)
-                                    .background(
-                                        Capsule()
-                                            .fill(.ultraThinMaterial)
-                                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                    )
+                                    .liquidGlass(in: Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -1670,18 +1670,11 @@ struct HandsFreeMainView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 30, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 30, style: .continuous)
-                            .stroke(
-                                coordinator.isSingleDictationMode
-                                    ? Color.red.opacity(0.45)
-                                    : (coordinator.isLiveMode ? Color.blue.opacity(0.45) : Color.white.opacity(0.12)),
-                                lineWidth: 1
-                            )
-                    )
+            .liquidGlass(
+                in: RoundedRectangle(cornerRadius: 30, style: .continuous),
+                tint: coordinator.isSingleDictationMode
+                    ? Color.red.opacity(0.22)
+                    : (coordinator.isLiveMode ? Color.blue.opacity(0.24) : nil)
             )
         }
     }
@@ -2301,9 +2294,10 @@ struct GeminiMessageRow: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .fill(Color(red: 0.16, green: 0.18, blue: 0.24))
+                        .liquidGlass(
+                            in: RoundedRectangle(cornerRadius: 20, style: .continuous),
+                            tint: Color.blue.opacity(0.24),
+                            interactive: false
                         )
                         .textSelection(.enabled)
 
@@ -3278,5 +3272,58 @@ struct TaskLogViewerSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+}
+
+// MARK: - Apple Liquid Glass 通用表面修飾器（iOS 26+ 原生 glassEffect，舊版自動降級為高光液態材質）
+private extension View {
+    @ViewBuilder
+    func liquidGlass<S: Shape>(in shape: S, tint: Color? = nil, interactive: Bool = true) -> some View {
+        if #available(iOS 26.0, *) {
+            if let tint = tint {
+                self.glassEffect(
+                    interactive ? .regular.tint(tint).interactive() : .regular.tint(tint),
+                    in: shape
+                )
+            } else {
+                self.glassEffect(
+                    interactive ? .regular.interactive() : .regular,
+                    in: shape
+                )
+            }
+        } else {
+            self
+                .background(
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            shape.fill(
+                                LinearGradient(
+                                    colors: [
+                                        (tint ?? Color.white).opacity(tint != nil ? 0.28 : 0.14),
+                                        Color.white.opacity(0.03)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                        )
+                        .overlay(
+                            shape.stroke(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.45),
+                                        Color.white.opacity(0.08),
+                                        Color.white.opacity(0.22)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.28), radius: 12, x: 0, y: 6)
+        }
     }
 }
