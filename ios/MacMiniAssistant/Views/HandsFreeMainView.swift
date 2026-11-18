@@ -67,6 +67,93 @@ struct GeminiSparkleIcon: View {
     }
 }
 
+enum ModelBrand {
+    case gemini
+    case claude
+    case muse
+
+    static func resolve(engineId: String, modelId: String) -> ModelBrand {
+        let low = modelId.lowercased()
+        if low.contains("claude") || low.contains("opus") || low.contains("sonnet") {
+            return .claude
+        }
+        if low.contains("muse") || (engineId == "omp" && !low.contains("claude")) {
+            return .muse
+        }
+        return .gemini
+    }
+}
+
+struct ModelBrandIcon: View {
+    let brand: ModelBrand
+    var size: CGFloat = 15
+
+    var body: some View {
+        switch brand {
+        case .gemini:
+            GeminiSparkleShape()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.26, green: 0.52, blue: 0.96),
+                            Color(red: 0.61, green: 0.45, blue: 0.80),
+                            Color(red: 0.85, green: 0.40, blue: 0.44)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .frame(width: size, height: size)
+
+        case .claude:
+            Canvas { context, canvasSize in
+                let center = CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                let outerR = min(canvasSize.width, canvasSize.height) * 0.45
+                let innerR = outerR * 0.34
+                let color = Color(red: 0.85, green: 0.47, blue: 0.34)
+                for i in 0..<8 {
+                    let angle = Double(i) * (.pi / 4.0)
+                    let p1 = CGPoint(x: center.x + CGFloat(cos(angle)) * innerR, y: center.y + CGFloat(sin(angle)) * innerR)
+                    let p2 = CGPoint(x: center.x + CGFloat(cos(angle)) * outerR, y: center.y + CGFloat(sin(angle)) * outerR)
+                    var path = Path()
+                    path.move(to: p1)
+                    path.addLine(to: p2)
+                    context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: max(1.4, size * 0.12), lineCap: .round))
+                }
+                let dotR = max(1.6, size * 0.11)
+                context.fill(
+                    Path(ellipseIn: CGRect(x: center.x - dotR, y: center.y - dotR, width: dotR * 2, height: dotR * 2)),
+                    with: .color(color)
+                )
+            }
+            .frame(width: size, height: size)
+
+        case .muse:
+            ZStack {
+                GeminiSparkleShape()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.22, green: 0.74, blue: 0.97),
+                                Color(red: 0.66, green: 0.33, blue: 0.97)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: size * 0.80, height: size * 0.80)
+                    .offset(x: -size * 0.10, y: -size * 0.08)
+
+                GeminiSparkleShape()
+                    .fill(Color(red: 0.22, green: 0.74, blue: 0.97))
+                    .frame(width: size * 0.40, height: size * 0.40)
+                    .offset(x: size * 0.28, y: size * 0.26)
+            }
+            .frame(width: size, height: size)
+        }
+    }
+}
+
 // MARK: - 主畫面：Gemini 風格直接對話 + Live 即時語音對談
 struct HandsFreeMainView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
@@ -444,7 +531,15 @@ struct HandsFreeMainView: View {
                         .shadow(color: connectionDotColor.opacity(0.7), radius: 3)
 
                     VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
+                            let activeModelId = coordinator.selectedEngineId == "agy"
+                                ? coordinator.selectedModelFamily.rawValue
+                                : coordinator.selectedEngineModelId
+                            ModelBrandIcon(
+                                brand: ModelBrand.resolve(engineId: coordinator.selectedEngineId, modelId: activeModelId),
+                                size: 13
+                            )
+
                             Text(coordinator.currentEngineDisplayName)
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
@@ -628,6 +723,7 @@ struct HandsFreeMainView: View {
     private func popoverOptionRow(
         title: String,
         icon: String? = nil,
+        brandIcon: ModelBrand? = nil,
         isSelected: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -636,7 +732,10 @@ struct HandsFreeMainView: View {
             action()
         }) {
             HStack(spacing: 9) {
-                if let icon = icon {
+                if let brandIcon = brandIcon {
+                    ModelBrandIcon(brand: brandIcon, size: 15)
+                        .frame(width: 16)
+                } else if let icon = icon {
                     Image(systemName: icon)
                         .font(.system(size: 12.5))
                         .foregroundColor(isSelected ? .cyan : Color(white: 0.72))
@@ -708,7 +807,11 @@ struct HandsFreeMainView: View {
                 popoverSectionHeader("AI 模型選擇")
                 if coordinator.selectedEngineId == "agy" {
                     ForEach(ModelFamily.allCases) { fam in
-                        popoverOptionRow(title: fam.fullName, icon: fam.icon, isSelected: coordinator.selectedModelFamily == fam) {
+                        popoverOptionRow(
+                            title: fam.fullName,
+                            brandIcon: ModelBrand.resolve(engineId: "agy", modelId: fam.rawValue),
+                            isSelected: coordinator.selectedModelFamily == fam
+                        ) {
                             coordinator.selectedModelFamily = fam
                             coordinator.selectBrainEngine("agy", modelId: fam.rawValue)
                             coordinator.clampThinkingLevelIfNeeded()
@@ -720,7 +823,7 @@ struct HandsFreeMainView: View {
                     ForEach(curModels) { m in
                         popoverOptionRow(
                             title: m.label,
-                            icon: "cpu.fill",
+                            brandIcon: ModelBrand.resolve(engineId: coordinator.selectedEngineId, modelId: m.id),
                             isSelected: coordinator.selectedEngineModelId == m.id
                         ) {
                             coordinator.selectBrainEngine(coordinator.selectedEngineId, modelId: m.id)
