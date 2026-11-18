@@ -209,6 +209,7 @@ _APP_STATE_LOCK = threading.Lock()
 _APP_STATE = {
     "active": True,
     "has_unread_alert": False,
+    "cleared_on_boot": False,
     "updated_at": 0.0,
 }
 
@@ -1603,13 +1604,17 @@ def compact_context(_authorized: bool = Depends(verify_token)):
 def update_app_state(req: AppStateRequest, _authorized: bool = Depends(verify_token)):
     """回報 iOS App 前景/背景狀態；回到前景讀取時自動撤回未讀的唯一重要通知。"""
     with _APP_STATE_LOCK:
+        prev_active = bool(_APP_STATE.get("active", True))
+        has_unread = bool(_APP_STATE.get("has_unread_alert", False))
+        need_boot_clear = not bool(_APP_STATE.get("cleared_on_boot", False))
         _APP_STATE["active"] = bool(req.active)
         _APP_STATE["updated_at"] = time.time()
-    cleared = False
-    if req.active:
-        threading.Thread(target=_clear_app_unread_alert, daemon=True).start()
-        cleared = True
-    return {"status": "ok", "active": bool(req.active), "clear_scheduled": cleared}
+        should_clear = bool(req.active) and (has_unread or not prev_active or need_boot_clear)
+        if req.active:
+            _APP_STATE["cleared_on_boot"] = True
+    if should_clear:
+        threading.Thread(target=_clear_app_unread_alert, kwargs={"force": True}, daemon=True).start()
+    return {"status": "ok", "active": bool(req.active), "clear_scheduled": should_clear}
 
 
 @app.post("/api/internal/unread-notify")
