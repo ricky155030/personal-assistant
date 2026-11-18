@@ -145,3 +145,46 @@ def test_api_herdr_agents_endpoint():
         assert agents[1]["focused"] is True
     finally:
         main.app.dependency_overrides.pop(main.verify_token, None)
+
+
+def test_pending_action_queue_lifecycle(tmp_path):
+    import subprocess
+    from config import settings
+
+    orig_data_dir = settings.DATA_DIR
+    settings.DATA_DIR = tmp_path
+    client = TestClient(main.app)
+    main.app.dependency_overrides[main.verify_token] = lambda: True
+    try:
+        # 1. 新增待決策項目
+        resp_create = client.post("/api/actions/pending", json={
+            "agent": "w13:p1",
+            "title": "market-ticker · agy",
+            "question": "Q1: 請選擇方案？",
+            "options": ["選項 1: 同意", "選項 2: 微調"],
+            "source": "herdr:w13:p1",
+        })
+        assert resp_create.status_code == 200
+        assert resp_create.json()["count"] == 1
+        action_id = resp_create.json()["action"]["id"]
+
+        # 2. 查詢列表
+        resp_list = client.get("/api/actions/pending")
+        assert resp_list.status_code == 200
+        assert resp_list.json()["count"] == 1
+        assert resp_list.json()["actions"][0]["options"] == ["選項 1: 同意", "選項 2: 微調"]
+
+        # 3. 回覆並透過 relay 寫回、移出佇列
+        fake_proc = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch.object(subprocess, "run", return_value=fake_proc) as mock_run:
+            resp_resolve = client.post(f"/api/actions/pending/{action_id}/resolve", json={
+                "answer": "選項 1: 同意",
+                "dismiss": False,
+            })
+        assert resp_resolve.status_code == 200
+        assert resp_resolve.json()["relayed"] is True
+        assert resp_resolve.json()["count"] == 0
+        mock_run.assert_called_once()
+    finally:
+        main.app.dependency_overrides.pop(main.verify_token, None)
+        settings.DATA_DIR = orig_data_dir

@@ -789,3 +789,28 @@ public struct HerdrAgentInfo: Codable, Identifiable, Equatable, Sendable {
 public struct HerdrAgentsResponse: Codable, Sendable {
     public let agents: [HerdrAgentInfo]
 }
+
+public struct PendingActionItem: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let agent: String
+    public let title: String
+    public let question: String
+    public let options: [String]
+    public let source: String
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case agent
+        case title
+        case question
+        case options
+        case source
+        case createdAt = "created_at"
+    }
+}
+
+public struct PendingActionsResponse: Codable, Sendable {
+    public let actions: [PendingActionItem]
+    public let count: Int
+}

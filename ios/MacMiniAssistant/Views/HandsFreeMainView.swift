@@ -187,6 +187,8 @@ struct HandsFreeMainView: View {
     @State private var showMentionPicker: Bool = false
     @State private var mentionQuery: String = ""
     @State private var isLoadingHerdrAgents: Bool = false
+    @State private var pendingActions: [PendingActionItem] = []
+    @State private var showPendingActionsSheet: Bool = false
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
     @AppStorage("showQuickSkillBar") private var showQuickSkillBar: Bool = true
     @FocusState private var isInputFocused: Bool
@@ -254,6 +256,32 @@ struct HandsFreeMainView: View {
         }
         .sheet(isPresented: $showSettings) {
             AssistantSettingsView(coordinator: coordinator)
+        }
+        .sheet(isPresented: $showPendingActionsSheet) {
+            PendingActionsSheetView(
+                actions: $pendingActions,
+                onRefresh: {
+                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
+                    await MainActor.run {
+                        self.pendingActions = latest
+                    }
+                },
+                onResolve: { item, answer, dismiss in
+                    let (ok, updated) = await MacMiniAPIClient.shared.resolvePendingAction(
+                        id: item.id,
+                        answer: answer,
+                        dismiss: dismiss
+                    )
+                    await MainActor.run {
+                        if ok {
+                            self.pendingActions = updated
+                        }
+                    }
+                    return ok
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showSearchSheet) {
             HistorySearchSheetView(
@@ -336,7 +364,11 @@ struct HandsFreeMainView: View {
         }
         .onAppear {
             syncIdleTimer()
-            Task { await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active) }
+            Task {
+                await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active)
+                let latest = await MacMiniAPIClient.shared.fetchPendingActions()
+                await MainActor.run { self.pendingActions = latest }
+            }
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .onChange(of: shouldKeepScreenAwake) { syncIdleTimer() }
@@ -344,7 +376,11 @@ struct HandsFreeMainView: View {
             syncIdleTimer()
             switch newPhase {
             case .active:
-                Task { await MacMiniAPIClient.shared.reportAppState(active: true) }
+                Task {
+                    await MacMiniAPIClient.shared.reportAppState(active: true)
+                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
+                    await MainActor.run { self.pendingActions = latest }
+                }
             case .background:
                 // 切到背景時短暫申請背景任務確保狀態回報送達伺服器，方便後端決定是否補發唯一 HA 重要通知
                 var bgTaskId: UIBackgroundTaskIdentifier = .invalid
@@ -635,20 +671,36 @@ struct HandsFreeMainView: View {
             // 右側：合併式「用量」膠囊（Context 佔比 + 當前模型配額），點擊開啟完整系統狀態面板
             usageCapsuleButton
 
-            // 搜尋對話按鈕
+            // 待決策佇列 (Action Queue) 按鈕（原搜尋按鈕位置，顯示待處理個數）
             Button(action: {
                 haptic.impactOccurred()
                 isInputFocused = false
-                showSearchSheet = true
+                showPendingActionsSheet = true
+                Task {
+                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
+                    await MainActor.run { self.pendingActions = latest }
+                }
             }) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.88))
-                    .frame(width: 40, height: 40)
-                    .liquidGlass(in: Circle())
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: pendingActions.isEmpty ? "tray" : "tray.full.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(pendingActions.isEmpty ? .white.opacity(0.72) : .orange)
+                        .frame(width: 40, height: 40)
+                        .liquidGlass(in: Circle())
+
+                    if !pendingActions.isEmpty {
+                        Text("\(min(pendingActions.count, 99))")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 5)
+                            .frame(minWidth: 17, minHeight: 17)
+                            .background(Capsule().fill(Color.orange))
+                            .offset(x: 3, y: -3)
+                    }
+                }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("搜尋對話")
+            .accessibilityLabel("待決策佇列，目前 \(pendingActions.count) 項")
 
             // 設定按鈕
             Button(action: {
@@ -1796,6 +1848,9 @@ struct HandsFreeMainView: View {
                     }
                     Button("帶入目前位置") {
                         coordinator.attachCurrentLocation()
+                    }
+                    Button("搜尋對話紀錄") {
+                        showSearchSheet = true
                     }
                     Button("取消", role: .cancel) {}
                 }
@@ -4180,5 +4235,184 @@ private struct MessageScreenshotCard: View {
                 .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+// MARK: - 待決策佇列 (Action Queue) 抽屜面板
+private struct PendingActionsSheetView: View {
+    @Binding var actions: [PendingActionItem]
+    let onRefresh: () async -> Void
+    let onResolve: (PendingActionItem, String, Bool) async -> Bool
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var customReplies: [String: String] = [:]
+    @State private var busyIds: Set<String> = []
+    @State private var isRefreshing: Bool = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.05, green: 0.07, blue: 0.14).ignoresSafeArea()
+
+                if actions.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.cyan.opacity(0.8))
+                        Text("目前沒有待決策項目")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        Text("當背景 Herdr Agent 需要請示或拍板時，會自動集中列在這裡。")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 28)
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(actions) { item in
+                                actionCard(for: item)
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+            }
+            .navigationTitle("待決策佇列 (\(actions.count))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: {
+                        isRefreshing = true
+                        Task {
+                            await onRefresh()
+                            await MainActor.run { isRefreshing = false }
+                        }
+                    }) {
+                        if isRefreshing {
+                            ProgressView().tint(.cyan)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func actionCard(for item: PendingActionItem) -> some View {
+        let isBusy = busyIds.contains(item.id)
+        let draftBinding = Binding<String>(
+            get: { customReplies[item.id] ?? "" },
+            set: { customReplies[item.id] = $0 }
+        )
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 6) {
+                    Circle().fill(Color.orange).frame(width: 8, height: 8)
+                    Text(item.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                }
+                Spacer()
+                Button("忽略") {
+                    submit(item: item, answer: "", dismiss: true)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.55))
+                .disabled(isBusy)
+            }
+
+            Text(item.question)
+                .font(.system(size: 13.5))
+                .foregroundColor(.white.opacity(0.9))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if !item.options.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(item.options, id: \.self) { opt in
+                        Button(action: {
+                            submit(item: item, answer: opt, dismiss: false)
+                        }) {
+                            HStack {
+                                Text(opt)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .multilineTextAlignment(.leading)
+                                Spacer()
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.cyan)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.cyan.opacity(0.14))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isBusy)
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("或輸入補充指令...", text: draftBinding)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.07))
+                    )
+
+                Button(action: {
+                    let ans = (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !ans.isEmpty else { return }
+                    submit(item: item, answer: ans, dismiss: false)
+                }) {
+                    Text(isBusy ? "送出中" : "送出")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.blue))
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy || (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(red: 0.11, green: 0.14, blue: 0.22))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.orange.opacity(0.32), lineWidth: 1)
+                )
+        )
+    }
+
+    private func submit(item: PendingActionItem, answer: String, dismiss: Bool) {
+        busyIds.insert(item.id)
+        Task {
+            _ = await onResolve(item, answer, dismiss)
+            await MainActor.run {
+                busyIds.remove(item.id)
+                customReplies.removeValue(forKey: item.id)
+            }
+        }
     }
 }

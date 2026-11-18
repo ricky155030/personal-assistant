@@ -204,6 +204,64 @@ class UnreadNotifyRequest(BaseModel):
     force: bool = False
 
 
+class PendingActionCreateRequest(BaseModel):
+    agent: str
+    title: str
+    question: str
+    options: List[str] = []
+    source: str = "herdr"
+
+
+class PendingActionResolveRequest(BaseModel):
+    answer: str = ""
+    dismiss: bool = False
+
+
+_PENDING_ACTIONS_LOCK = threading.Lock()
+
+
+def _pending_actions_file():
+    return settings.DATA_DIR / "pending_actions.json"
+
+
+def _load_pending_actions() -> List[dict]:
+    p = _pending_actions_file()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_pending_actions(items: List[dict]) -> None:
+    p = _pending_actions_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _upsert_pending_action(agent: str, title: str, question: str, options: Optional[List[str]] = None, source: str = "herdr") -> dict:
+    import uuid
+    now_iso = datetime.now().isoformat()
+    item = {
+        "id": f"act_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+        "agent": agent.strip(),
+        "title": title.strip(),
+        "question": question.strip(),
+        "options": [o.strip() for o in (options or []) if o.strip()],
+        "source": source,
+        "created_at": now_iso,
+    }
+    with _PENDING_ACTIONS_LOCK:
+        items = _load_pending_actions()
+        # 同一 agent 僅保留最新一筆待決策項目，避免重複洗版
+        items = [x for x in items if x.get("agent") != item["agent"]]
+        items.insert(0, item)
+        _save_pending_actions(items)
+    return item
+
+
 _UNREAD_ALERT_TAG = "assistant_unread_reply"
 _APP_STATE_LOCK = threading.Lock()
 _APP_STATE = {
@@ -1731,6 +1789,66 @@ def list_herdr_agents(_authorized: bool = Depends(verify_token)):
         return {"agents": agents}
     except Exception as ex:
         return {"agents": [], "error": str(ex)}
+
+
+@app.get("/api/actions/pending")
+def list_pending_actions(_authorized: bool = Depends(verify_token)):
+    """取得目前等待主人決策的待辦佇列（Action Queue）。"""
+    with _PENDING_ACTIONS_LOCK:
+        items = _load_pending_actions()
+    return {"actions": items, "count": len(items)}
+
+
+@app.post("/api/actions/pending")
+def create_pending_action(req: PendingActionCreateRequest, _authorized: bool = Depends(verify_token)):
+    """新增或更新一筆待決策項目至 Action Queue。"""
+    item = _upsert_pending_action(
+        agent=req.agent,
+        title=req.title,
+        question=req.question,
+        options=req.options,
+        source=req.source,
+    )
+    with _PENDING_ACTIONS_LOCK:
+        total = len(_load_pending_actions())
+    return {"status": "ok", "action": item, "count": total}
+
+
+@app.post("/api/actions/pending/{action_id}/resolve")
+def resolve_pending_action(action_id: str, req: PendingActionResolveRequest, _authorized: bool = Depends(verify_token)):
+    """處理主人於 App 內做出的決策：回寫至對應 Herdr Agent（或忽略移除）並更新佇列。"""
+    import subprocess
+    import sys
+
+    with _PENDING_ACTIONS_LOCK:
+        items = _load_pending_actions()
+        target = next((x for x in items if x.get("id") == action_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="找不到該待決策項目")
+
+    relayed = False
+    if not req.dismiss:
+        answer_text = (req.answer or "").strip()
+        if not answer_text:
+            raise HTTPException(status_code=400, detail="回覆內容不可為空")
+        agent_target = (target.get("agent") or "").strip()
+        if agent_target:
+            proc = subprocess.run(
+                [sys.executable, "scripts/herdr_coordinator.py", "relay", "--agent", agent_target, "--answer", answer_text],
+                cwd=str(settings.BASE_DIR),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if proc.returncode != 0:
+                raise HTTPException(status_code=502, detail=proc.stderr.strip() or "relay 回寫失敗")
+            relayed = True
+
+    with _PENDING_ACTIONS_LOCK:
+        remaining = [x for x in _load_pending_actions() if x.get("id") != action_id]
+        _save_pending_actions(remaining)
+    return {"status": "ok", "relayed": relayed, "actions": remaining, "count": len(remaining)}
 
 
 @app.post("/api/system/safe-reload")

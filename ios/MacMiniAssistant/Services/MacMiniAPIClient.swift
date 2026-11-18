@@ -717,4 +717,48 @@ public final class MacMiniAPIClient {
             return []
         }
     }
+
+    /// 取得目前等待主人決策的待辦佇列（Action Queue）
+    public func fetchPendingActions() async -> [PendingActionItem] {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/actions/pending") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(PendingActionsResponse.self, from: data)
+            return decoded.actions
+        } catch {
+            return []
+        }
+    }
+
+    /// 回覆或忽略一筆待決策項目，並回傳更新後的佇列
+    public func resolvePendingAction(id: String, answer: String, dismiss: Bool = false) async -> (Bool, [PendingActionItem]) {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/actions/pending/\(id)/resolve") else {
+            return (false, [])
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["answer": answer, "dismiss": dismiss])
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return (false, [])
+            }
+            let decoded = try JSONDecoder().decode(PendingActionsResponse.self, from: data)
+            return (true, decoded.actions)
+        } catch {
+            return (false, [])
+        }
+    }
 }

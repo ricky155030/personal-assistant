@@ -525,14 +525,55 @@ def resolve_agent_display_name(
     return f"Herdr Agent [{agent}]"
 
 
+def _parse_question_options(question_text: str) -> List[str]:
+    """從 Agent 條列問題中萃取出可點擊的選項文字（如 選項 1: ...）。"""
+    options: List[str] = []
+    for raw_ln in (question_text or "").splitlines():
+        ln = raw_ln.strip().lstrip("•-*").strip()
+        if re.match(r"^(?:選項\s*[1-9A-Za-z]|Option\s*[1-9A-Za-z])[:：.\s]", ln, re.IGNORECASE):
+            options.append(ln[:120])
+    return options[:6]
+
+
+def _push_pending_action(agent: str, title: str, question_text: str) -> None:
+    """將 Agent 請示同步登記到後端 Action Queue，讓 iOS App 頂部膠囊顯示並可一鍵回覆。"""
+    import urllib.request
+    from config import settings
+
+    port = getattr(settings, "PORT", 8899)
+    api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-Agent-Key"] = api_key
+    payload = {
+        "agent": agent,
+        "title": title,
+        "question": question_text.strip(),
+        "options": _parse_question_options(question_text),
+        "source": f"herdr:{agent}",
+    }
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/actions/pending",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            resp.read()
+    except Exception as e:
+        print(f"[HerdrCoordinator] ℹ️ 寫入 Action Queue 略過: {e}", file=sys.stderr)
+
+
 def notify_question(
     agent: str,
     question_text: str,
     name: Optional[str] = None,
     agent_info: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """將 Agent 請示主人的問題注入主大腦 App 對話並透過統一靜音 HA 通道提醒主人。"""
+    """將 Agent 請示主人的問題注入主大腦 App 對話、登記 Action Queue，並透過統一靜音 HA 通道提醒主人。"""
     display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
+    _push_pending_action(agent=agent, title=display_title, question_text=question_text)
     memo = (
         f"Herdr Agent「{display_title}」（目標：{agent}）執行到一半需要請示主人確認：\n\n"
         f"{question_text.strip()}\n\n"
