@@ -416,3 +416,64 @@ def test_agy_brain_pool_resolves_family_model_override():
             pass
 
     assert captured_targets == ["gemini-4-argon-medium", "gemini-4-argon-high"]
+
+
+def test_agy_worker_preserves_markdown_code_blocks():
+    import queue
+    import threading
+    from agy_singleton import AgyWorker
+
+    worker = object.__new__(AgyWorker)
+    worker.name = "TEST"
+    worker.model = "gemini-4-hydrogen-medium"
+    worker.session_id = "sess-1"
+    worker._is_ready = True
+    worker.last_usage = {}
+    worker.last_tokens = 0
+    worker.last_active_time = 0.0
+    worker._active_turn_id = None
+    worker._cancel_requested = False
+    worker.last_turn_result = {}
+    worker.lock = threading.RLock()
+    worker.stdout_queue = queue.Queue()
+    worker._rpc_id_counter = 10
+    worker._next_rpc_id = lambda: 11
+    worker._get_actual_context_tokens = lambda tool_calls_count=0: 100
+    worker._save_session_state = lambda: None
+    worker._build_acp_prompt_blocks = lambda q, media=None: [{"type": "text", "text": q}]
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+
+    sample_md = "### 測試標題\n\n**重點**：\n\n```swift\nlet x = 1\n```"
+
+    def fake_send_rpc(payload):
+        req_id = payload["id"]
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": sample_md}}},
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"stopReason": "end_turn", "usage": {"inputTokens": 10, "outputTokens": 20}},
+        })
+
+    worker._send_rpc = fake_send_rpc
+
+    gen = worker.send_query_stream("test")
+    result = None
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        result = stop.value
+
+    assert result is not None
+    assert "### 測試標題" in result["clean_reply"]
+    assert "**重點**" in result["clean_reply"]
+    assert "```swift\nlet x = 1\n```" in result["clean_reply"]

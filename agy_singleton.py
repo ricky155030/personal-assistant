@@ -1133,7 +1133,9 @@ class AgyWorker:
                 full_reply = "".join(full_reply_parts) or turn_result.get("response", "")
                 full_thought = "".join(full_thought_parts).strip()
                 reply_without_widget, widget_html, image_urls = extract_rich_blocks(full_reply)
-                clean_reply = reply_without_widget.replace("**", "").replace("#", "").replace("`", "").strip()
+                # 保留 Markdown（標題、粗體、```程式碼區塊```），供 iOS MarkdownMessageView 與歷史紀錄完整呈現；
+                # 語音 TTS 過濾由 main.py 的 TTSSentenceExtractor / sanitize_for_tts 獨立處理。
+                clean_reply = reply_without_widget.strip()
 
                 turn_result["clean_reply"] = clean_reply
                 turn_result["widget_html"] = widget_html
