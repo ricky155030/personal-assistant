@@ -167,6 +167,8 @@ struct HandsFreeMainView: View {
     @State private var scrollToMessageId: UUID? = nil
     @State private var showModelPopover: Bool = false
     @State private var isAtBottom: Bool = true
+    @State private var userScrolledUp: Bool = false
+    @State private var lastUserScrollUpGestureAt: Date = .distantPast
     @State private var hasUnseenUpdates: Bool = false
     @State private var lastFollowScrollAt: Date = .distantPast
     @State private var isDraggingBottom: Bool = false
@@ -1029,9 +1031,18 @@ struct HandsFreeMainView: View {
                             .id("bottom_anchor")
                             .onAppear {
                                 isAtBottom = true
+                                userScrolledUp = false
                                 hasUnseenUpdates = false
                             }
-                            .onDisappear { isAtBottom = false }
+                            .onDisappear {
+                                // 只有當使用者近期確實有手勢上滑（含慣性滑動）時，才視為離開底部；
+                                // 若只是新訊息或串流長高把 bottom_anchor 推到畫面外，不可誤判為手動上滑而中斷自動跟隨。
+                                let recentlyDraggedUp = isDraggingBottom || Date().timeIntervalSince(lastUserScrollUpGestureAt) < 1.2
+                                if recentlyDraggedUp || userScrolledUp {
+                                    isAtBottom = false
+                                    userScrolledUp = true
+                                }
+                            }
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
@@ -1039,17 +1050,20 @@ struct HandsFreeMainView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 12)
+                    DragGesture(minimumDistance: 10)
                         .onChanged { value in
                             if !isDraggingBottom {
                                 isDraggingBottom = true
                                 startedDragAtBottom = isAtBottom
                                 bottomPullHapticTriggered = false
                             }
-                            // 手指往下滑（translation.height > 0）= 正在離開底部看歷史：
-                            // 立刻解釘，讓錨點 onDisappear 前就停止跟隨；反之不搶回，
-                            // 等 bottom_anchor 重新出現才重釘，避免串流中誤判。
-                            if startedDragAtBottom && value.translation.height > 40 && isAtBottom {
+                            // 手指往下拉（translation.height > 0）= 正在往上回看歷史訊息：
+                            // 立即標記 userScrolledUp 並暫停自動置底，確保助理邊講話時使用者能安心回看舊訊息。
+                            if value.translation.height > 18 {
+                                lastUserScrollUpGestureAt = Date()
+                            }
+                            if value.translation.height > 28 {
+                                userScrolledUp = true
                                 isAtBottom = false
                             }
                             guard startedDragAtBottom && !isRefreshingHistory else { return }
@@ -1081,6 +1095,7 @@ struct HandsFreeMainView: View {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             isRefreshingHistory = false
                                         }
+                                        userScrolledUp = false
                                         scrollToBottom(proxy: proxy, animated: true)
                                     }
                                 }
@@ -1092,9 +1107,10 @@ struct HandsFreeMainView: View {
                         }
                 )
 
-                if !isAtBottom && coordinator.messages.count > 2 {
+                if (!isAtBottom || userScrolledUp) && coordinator.messages.count > 2 {
                     Button(action: {
                         haptic.impactOccurred()
+                        userScrolledUp = false
                         hasUnseenUpdates = false
                         scrollToBottom(proxy: proxy, animated: true)
                     }) {
@@ -1129,19 +1145,23 @@ struct HandsFreeMainView: View {
             }
             .onAppear {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    userScrolledUp = false
                     scrollToBottom(proxy: proxy, animated: false)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                    if isAtBottom {
+                    if !userScrolledUp {
                         scrollToBottom(proxy: proxy, animated: false)
                     }
                 }
             }
             .onChange(of: coordinator.messages.count) { _, _ in
-                // 使用者剛送出新訊息，或原本就在底部時才自動捲動；否則標記有新內容
-                if isAtBottom || coordinator.messages.last?.role == .user {
+                // 使用者送出新訊息、或是新回覆氣泡跳出（且使用者並非剛在 4 秒內手動上滑）時，強制自動置底並恢復跟隨
+                let isNewUserTurn = coordinator.messages.last?.role == .user
+                let isActivelyReadingHistory = userScrolledUp && (isDraggingBottom || Date().timeIntervalSince(lastUserScrollUpGestureAt) < 4.0)
+                if isNewUserTurn || !isActivelyReadingHistory {
+                    userScrolledUp = false
                     hasUnseenUpdates = false
                     scrollToBottom(proxy: proxy, animated: true)
                 } else {
@@ -1151,44 +1171,63 @@ struct HandsFreeMainView: View {
             .onChange(of: scrollToMessageId) { _, targetId in
                 guard let targetId = targetId else { return }
                 isAtBottom = false
+                userScrolledUp = true
+                lastUserScrollUpGestureAt = Date()
                 withAnimation(.easeInOut(duration: 0.3)) {
                     proxy.scrollTo(targetId, anchor: .center)
                 }
                 scrollToMessageId = nil
             }
-            .onChange(of: coordinator.currentStreamingText) { _, _ in
-                if isAtBottom {
+            .onChange(of: coordinator.currentStreamingText) { oldText, newText in
+                // 當新一輪串流剛開始跳出文字（空 -> 非空），且使用者並非正在手滑回看，自動鎖定置底
+                if oldText.isEmpty && !newText.isEmpty {
+                    let isActivelyReadingHistory = userScrolledUp && (isDraggingBottom || Date().timeIntervalSince(lastUserScrollUpGestureAt) < 4.0)
+                    if !isActivelyReadingHistory {
+                        userScrolledUp = false
+                        hasUnseenUpdates = false
+                        scrollToBottom(proxy: proxy, animated: true)
+                        return
+                    }
+                }
+                if !userScrolledUp && !isDraggingBottom {
                     followBottom(proxy: proxy)
-                } else if !coordinator.currentStreamingText.isEmpty {
+                } else if !newText.isEmpty {
                     hasUnseenUpdates = true
                 }
             }
             .onChange(of: coordinator.messages.last?.content) { _, _ in
-                // 與 currentStreamingText 同一 token 的雙重寫入，只用節流跟隨，
-                // 不再另排動畫延遲捲動，避免兩者互搶造成跳動。
-                if isAtBottom {
+                // 與 currentStreamingText 同一 token 的雙重寫入，只要使用者未手動上滑就持續節流跟隨到底部
+                if !userScrolledUp && !isDraggingBottom {
                     followBottom(proxy: proxy)
+                } else {
+                    hasUnseenUpdates = true
                 }
             }
             .onChange(of: coordinator.messages.last?.status) { _, newStatus in
                 if newStatus == .completed {
-                    hasUnseenUpdates = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                        scrollToBottom(proxy: proxy, animated: true)
+                    if !userScrolledUp && !isDraggingBottom {
+                        hasUnseenUpdates = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                            guard !userScrolledUp && !isDraggingBottom else { return }
+                            scrollToBottom(proxy: proxy, animated: true)
+                        }
+                    } else {
+                        hasUnseenUpdates = true
                     }
                 }
             }
             .onChange(of: coordinator.liveTranscript) { old, _ in
-                // 新氣泡剛插入（空→非空）立即跟一次，之後邊講邊長高交給節流跟隨；
-                // 清空（送出後）不捲動，避免多餘跳動。
-                if isAtBottom {
-                    if old.isEmpty && !coordinator.liveTranscript.isEmpty {
-                        scrollToBottom(proxy: proxy, animated: false)
-                    } else if !coordinator.liveTranscript.isEmpty {
-                        followBottom(proxy: proxy)
-                    }
+                // 使用者開始講話（空→非空）時強制歸位底部並恢復自動跟隨
+                if old.isEmpty && !coordinator.liveTranscript.isEmpty {
+                    userScrolledUp = false
+                    hasUnseenUpdates = false
+                    scrollToBottom(proxy: proxy, animated: false)
                 } else if !coordinator.liveTranscript.isEmpty {
-                    hasUnseenUpdates = true
+                    if !userScrolledUp && !isDraggingBottom {
+                        followBottom(proxy: proxy)
+                    } else {
+                        hasUnseenUpdates = true
+                    }
                 }
             }
         }
@@ -1201,7 +1240,8 @@ struct HandsFreeMainView: View {
         if !isAtBottom, let lastId = coordinator.messages.last?.id {
             proxy.scrollTo(lastId, anchor: .bottom)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                guard !isDraggingBottom else { return }
+                guard !isDraggingBottom && !userScrolledUp else { return }
+                isAtBottom = true
                 if animated {
                     withAnimation(.easeOut(duration: 0.18)) {
                         proxy.scrollTo("bottom_anchor", anchor: .bottom)
@@ -1211,19 +1251,21 @@ struct HandsFreeMainView: View {
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                guard !isDraggingBottom else { return }
+                guard !isDraggingBottom && !userScrolledUp else { return }
+                isAtBottom = true
                 proxy.scrollTo("bottom_anchor", anchor: .bottom)
             }
             return
         }
 
+        isAtBottom = true
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo("bottom_anchor", anchor: .bottom)
             }
             // LazyVStack 長訊息展開後高度會變動，離散事件才需要一次沉降對齊
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                if isAtBottom && !isDraggingBottom {
+                if !userScrolledUp && !isDraggingBottom {
                     proxy.scrollTo("bottom_anchor", anchor: .bottom)
                 }
             }
