@@ -11,21 +11,23 @@ import main
 
 
 def test_app_state_and_unread_critical_alert_lifecycle():
+    from scripts.ios_notify import IOSNotifier
+
     with main._APP_STATE_LOCK:
         main._APP_STATE["active"] = True
         main._APP_STATE["has_unread_alert"] = False
 
-    mock_notifier = MagicMock()
-    mock_notifier.send_critical_alert.return_value = True
-    mock_notifier.clear_notification.return_value = True
+    mock_notifier = MagicMock(spec=IOSNotifier)
+    mock_notifier.send_critical.return_value = True
+    mock_notifier.clear.return_value = True
 
     with patch("scripts.ios_notify.IOSNotifier", return_value=mock_notifier):
         # 1. 切到背景
         main._APP_STATE["active"] = False
         ok = main._notify_app_unread_reply("### 測試標題\n**重點內容** 已完成")
         assert ok is True
-        mock_notifier.send_critical_alert.assert_called_once()
-        kwargs = mock_notifier.send_critical_alert.call_args.kwargs
+        mock_notifier.send_critical.assert_called_once()
+        kwargs = mock_notifier.send_critical.call_args.kwargs
         assert kwargs["tag"] == main._UNREAD_ALERT_TAG
         assert kwargs["volume"] == 0.0
         assert "測試標題" in kwargs["message"]
@@ -35,12 +37,12 @@ def test_app_state_and_unread_critical_alert_lifecycle():
         # 2. 回到前景讀取 -> 自動撤回唯一重要通知
         cleared = main._clear_app_unread_alert()
         assert cleared is True
-        mock_notifier.clear_notification.assert_called_once_with(tag=main._UNREAD_ALERT_TAG)
+        mock_notifier.clear.assert_called_once_with(tag=main._UNREAD_ALERT_TAG)
 
         # 3. 再次呼叫（已無未讀）不應重複撤回
-        mock_notifier.clear_notification.reset_mock()
+        mock_notifier.clear.reset_mock()
         assert main._clear_app_unread_alert() is False
-        mock_notifier.clear_notification.assert_not_called()
+        mock_notifier.clear.assert_not_called()
 
 
 def test_api_app_state_endpoint():

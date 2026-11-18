@@ -216,7 +216,7 @@ def _notify_app_unread_reply(reply_text: str) -> bool:
             preview = preview[:139].rstrip() + "…"
         if not preview:
             preview = "助理已完成回覆，點此開啟 App 查看完整內容。"
-        ok = IOSNotifier().send_critical_alert(
+        ok = IOSNotifier().send_critical(
             title="Mac mini 助理新回覆",
             message=preview,
             url="macminiassistant://open",
@@ -241,7 +241,7 @@ def _clear_app_unread_alert(force: bool = False) -> bool:
         return False
     try:
         from scripts.ios_notify import IOSNotifier
-        return IOSNotifier().clear_notification(tag=_UNREAD_ALERT_TAG)
+        return IOSNotifier().clear(tag=_UNREAD_ALERT_TAG)
     except Exception as ex:
         print(f"[AppNotify] ⚠️ 回收重要通知失敗: {ex}")
         return False
