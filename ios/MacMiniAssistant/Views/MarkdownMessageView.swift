@@ -290,22 +290,60 @@ struct MarkdownMessageView: View {
     }
 }
 
-// MARK: - 程式碼區塊卡片（支援語言標籤與一鍵複製）
+// MARK: - 程式碼區塊卡片（支援語言標籤、行數統計、長代碼預設摺疊與一鍵複製）
 private struct CodeBlockCard: View {
     let language: String
     let code: String
     let fontSize: Double
     @State private var copied: Bool = false
+    @State private var isExpanded: Bool = false
+
+    private var lines: [String] {
+        code.components(separatedBy: "\n")
+    }
+
+    private var isCollapsible: Bool {
+        lines.count > 8
+    }
+
+    private var displayedCode: String {
+        if !isCollapsible || isExpanded {
+            return code
+        }
+        return lines.prefix(6).joined(separator: "\n")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Text(language.isEmpty ? "code" : language)
                     .font(.caption2)
                     .fontWeight(.semibold)
-                    .foregroundColor(Color(white: 0.65))
+                    .foregroundColor(Color(white: 0.72))
+
+                Text("· \(lines.count) 行")
+                    .font(.caption2)
+                    .foregroundColor(Color(white: 0.48))
 
                 Spacer()
+
+                if isCollapsible {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text(isExpanded ? "收合" : "展開")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.cyan.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 Button(action: {
                     UIPasteboard.general.string = code
@@ -331,11 +369,31 @@ private struct CodeBlockCard: View {
             .background(Color.white.opacity(0.06))
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
+                Text(displayedCode)
                     .font(.system(size: fontSize, design: .monospaced))
                     .foregroundColor(Color(white: 0.92))
                     .textSelection(.enabled)
                     .padding(12)
+            }
+
+            if isCollapsible && !isExpanded {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded = true
+                    }
+                }) {
+                    HStack {
+                        Spacer()
+                        Text("展開完整程式碼（還有 \(lines.count - 6) 行）")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.cyan.opacity(0.9))
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.04))
+                }
+                .buttonStyle(.plain)
             }
         }
         .background(
@@ -350,52 +408,162 @@ private struct CodeBlockCard: View {
     }
 }
 
-// MARK: - 表格元件
+// MARK: - 表格元件（Grid 欄寬自動對齊 + 支援行內 Markdown + 長表摺疊 + 一鍵複製）
 private struct MarkdownTableView: View {
     let headers: [String]
     let rows: [[String]]
     let fontSize: Double
+    @State private var isExpanded: Bool = false
+    @State private var copied: Bool = false
+
+    private var isCollapsible: Bool {
+        rows.count > 8
+    }
+
+    private var visibleRows: [[String]] {
+        if !isCollapsible || isExpanded {
+            return rows
+        }
+        return Array(rows.prefix(6))
+    }
+
+    private func cellText(_ raw: String) -> Text {
+        if let attr = try? AttributedString(
+            markdown: raw,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        ) {
+            return Text(attr)
+        }
+        return Text(raw)
+    }
+
+    private func tableAsMarkdown() -> String {
+        let head = "| " + headers.joined(separator: " | ") + " |"
+        let sep = "| " + headers.map { _ in "---" }.joined(separator: " | ") + " |"
+        let body = rows.map { row in
+            let padded = (0..<headers.count).map { $0 < row.count ? row[$0] : "" }
+            return "| " + padded.joined(separator: " | ") + " |"
+        }
+        return ([head, sep] + body).joined(separator: "\n")
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 0) {
-                    ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
-                        Text(header)
-                            .font(.system(size: fontSize, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .frame(minWidth: 84, alignment: .leading)
-                    }
-                }
-                .background(Color.white.opacity(0.08))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "tablecells")
+                    .font(.caption2)
+                    .foregroundColor(.cyan.opacity(0.85))
+                Text("\(rows.count) 列 × \(headers.count) 欄")
+                    .font(.caption2)
+                    .foregroundColor(Color(white: 0.58))
 
-                ForEach(Array(rows.enumerated()), id: \.offset) { rIdx, row in
-                    Divider().background(Color.white.opacity(0.1))
-                    HStack(spacing: 0) {
-                        ForEach(0..<headers.count, id: \.self) { cIdx in
-                            let cell = cIdx < row.count ? row[cIdx] : ""
-                            Text(cell)
-                                .font(.system(size: fontSize))
-                                .foregroundColor(.white.opacity(0.88))
+                Spacer()
+
+                if isCollapsible {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }) {
+                        HStack(spacing: 3) {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text(isExpanded ? "收合" : "展開")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.cyan.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button(action: {
+                    UIPasteboard.general.string = tableAsMarkdown()
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        copied = false
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.caption2)
+                        Text(copied ? "已複製" : "複製")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(copied ? .green : Color(white: 0.78))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.white.opacity(0.05))
+
+            Divider().background(Color.white.opacity(0.1))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
+                            cellText(header)
+                                .font(.system(size: fontSize, weight: .bold))
+                                .foregroundColor(.white)
                                 .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .frame(minWidth: 84, alignment: .leading)
+                                .padding(.vertical, 7)
+                                .frame(minWidth: 72, alignment: .leading)
                         }
                     }
-                    .background(rIdx % 2 == 1 ? Color.white.opacity(0.025) : Color.clear)
+                    .background(Color.white.opacity(0.08))
+
+                    ForEach(Array(visibleRows.enumerated()), id: \.offset) { rIdx, row in
+                        Divider().background(Color.white.opacity(0.1))
+                        GridRow {
+                            ForEach(0..<headers.count, id: \.self) { cIdx in
+                                let cell = cIdx < row.count ? row[cIdx] : ""
+                                cellText(cell)
+                                    .font(.system(size: fontSize))
+                                    .foregroundColor(.white.opacity(0.88))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .frame(minWidth: 72, alignment: .leading)
+                            }
+                        }
+                        .background(rIdx % 2 == 1 ? Color.white.opacity(0.025) : Color.clear)
+                    }
                 }
             }
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.03))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            if isCollapsible && !isExpanded {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded = true
+                    }
+                }) {
+                    HStack {
+                        Spacer()
+                        Text("展開完整表格（還有 \(rows.count - 6) 列）")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.cyan.opacity(0.9))
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.04))
+                }
+                .buttonStyle(.plain)
+            }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
