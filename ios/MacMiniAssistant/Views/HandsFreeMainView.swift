@@ -73,6 +73,7 @@ struct GeminiSparkleIcon: View {
 // MARK: - 主畫面：Gemini 風格直接對話 + Live 即時語音對談
 struct HandsFreeMainView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showQuotaSheet: Bool = false
     @State private var showQuickPromptDrawer: Bool = false
@@ -243,6 +244,19 @@ struct HandsFreeMainView: View {
                 coordinator.errorMessage = "檔案選取失敗：\(err.localizedDescription)"
             }
         }
+        .onAppear { syncIdleTimer() }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onChange(of: shouldKeepScreenAwake) { syncIdleTimer() }
+        .onChange(of: scenePhase) { syncIdleTimer() }
+    }
+
+    /// 思考、串流、語音朗讀或開啟語音對話期間保持螢幕常亮，結束後自動恢復系統休眠
+    private var shouldKeepScreenAwake: Bool {
+        coordinator.isProcessingOrSpeaking || coordinator.isLiveMode || coordinator.voiceInputMode == .singleTurn
+    }
+
+    private func syncIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = (scenePhase == .active && shouldKeepScreenAwake)
     }
 
     /// 將新照片加入待送出佇列（相容舊的單張 pendingImageData，並限制最多張數）
