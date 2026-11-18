@@ -198,6 +198,12 @@ class AppStateRequest(BaseModel):
     active: bool = True
 
 
+class UnreadNotifyRequest(BaseModel):
+    title: str = "Mac mini 助理新回覆"
+    message: str = ""
+    force: bool = False
+
+
 _UNREAD_ALERT_TAG = "assistant_unread_reply"
 _APP_STATE_LOCK = threading.Lock()
 _APP_STATE = {
@@ -207,7 +213,7 @@ _APP_STATE = {
 }
 
 
-def _notify_app_unread_reply(reply_text: str) -> bool:
+def _notify_app_unread_reply(reply_text: str, title: str = "Mac mini 助理新回覆") -> bool:
     """當 iOS App 處於背景或已斷線時，發送唯一一則靜音置頂的 Home Assistant 重要通知。"""
     try:
         from scripts.ios_notify import IOSNotifier
@@ -217,7 +223,7 @@ def _notify_app_unread_reply(reply_text: str) -> bool:
         if not preview:
             preview = "助理已完成回覆，點此開啟 App 查看完整內容。"
         ok = IOSNotifier().send_critical(
-            title="Mac mini 助理新回覆",
+            title=title,
             message=preview,
             url="macminiassistant://open",
             tag=_UNREAD_ALERT_TAG,
@@ -1606,6 +1612,17 @@ def update_app_state(req: AppStateRequest, _authorized: bool = Depends(verify_to
     return {"status": "ok", "active": bool(req.active), "clear_scheduled": cleared}
 
 
+@app.post("/api/internal/unread-notify")
+def internal_unread_notify(req: UnreadNotifyRequest, _authorized: bool = Depends(verify_token)):
+    """供背景任務（如 TaskManager）透過統一 iOS 未讀重要通知通道發送回報；若 App 在前景則略過不打擾。"""
+    with _APP_STATE_LOCK:
+        app_in_foreground = bool(_APP_STATE.get("active", True))
+    if app_in_foreground and not req.force:
+        return {"status": "skipped", "reason": "app_in_foreground", "sent": False}
+    sent = _notify_app_unread_reply(req.message, title=req.title)
+    return {"status": "ok" if sent else "error", "sent": sent}
+
+
 @app.post("/api/system/safe-reload")
 def trigger_safe_reload(_authorized: bool = Depends(verify_token)):
     """排程背景安全重載（等語音空檔後透過 launchd 重啟後端服務）"""
@@ -1622,7 +1639,7 @@ def trigger_safe_reload(_authorized: bool = Depends(verify_token)):
         "--cmd",
         f"{sys.executable} scripts/idle_safe_reload.py --quiet 4 --interval 2 </dev/null",
         "--notify",
-        "telegram",
+        "ios",
         "--ttl",
         "5",
     ]

@@ -61,3 +61,36 @@ def test_api_app_state_endpoint():
             assert main._APP_STATE["active"] is True
         finally:
             main.app.dependency_overrides.pop(main.verify_token, None)
+
+
+def test_internal_unread_notify_and_task_manager_unified_channel():
+    import task_manager
+
+    client = TestClient(main.app)
+    main.app.dependency_overrides[main.verify_token] = lambda: True
+    try:
+        with main._APP_STATE_LOCK:
+            main._APP_STATE["active"] = True
+            main._APP_STATE["has_unread_alert"] = False
+
+        # App 在前景時，背景任務通知應略過不打擾
+        resp_fg = client.post("/api/internal/unread-notify", json={"title": "CI", "message": "ok"})
+        assert resp_fg.status_code == 200
+        assert resp_fg.json()["sent"] is False
+
+        # App 在背景時，應發送唯一靜音重要通知
+        main._APP_STATE["active"] = False
+        with patch("main._notify_app_unread_reply", return_value=True) as mock_notify:
+            resp_bg = client.post("/api/internal/unread-notify", json={"title": "✅ CI 監控", "message": "通過"})
+            assert resp_bg.status_code == 200
+            assert resp_bg.json()["sent"] is True
+            mock_notify.assert_called_once_with("通過", title="✅ CI 監控")
+    finally:
+        main.app.dependency_overrides.pop(main.verify_token, None)
+
+    # 預設 iOS 背景回報通道應完全不走 Telegram，統一走 iOS 通道
+    with patch.object(task_manager, "_send_telegram_notification") as mock_tg, \
+         patch.object(task_manager, "_send_ios_notification", return_value=True) as mock_ios:
+        task_manager._dispatch_notifications("ios", "CI 測試", "task_1", 0, False, 1.5, "ok")
+        mock_tg.assert_not_called()
+        mock_ios.assert_called_once()

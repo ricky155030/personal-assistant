@@ -105,10 +105,31 @@ def _send_telegram_notification(message_html: str) -> bool:
 
 
 def _send_ios_notification(title: str, message: str) -> bool:
-    """帶外發送 iOS Critical Alert（靜音置頂，透過 HA Companion App）"""
+    """透過統一未讀重要通知通道（靜音置頂 + 唯一 tag + 已讀自動回收）發送背景回報"""
+    try:
+        port = getattr(settings, "PORT", 8899)
+        api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+        url = f"http://127.0.0.1:{port}/api/internal/unread-notify"
+        req_data = json.dumps({"title": title, "message": message}).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["X-Agent-Key"] = api_key
+        req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            if resp.status == 200:
+                return True
+    except Exception:
+        pass
+
     try:
         from scripts.ios_notify import IOSNotifier
-        return IOSNotifier().send_critical(title=title, message=message, volume=0.0)
+        return IOSNotifier().send_critical(
+            title=title,
+            message=message,
+            url="macminiassistant://open",
+            tag="assistant_unread_reply",
+            volume=0.0,
+        )
     except Exception as e:
         print(f"[TaskManager] ℹ️ iOS 推播略過: {e}", file=sys.stderr)
         return False
@@ -123,7 +144,7 @@ def _dispatch_notifications(
     elapsed_sec: float,
     tail_text: str,
 ) -> None:
-    """依設定之通道列表主動推播任務結果"""
+    """依設定之通道列表主動推播任務結果（統一導向 iOS 唯一靜音重要通知，不再走 Telegram）"""
     channels = {c.strip().lower() for c in (notify_channels or "").split(",") if c.strip() and c.strip().lower() != "none"}
     if not channels:
         return
@@ -147,7 +168,7 @@ def _dispatch_notifications(
         _send_telegram_notification(msg)
 
     if "ios" in channels:
-        short_tail = (tail_text.splitlines()[-1] if tail_text else status_label)[:180]
+        short_tail = (tail_text.splitlines()[-1] if tail_text else status_label)[:140]
         _send_ios_notification(title=f"{icon} {name}", message=f"{status_label}（{dur_str}）\n{short_tail}")
 
 
@@ -658,7 +679,7 @@ class TaskManager:
         cmd: str,
         cwd: Optional[str] = None,
         ttl_minutes: int = 120,
-        notify: Optional[str] = "telegram",
+        notify: Optional[str] = "ios",
         sync_memory: bool = True,
         on_success_cmd: Optional[str] = None,
         on_fail_cmd: Optional[str] = None,
@@ -724,8 +745,9 @@ class TaskManager:
                                 self._terminate_process(pid)
                                 t["status"] = "TTL_EXPIRED"
                                 t["finished_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
-                                _send_telegram_notification(
-                                    f"⏱️ 背景任務到期已終止：{t.get('name', t['task_id'])} (`{t['task_id']}`)\n已達 TTL 上限 {ttl_val} 分鐘。"
+                                _send_ios_notification(
+                                    title=f"⏱️ {t.get('name', t['task_id'])}",
+                                    message=f"背景任務到期已終止（{t['task_id']}），已達 TTL 上限 {ttl_val} 分鐘。",
                                 )
                     except Exception as e:
                         print(f"[TaskManager] TTL 檢查異常: {e}", file=sys.stderr)
@@ -1001,7 +1023,7 @@ def main():
     sp_cmd.add_argument("--cmd", required=True, help="要執行的 Shell/CLI 指令")
     sp_cmd.add_argument("--cwd", default=None, help="執行目錄 (預設專案根目錄)")
     sp_cmd.add_argument("--ttl", type=int, default=120, help="生命週期 (分鐘，預設 120)")
-    sp_cmd.add_argument("--notify", default="telegram", help="完成通知通道 (預設 telegram，設 none 關閉)")
+    sp_cmd.add_argument("--notify", default="ios", help="完成通知通道 (預設 ios，設 none 關閉)")
     sp_cmd.add_argument("--no-sync-memory", action="store_true", help="停用完成後記憶同步")
     sp_cmd.add_argument("--on-success-cmd", default=None, help="成功時執行的鉤子指令")
     sp_cmd.add_argument("--on-fail-cmd", default=None, help="失敗/逾時時執行的鉤子指令")
