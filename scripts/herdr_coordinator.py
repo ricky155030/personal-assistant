@@ -439,14 +439,62 @@ def extract_completion_summary(
     return summary
 
 
-def send_telegram_alert(text: str, parse_mode: str = "HTML") -> bool:
-    """發送 Telegram 通知 (透過專案現有介面)"""
+def _send_unified_app_alert(title: str, message: str, memory_summary: Optional[str] = None, source: str = "herdr:coordinator") -> bool:
+    """透過統一通道（/api/internal/memory-sync + /api/internal/unread-notify）通知主人，不走 Telegram。"""
+    import urllib.request
+    from config import settings
+
+    port = getattr(settings, "PORT", 8899)
+    api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["X-Agent-Key"] = api_key
+
+    if memory_summary:
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/internal/memory-sync",
+                data=json.dumps({
+                    "summary": memory_summary,
+                    "source": source,
+                    "report_to_user": True,
+                }).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15.0) as resp:
+                resp.read()
+        except Exception as e:
+            print(f"[HerdrCoordinator] ℹ️ 寫入主大腦回報略過: {e}", file=sys.stderr)
+
     try:
-        from telegram_service import send_telegram_sync
-        return send_telegram_sync(text, parse_mode=parse_mode)
-    except Exception as e:
-        print(f"[HerdrCoordinator] ⚠️ Telegram 呼叫失敗: {e}", file=sys.stderr)
-        return False
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/internal/unread-notify",
+            data=json.dumps({"title": title, "message": message}).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            return resp.status == 200
+    except Exception:
+        try:
+            from scripts.ios_notify import IOSNotifier
+            return IOSNotifier().send_critical(
+                title=title,
+                message=message[:140],
+                url="macminiassistant://open",
+                tag="assistant_unread_reply",
+                volume=0.0,
+            )
+        except Exception as e:
+            print(f"[HerdrCoordinator] ⚠️ iOS 重要通知失敗: {e}", file=sys.stderr)
+            return False
+
+
+def send_telegram_alert(text: str, parse_mode: str = "HTML") -> bool:
+    """向後相容介面：已統一導向 App 靜音重要通知，不再推播 Telegram。"""
+    clean_preview = re.sub(r"<[^>]+>", "", text or "").strip()
+    return _send_unified_app_alert(title="AI助理新回覆", message=clean_preview[:140])
 
 
 def resolve_agent_display_name(
@@ -483,29 +531,19 @@ def notify_question(
     name: Optional[str] = None,
     agent_info: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """發送提問/等待確認卡片給主人 (使用自適應渲染引擎轉換為精美 HTML)"""
+    """將 Agent 請示主人的問題注入主大腦 App 對話並透過統一靜音 HA 通道提醒主人。"""
     display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
-    raw_msg = (
-        f"❓ **【{display_title} 請示主人】**\n\n"
+    memo = (
+        f"Herdr Agent「{display_title}」（目標：{agent}）執行到一半需要請示主人確認：\n\n"
         f"{question_text.strip()}\n\n"
-        f"💡 _請透過 Telegram 回覆或使用指令回寫：_\n"
-        f"`python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"<答覆>\"`"
+        f"請以繁體中文簡明條列轉達給主人，並告知回覆選項後即可透過 relay 寫回該終端。"
     )
-    try:
-        from telegram_service import markdown_to_telegram_html
-        html_msg = markdown_to_telegram_html(raw_msg)
-        ok = send_telegram_alert(html_msg, parse_mode="HTML")
-    except Exception as e:
-        print(f"[HerdrCoordinator] ⚠️ 提問渲染失敗，回退轉義: {e}", file=sys.stderr)
-        escaped_q = html.escape(question_text.strip())
-        fallback_html = (
-            f"❓ <b>{display_title} 請示主人</b>\n\n"
-            f"<pre>{escaped_q}</pre>\n\n"
-            f"💡 <i>請透過 Telegram 回覆或使用指令回寫：</i>\n"
-            f"<code>python3 scripts/herdr_coordinator.py relay --agent {agent} --answer \"&lt;答覆&gt;\"</code>"
-        )
-        ok = send_telegram_alert(fallback_html, parse_mode="HTML")
-
+    ok = _send_unified_app_alert(
+        title=f"❓ {display_title} 請示主人",
+        message=question_text.strip()[:140],
+        memory_summary=memo,
+        source=f"herdr:{agent}:question",
+    )
     print(f"\n[HerdrCoordinator] 📢 請示主人 (Agent: {display_title}):\n{question_text}\n")
     return ok
 
@@ -516,24 +554,13 @@ def notify_completion(
     name: Optional[str] = None,
     agent_info: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """發送完工卡片給主人 (使用 telegram_service.markdown_to_telegram_html 消除 # 字號，轉為精美粗體與圓點)"""
+    """透過統一靜音 HA 通道發送完工提醒（主對話內容由 sync_memory_to_server 注入 App）。"""
     display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
     content = summary_text.strip()
-    if len(content) > 3500:
-        content = content[:3500] + "\n\n...(部分長輸出已為您截斷)..."
-
-    raw_msg = f"🎉 **【{display_title} 任務完成】**\n\n{content}"
-    try:
-        from telegram_service import markdown_to_telegram_html
-        formatted_html = markdown_to_telegram_html(raw_msg)
-        ok = send_telegram_alert(formatted_html, parse_mode="HTML")
-    except Exception as e:
-        print(f"[HerdrCoordinator] ⚠️ markdown_to_telegram_html 轉換失敗: {e}", file=sys.stderr)
-        ok = send_telegram_alert(html.escape(raw_msg), parse_mode="HTML")
-
-    if not ok:
-        send_telegram_alert(f"🎉 {display_title} 任務完成\n\n{content}", parse_mode="")
-
+    ok = _send_unified_app_alert(
+        title=f"🎉 {display_title} 任務完成",
+        message=content[:140],
+    )
     print(f"\n[HerdrCoordinator] 🎉 任務完工 (Agent: {display_title}):\n{summary_text}\n")
     return ok
 

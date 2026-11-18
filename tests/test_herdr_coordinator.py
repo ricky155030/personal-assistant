@@ -227,25 +227,27 @@ def test_relay_answer(mock_send_keys, mock_submit_prompt):
 
 
 @patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None)
-@patch("scripts.herdr_coordinator.send_telegram_alert")
-def test_notify_question_and_completion(mock_tg, _mock_get):
-    mock_tg.return_value = True
+@patch("scripts.herdr_coordinator._send_unified_app_alert")
+def test_notify_question_and_completion(mock_app_alert, _mock_get):
+    mock_app_alert.return_value = True
 
-    # 測試發送提問卡片
+    # 測試發送提問卡片至統一 App 通道
     ok_q = notify_question("agy", "Q1: 採用何種方案？\n選項 1: A\n選項 2: B")
     assert ok_q is True
-    mock_tg.assert_called()
-    call_text = mock_tg.call_args[0][0]
-    assert "Herdr Agent [agy] 請示主人" in call_text
-    assert "relay --agent agy" in call_text
+    mock_app_alert.assert_called_once()
+    kwargs_q = mock_app_alert.call_args.kwargs
+    assert "Herdr Agent [agy] 請示主人" in kwargs_q["title"]
+    assert "Q1:" in kwargs_q["message"]
+    assert "選項 1" in (kwargs_q.get("memory_summary") or "")
 
-    # 測試發送完工卡片
-    mock_tg.reset_mock()
+    # 測試發送完工通知至統一 App 通道
+    mock_app_alert.reset_mock()
     ok_c = notify_completion("agy", "所有程式碼重構完畢，測試全數通過！")
     assert ok_c is True
-    mock_tg.assert_called()
-    comp_text = mock_tg.call_args[0][0]
-    assert "Herdr Agent [agy] 任務完成" in comp_text
+    mock_app_alert.assert_called_once()
+    kwargs_c = mock_app_alert.call_args.kwargs
+    assert "Herdr Agent [agy] 任務完成" in kwargs_c["title"]
+    assert "所有程式碼重構完畢" in kwargs_c["message"]
 
 
 @patch("scripts.herdr_coordinator.notify_question")
