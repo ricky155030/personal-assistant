@@ -199,7 +199,7 @@ class AppStateRequest(BaseModel):
 
 
 class UnreadNotifyRequest(BaseModel):
-    title: str = "Mac mini 助理新回覆"
+    title: str = "AI助理新回覆"
     message: str = ""
     force: bool = False
 
@@ -214,7 +214,7 @@ _APP_STATE = {
 }
 
 
-def _notify_app_unread_reply(reply_text: str, title: str = "Mac mini 助理新回覆") -> bool:
+def _notify_app_unread_reply(reply_text: str, title: str = "AI助理新回覆") -> bool:
     """當 iOS App 處於背景或已斷線時，發送唯一一則靜音置頂的 Home Assistant 重要通知。"""
     try:
         from scripts.ios_notify import IOSNotifier
