@@ -478,6 +478,7 @@ class TaskManager:
         log_fp.flush()
 
         popen_kwargs: Dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
             "stdout": log_fp,
             "stderr": subprocess.STDOUT,
             "cwd": cwd or str(settings.BASE_DIR),
