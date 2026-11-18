@@ -1194,16 +1194,36 @@ struct HandsFreeMainView: View {
         }
     }
 
-    /// 置底：永遠只對 bottom_anchor 快照一次，避免 lastId→anchor 兩連跳造成閃爍。
+    /// 置底：若原本不在底部（LazyVStack 底部氣泡尚未實體化），先定位最後一則訊息再沉降至 bottom_anchor，
+    /// 避免長距離跳轉因估算高度失準而衝過頭變成一片空白；已在底部時僅對 bottom_anchor 快照一次。
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         lastFollowScrollAt = Date()
+        if !isAtBottom, let lastId = coordinator.messages.last?.id {
+            proxy.scrollTo(lastId, anchor: .bottom)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard !isDraggingBottom else { return }
+                if animated {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                    }
+                } else {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                guard !isDraggingBottom else { return }
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
+            }
+            return
+        }
+
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 proxy.scrollTo("bottom_anchor", anchor: .bottom)
             }
             // LazyVStack 長訊息展開後高度會變動，離散事件才需要一次沉降對齊
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                if isAtBottom {
+                if isAtBottom && !isDraggingBottom {
                     proxy.scrollTo("bottom_anchor", anchor: .bottom)
                 }
             }
