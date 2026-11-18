@@ -40,30 +40,27 @@ struct GeminiSparkleIcon: View {
     var size: CGFloat = 44
     var isAnimating: Bool = false
 
-    @State private var rotation: Double = 0
     @State private var scale: CGFloat = 1.0
 
     var body: some View {
-        GeminiSparkleShape()
-            .fill(
-                AngularGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.26, green: 0.52, blue: 0.96), // Google Blue
-                        Color(red: 0.92, green: 0.26, blue: 0.21), // Google Red
-                        Color(red: 0.98, green: 0.74, blue: 0.02), // Google Yellow
-                        Color(red: 0.20, green: 0.66, blue: 0.33), // Google Green
-                        Color(red: 0.26, green: 0.52, blue: 0.96)
-                    ]),
-                    center: .center
-                )
-            )
+        Image("AssistantAvatar")
+            .resizable()
+            .scaledToFill()
             .frame(width: size, height: size)
+            .clipShape(Circle())
+            .overlay(
+                Circle()
+                    .stroke(
+                        isAnimating ? Color.cyan.opacity(0.85) : Color.white.opacity(0.22),
+                        lineWidth: isAnimating ? 1.5 : 0.8
+                    )
+            )
+            .shadow(color: isAnimating ? Color.cyan.opacity(0.45) : Color.clear, radius: 5)
             .scaleEffect(isAnimating ? scale : 1.0)
-            .rotationEffect(.degrees(isAnimating ? rotation : 0))
             .onAppear {
                 if isAnimating {
                     withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                        scale = 1.15
+                        scale = 1.12
                     }
                 }
             }
