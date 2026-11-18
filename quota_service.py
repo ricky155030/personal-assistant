@@ -141,11 +141,13 @@ class QuotaService:
         # 3P (Claude / GPT) 5h
         p3_5h = models.get("3p", {})
         p3_5h_pct = round(p3_5h.get("remaining_percentage", 100.0), 1)
+        p3_5h_reset = p3_5h.get("reset_time")
         p3_5h_in = p3_5h.get("refreshes_in", "")
 
         # 3P Weekly 7d
         p3_w = weekly.get("3p", {})
         p3_w_pct = round(p3_w.get("remaining_percentage", 100.0), 1)
+        p3_w_reset = p3_w.get("reset_time")
         p3_w_in = p3_w.get("refreshes_in", "")
 
         argon_dict = {
@@ -185,10 +187,14 @@ class QuotaService:
             "third_party": {
                 "rolling_5h": {
                     "remaining_pct": p3_5h_pct,
+                    "reset_time": p3_5h_reset,
+                    "reset_time_taipei": _format_taipei_time(p3_5h_reset),
                     "refreshes_in": p3_5h_in
                 },
                 "weekly_7d": {
                     "remaining_pct": p3_w_pct,
+                    "reset_time": p3_w_reset,
+                    "reset_time_taipei": _format_taipei_time(p3_w_reset),
                     "refreshes_in": p3_w_in
                 }
             }
