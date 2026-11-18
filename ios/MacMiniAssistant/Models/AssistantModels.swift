@@ -759,3 +759,31 @@ public struct HistorySearchResponse: Codable, Sendable {
     public let results: [HistorySearchHit]
     public let total: Int?
 }
+
+public struct HerdrAgentInfo: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let name: String
+    public let project: String
+    public let engine: String
+    public let status: String
+    public let paneId: String
+    public let cwd: String
+    public let focused: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case name
+        case project
+        case engine
+        case status
+        case paneId = "pane_id"
+        case cwd
+        case focused
+    }
+}
+
+public struct HerdrAgentsResponse: Codable, Sendable {
+    public let agents: [HerdrAgentInfo]
+}

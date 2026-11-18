@@ -94,3 +94,47 @@ def test_internal_unread_notify_and_task_manager_unified_channel():
         task_manager._dispatch_notifications("ios", "CI 測試", "task_1", 0, False, 1.5, "ok")
         mock_tg.assert_not_called()
         mock_ios.assert_called_once()
+
+
+def test_api_herdr_agents_endpoint():
+    import json
+    import subprocess
+
+    fake_payload = {
+        "result": {
+            "agents": [
+                {
+                    "agent": "omp",
+                    "agent_status": "idle",
+                    "cwd": "/tmp/trading_system",
+                    "pane_id": "w12:p1",
+                    "focused": False,
+                },
+                {
+                    "agent": "agy",
+                    "agent_status": "busy",
+                    "cwd": "/tmp/finlab_assistant",
+                    "name": "finlab-gemini",
+                    "pane_id": "w14:p1",
+                    "focused": True,
+                },
+            ]
+        }
+    }
+    fake_proc = MagicMock(returncode=0, stdout=json.dumps(fake_payload), stderr="")
+
+    client = TestClient(main.app)
+    main.app.dependency_overrides[main.verify_token] = lambda: True
+    try:
+        with patch.object(subprocess, "run", return_value=fake_proc):
+            resp = client.get("/api/herdr/agents")
+        assert resp.status_code == 200
+        agents = resp.json()["agents"]
+        assert len(agents) == 2
+        assert agents[0]["project"] == "trading_system"
+        assert agents[0]["engine"] == "omp"
+        assert agents[0]["status"] == "idle"
+        assert agents[1]["name"] == "finlab-gemini"
+        assert agents[1]["focused"] is True
+    finally:
+        main.app.dependency_overrides.pop(main.verify_token, None)

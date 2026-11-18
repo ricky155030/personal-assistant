@@ -183,6 +183,10 @@ struct HandsFreeMainView: View {
     @State private var showAttachmentSheet: Bool = false
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var quotedMessage: ChatMessage? = nil
+    @State private var herdrAgents: [HerdrAgentInfo] = []
+    @State private var showMentionPicker: Bool = false
+    @State private var mentionQuery: String = ""
+    @State private var isLoadingHerdrAgents: Bool = false
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
     @AppStorage("showQuickSkillBar") private var showQuickSkillBar: Bool = true
     @FocusState private var isInputFocused: Bool
@@ -1762,6 +1766,11 @@ struct HandsFreeMainView: View {
                 )
             }
 
+            if showMentionPicker {
+                herdrMentionPickerOverlay
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // Gemini 標誌性深色膠囊輸入列
             HStack(alignment: .bottom, spacing: 8) {
                 // 左側 [ + ] 相簿選圖 / 附加檔案 / 帶入目前位置（改用 Button + confirmationDialog 避免在多行 TextField 取得焦點時 Menu 觸控失效）
@@ -1805,6 +1814,18 @@ struct HandsFreeMainView: View {
                 .focused($isInputFocused)
                 .padding(.vertical, 6)
                 .frame(minHeight: 44, alignment: .center)
+                .onChange(of: coordinator.textInput) { _, newValue in
+                    if let (_, query) = activeMentionToken(in: newValue) {
+                        mentionQuery = query
+                        if !showMentionPicker {
+                            showMentionPicker = true
+                            refreshHerdrAgentsForMention()
+                        }
+                    } else if showMentionPicker {
+                        showMentionPicker = false
+                        mentionQuery = ""
+                    }
+                }
 
                 // 右側按鈕區：📷 隨身眼睛拍照 + (有字或有圖時顯示 ↑ 送出 / 無字時顯示 ((|)) Live 連續對談)
                 HStack(spacing: 6) {
@@ -1920,6 +1941,150 @@ struct HandsFreeMainView: View {
                     : (coordinator.isLiveMode ? Color.blue.opacity(0.24) : nil)
             )
         }
+        .animation(.easeOut(duration: 0.18), value: showMentionPicker)
+    }
+
+    // MARK: - @ Herdr Agent 浮動選單與補全邏輯
+    private var herdrMentionPickerOverlay: some View {
+        let items = filteredHerdrAgents
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.cyan)
+                Text("指定 Herdr Agent 派工")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.85))
+                Spacer()
+                if isLoadingHerdrAgents {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .tint(.cyan)
+                }
+                Button(action: {
+                    showMentionPicker = false
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+
+            if items.isEmpty && !isLoadingHerdrAgents {
+                Text(herdrAgents.isEmpty ? "目前沒有線上 Herdr Agent" : "找不到符合「@\(mentionQuery)」的 Agent")
+                    .font(.system(size: 12.5))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(items) { agent in
+                            Button(action: {
+                                haptic.impactOccurred()
+                                applyMentionSelection(agent)
+                            }) {
+                                HStack(spacing: 10) {
+                                    Circle()
+                                        .fill(agent.status == "idle" ? Color.green : Color.orange)
+                                        .frame(width: 8, height: 8)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: 6) {
+                                            Text("@\(agent.project)")
+                                                .font(.system(size: 13.5, weight: .bold))
+                                                .foregroundColor(.white)
+                                            if !agent.name.isEmpty && agent.name != agent.project {
+                                                Text("(\(agent.name))")
+                                                    .font(.system(size: 11.5))
+                                                    .foregroundColor(.white.opacity(0.6))
+                                            }
+                                        }
+                                        Text("\(agent.engine.uppercased()) · \(agent.paneId) · \(agent.status == "idle" ? "閒置待機" : agent.status)")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.white.opacity(0.55))
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "arrow.up.left")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundColor(.cyan.opacity(0.85))
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.06))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                }
+                .frame(maxHeight: 190)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(red: 0.11, green: 0.14, blue: 0.21).opacity(0.96))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.cyan.opacity(0.32), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.45), radius: 12, y: -4)
+        )
+    }
+
+    private var filteredHerdrAgents: [HerdrAgentInfo] {
+        let q = mentionQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return herdrAgents }
+        return herdrAgents.filter {
+            $0.project.lowercased().contains(q)
+                || $0.name.lowercased().contains(q)
+                || $0.engine.lowercased().contains(q)
+        }
+    }
+
+    private func activeMentionToken(in text: String) -> (Range<String.Index>, String)? {
+        guard let atIdx = text.lastIndex(of: "@") else { return nil }
+        if atIdx > text.startIndex {
+            let prev = text[text.index(before: atIdx)]
+            guard prev.isWhitespace || prev.isNewline else { return nil }
+        }
+        let afterAt = text.index(after: atIdx)
+        let querySlice = text[afterAt...]
+        if querySlice.contains(where: { $0.isWhitespace || $0.isNewline }) {
+            return nil
+        }
+        return (atIdx..<text.endIndex, String(querySlice))
+    }
+
+    private func refreshHerdrAgentsForMention() {
+        isLoadingHerdrAgents = true
+        Task {
+            let fetched = await MacMiniAPIClient.shared.fetchHerdrAgents()
+            await MainActor.run {
+                self.herdrAgents = fetched
+                self.isLoadingHerdrAgents = false
+            }
+        }
+    }
+
+    private func applyMentionSelection(_ agent: HerdrAgentInfo) {
+        if let (range, _) = activeMentionToken(in: coordinator.textInput) {
+            coordinator.textInput.replaceSubrange(range, with: "@\(agent.project) ")
+        } else {
+            coordinator.textInput += "@\(agent.project) "
+        }
+        showMentionPicker = false
+        mentionQuery = ""
     }
 
     // MARK: - Gemini Live 浮動聲波狀態列 (支援點擊打斷、立即送出、暫停麥克風)

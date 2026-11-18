@@ -697,4 +697,24 @@ public final class MacMiniAPIClient {
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["active": active])
         _ = try? await session.data(for: request)
     }
+
+    /// 取得目前線上的 Herdr Agent 清單（供輸入框 @ 選單使用）
+    public func fetchHerdrAgents() async -> [HerdrAgentInfo] {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/herdr/agents") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(HerdrAgentsResponse.self, from: data)
+            return decoded.agents
+        } catch {
+            return []
+        }
+    }
 }

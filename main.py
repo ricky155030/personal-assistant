@@ -1628,6 +1628,46 @@ def internal_unread_notify(req: UnreadNotifyRequest, _authorized: bool = Depends
     return {"status": "ok" if sent else "error", "sent": sent}
 
 
+@app.get("/api/herdr/agents")
+def list_herdr_agents(_authorized: bool = Depends(verify_token)):
+    """即時查詢本機線上 Herdr Agent 清單，供 iOS 輸入框 @ 選單挑選派工目標。"""
+    import subprocess
+    from pathlib import Path
+
+    try:
+        proc = subprocess.run(
+            ["herdr", "agent", "list"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if proc.returncode != 0:
+            return {"agents": [], "error": proc.stderr.strip() or "herdr exited non-zero"}
+        raw = json.loads(proc.stdout or "{}")
+        raw_agents = raw.get("result", {}).get("agents", [])
+        agents = []
+        for item in raw_agents:
+            cwd = item.get("cwd") or item.get("foreground_cwd") or ""
+            project = Path(cwd).name if cwd else (item.get("name") or item.get("pane_id") or "unknown")
+            name = item.get("name") or project
+            pane_id = item.get("pane_id") or project
+            agents.append({
+                "id": pane_id,
+                "label": project,
+                "name": name,
+                "project": project,
+                "engine": item.get("agent") or "",
+                "status": item.get("agent_status") or "unknown",
+                "pane_id": pane_id,
+                "cwd": cwd,
+                "focused": bool(item.get("focused", False)),
+            })
+        return {"agents": agents}
+    except Exception as ex:
+        return {"agents": [], "error": str(ex)}
+
+
 @app.post("/api/system/safe-reload")
 def trigger_safe_reload(_authorized: bool = Depends(verify_token)):
     """排程背景安全重載（等語音空檔後透過 launchd 重啟後端服務）"""
