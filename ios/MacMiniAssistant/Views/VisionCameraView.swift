@@ -25,6 +25,9 @@ struct VisionCameraView: View {
     @State private var questionText: String = ""
     @State private var isDictating: Bool = false
 
+    // 雙指縮放基準倍率
+    @State private var pinchBaseZoom: CGFloat = 1.0
+
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
     private var currentPreset: VisionActionPreset {
@@ -35,12 +38,21 @@ struct VisionCameraView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // 1. 相機即時視訊取景層
+            // 1. 相機即時視訊取景層（支援點擊對焦 + 雙指縮放變焦）
             VisionCameraPreviewView(session: cameraModel.session)
                 .ignoresSafeArea()
                 .onTapGesture { location in
                     cameraModel.focus(at: location)
                 }
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { scale in
+                            cameraModel.setDisplayZoom(pinchBaseZoom * scale)
+                        }
+                        .onEnded { _ in
+                            pinchBaseZoom = cameraModel.currentDisplayZoom
+                        }
+                )
 
             // 2. 科技感取景對焦線框 (HUD Overlay)
             cameraHUDOverlay
@@ -52,6 +64,12 @@ struct VisionCameraView: View {
                     .padding(.top, 12)
 
                 Spacer()
+
+                // 3.5 快速變焦倍率列（僅拍照取景時顯示）
+                if capturedImages.isEmpty {
+                    zoomControlBar
+                        .padding(.bottom, 10)
+                }
 
                 // 4. 模式選擇列（萬物百科 / 蝦皮上架 / 嬰幼兒備品 / ➕）
                 actionPresetsBar
@@ -246,6 +264,65 @@ struct VisionCameraView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .allowsHitTesting(false)
+    }
+
+    // MARK: - 快速變焦倍率列（0.5x / 1x / 2x / 3x + 即時倍率顯示）
+    private var zoomControlBar: some View {
+        HStack(spacing: 6) {
+            ForEach(cameraModel.availableZoomPresets, id: \.self) { preset in
+                let isActive = isZoomPresetActive(preset)
+                Button(action: {
+                    haptic.impactOccurred()
+                    cameraModel.rampDisplayZoom(to: preset)
+                    pinchBaseZoom = preset
+                }) {
+                    Text(formatZoomLabel(isActive ? cameraModel.currentDisplayZoom : preset, showDecimal: isActive && abs(cameraModel.currentDisplayZoom - preset) > 0.08))
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(isActive ? .yellow : .white.opacity(0.85))
+                        .frame(minWidth: 36, minHeight: 30)
+                        .padding(.horizontal, 4)
+                        .background(
+                            Circle()
+                                .fill(isActive ? Color.black.opacity(0.65) : Color.black.opacity(0.35))
+                                .overlay(
+                                    Circle()
+                                        .stroke(isActive ? Color.yellow.opacity(0.8) : Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                        )
+                        .scaleEffect(isActive ? 1.08 : 1.0)
+                        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isActive)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(Color.black.opacity(0.35))
+        )
+    }
+
+    private func isZoomPresetActive(_ preset: CGFloat) -> Bool {
+        let current = cameraModel.currentDisplayZoom
+        let presets = cameraModel.availableZoomPresets
+        guard let closest = presets.min(by: { abs($0 - current) < abs($1 - current) }) else {
+            return false
+        }
+        return abs(closest - preset) < 0.01
+    }
+
+    private func formatZoomLabel(_ zoom: CGFloat, showDecimal: Bool) -> String {
+        if zoom < 0.95 {
+            return String(format: "%.1fx", zoom)
+        }
+        if showDecimal {
+            return String(format: "%.1fx", zoom)
+        }
+        let rounded = (zoom * 10).rounded() / 10
+        if abs(rounded - rounded.rounded()) < 0.05 {
+            return "\(Int(rounded.rounded()))x"
+        }
+        return String(format: "%.1fx", rounded)
     }
 
     // MARK: - 模式選擇列（僅切換模式，不擅自發送）
@@ -727,10 +804,15 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
     @Published var session = AVCaptureSession()
     @Published var isFlashOn: Bool = false
     @Published var focusPoint: CGPoint? = nil
+    @Published var currentDisplayZoom: CGFloat = 1.0
+    @Published var availableZoomPresets: [CGFloat] = [1.0, 2.0, 3.0]
 
     private let photoOutput = AVCapturePhotoOutput()
     private var photoCompletion: ((Data?, String?) -> Void)?
     private var videoDevice: AVCaptureDevice?
+    private var oneXZoomFactor: CGFloat = 1.0
+    private var minDisplayZoom: CGFloat = 1.0
+    private var maxDisplayZoom: CGFloat = 8.0
 
     func checkPermissionAndStart() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -755,12 +837,52 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
         session.beginConfiguration()
         session.sessionPreset = .photo
 
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        let preferredTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera,
+            .builtInDualWideCamera,
+            .builtInDualCamera,
+            .builtInWideAngleCamera
+        ]
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: preferredTypes,
+            mediaType: .video,
+            position: .back
+        )
+        guard let device = preferredTypes.lazy.compactMap({ type in
+            discovery.devices.first(where: { $0.deviceType == type })
+        }).first ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
               let input = try? AVCaptureDeviceInput(device: device) else {
             session.commitConfiguration()
             return
         }
         self.videoDevice = device
+
+        // 多鏡頭虛擬裝置（Triple / DualWide）1.0 對應超廣角 0.5x，第一個切換點為廣角 1.0x
+        if device.isVirtualDevice,
+           device.deviceType == .builtInTripleCamera || device.deviceType == .builtInDualWideCamera,
+           let firstSwitch = device.virtualDeviceSwitchOverVideoZoomFactors.first {
+            self.oneXZoomFactor = CGFloat(truncating: firstSwitch)
+        } else {
+            self.oneXZoomFactor = 1.0
+        }
+        self.minDisplayZoom = max(0.5, device.minAvailableVideoZoomFactor / oneXZoomFactor)
+        self.maxDisplayZoom = min(8.0, device.maxAvailableVideoZoomFactor / oneXZoomFactor)
+
+        var presets: [CGFloat] = []
+        if minDisplayZoom <= 0.6 {
+            presets.append(0.5)
+        }
+        presets.append(1.0)
+        if maxDisplayZoom >= 2.0 {
+            presets.append(2.0)
+        }
+        if maxDisplayZoom >= 3.0 {
+            presets.append(3.0)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.availableZoomPresets = presets
+            self?.currentDisplayZoom = 1.0
+        }
 
         if session.canAddInput(input) {
             session.addInput(input)
@@ -769,6 +891,17 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
             session.addOutput(photoOutput)
         }
         session.commitConfiguration()
+
+        // 預設以 1.0x 廣角啟動，避免多鏡頭裝置預設停在 0.5x
+        if oneXZoomFactor > 1.0 {
+            do {
+                try device.lockForConfiguration()
+                device.videoZoomFactor = oneXZoomFactor
+                device.unlockForConfiguration()
+            } catch {
+                print("[VisionCamera] Initial 1x zoom error: \(error)")
+            }
+        }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             self?.session.startRunning()
@@ -783,6 +916,44 @@ final class VisionCameraSessionModel: NSObject, ObservableObject, AVCapturePhoto
 
     func toggleFlash() {
         isFlashOn.toggle()
+    }
+
+    func setDisplayZoom(_ displayZoom: CGFloat) {
+        guard let device = videoDevice else { return }
+        let clampedDisplay = min(max(displayZoom, minDisplayZoom), maxDisplayZoom)
+        let targetFactor = min(
+            max(clampedDisplay * oneXZoomFactor, device.minAvailableVideoZoomFactor),
+            device.maxAvailableVideoZoomFactor
+        )
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = targetFactor
+            device.unlockForConfiguration()
+            DispatchQueue.main.async {
+                self.currentDisplayZoom = clampedDisplay
+            }
+        } catch {
+            print("[VisionCamera] Zoom error: \(error)")
+        }
+    }
+
+    func rampDisplayZoom(to displayZoom: CGFloat) {
+        guard let device = videoDevice else { return }
+        let clampedDisplay = min(max(displayZoom, minDisplayZoom), maxDisplayZoom)
+        let targetFactor = min(
+            max(clampedDisplay * oneXZoomFactor, device.minAvailableVideoZoomFactor),
+            device.maxAvailableVideoZoomFactor
+        )
+        do {
+            try device.lockForConfiguration()
+            device.ramp(toVideoZoomFactor: targetFactor, withRate: 8.0)
+            device.unlockForConfiguration()
+            DispatchQueue.main.async {
+                self.currentDisplayZoom = clampedDisplay
+            }
+        } catch {
+            print("[VisionCamera] Ramp zoom error: \(error)")
+        }
     }
 
     func focus(at point: CGPoint) {
