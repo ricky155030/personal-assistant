@@ -100,6 +100,10 @@ def test_api_herdr_agents_endpoint():
     import json
     import subprocess
 
+    assert main._extract_model_from_terminal_text("模型: Gemini 3.8 Flash (High) │ 上下文: 13.3%") == "Gemini 3.8 Flash (High)"
+    assert main._extract_model_from_terminal_text("> /model\n  ⎿  Model set to Gemini 3.8 Flash (Medium)") == "Gemini 3.8 Flash (Medium)"
+    assert main._extract_model_from_terminal_text(" 󰵗 · 󰪣 Muse Spark 1.3 (C) · ~/Workspace/trading_system · 9.2%/1M") == "Muse Spark 1.3 (C)"
+
     fake_payload = {
         "result": {
             "agents": [
@@ -126,15 +130,18 @@ def test_api_herdr_agents_endpoint():
     client = TestClient(main.app)
     main.app.dependency_overrides[main.verify_token] = lambda: True
     try:
-        with patch.object(subprocess, "run", return_value=fake_proc):
+        with patch.object(subprocess, "run", return_value=fake_proc), \
+             patch("main._detect_herdr_agent_model", side_effect=["Muse Spark 1.3 (C)", "Gemini 3.8 Flash (High)"]):
             resp = client.get("/api/herdr/agents")
         assert resp.status_code == 200
         agents = resp.json()["agents"]
         assert len(agents) == 2
         assert agents[0]["project"] == "trading_system"
         assert agents[0]["engine"] == "omp"
+        assert agents[0]["model"] == "Muse Spark 1.3 (C)"
         assert agents[0]["status"] == "idle"
         assert agents[1]["name"] == "finlab-gemini"
+        assert agents[1]["model"] == "Gemini 3.8 Flash (High)"
         assert agents[1]["focused"] is True
     finally:
         main.app.dependency_overrides.pop(main.verify_token, None)

@@ -1628,6 +1628,68 @@ def internal_unread_notify(req: UnreadNotifyRequest, _authorized: bool = Depends
     return {"status": "ok" if sent else "error", "sent": sent}
 
 
+def _extract_model_from_terminal_text(text: str) -> str:
+    """從 herdr 終端機可視畫面或狀態列擷取目前啟用中的模型名稱。"""
+    if not text:
+        return ""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        m_agy = re.search(r"模型:\s*([^│\n]+)", ln)
+        if m_agy:
+            return m_agy.group(1).strip()
+        m_set = re.search(r"Model set to\s+([^\n]+)", ln)
+        if m_set:
+            return m_set.group(1).strip()
+        m_omp = re.search(r"((?:Muse Spark|Claude|Gemini|GPT)[^·│\n]+)", ln)
+        if m_omp and ("·" in ln or "/" in ln or "%" in ln):
+            return m_omp.group(1).strip()
+    return ""
+
+
+def _detect_herdr_agent_model(pane_id: str, engine: str, agent_session: Optional[dict] = None) -> str:
+    """偵測指定 herdr pane 目前使用中的模型名稱，優先讀終端狀態列，必要時回退查 session 日誌。"""
+    import subprocess
+    from pathlib import Path
+
+    if pane_id:
+        try:
+            proc = subprocess.run(
+                ["herdr", "agent", "read", pane_id, "--source", "visible", "--lines", "15"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if proc.returncode == 0:
+                raw = json.loads(proc.stdout or "{}")
+                visible_text = raw.get("result", {}).get("text") or raw.get("text") or proc.stdout or ""
+                found = _extract_model_from_terminal_text(visible_text)
+                if found:
+                    return found
+        except Exception:
+            pass
+
+    sess_val = (agent_session or {}).get("value") or ""
+    if engine == "omp" and sess_val:
+        try:
+            p = Path(sess_val)
+            if p.exists():
+                tail_lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()[-40:]
+                for raw_ln in reversed(tail_lines):
+                    try:
+                        obj = json.loads(raw_ln)
+                    except Exception:
+                        continue
+                    if obj.get("type") == "model_change" and obj.get("modelId"):
+                        return str(obj["modelId"])
+                    msg = obj.get("message") or {}
+                    if isinstance(msg, dict) and msg.get("model"):
+                        return str(msg["model"])
+        except Exception:
+            pass
+    return ""
+
+
 @app.get("/api/herdr/agents")
 def list_herdr_agents(_authorized: bool = Depends(verify_token)):
     """即時查詢本機線上 Herdr Agent 清單，供 iOS 輸入框 @ 選單挑選派工目標。"""
@@ -1652,12 +1714,15 @@ def list_herdr_agents(_authorized: bool = Depends(verify_token)):
             project = Path(cwd).name if cwd else (item.get("name") or item.get("pane_id") or "unknown")
             name = item.get("name") or project
             pane_id = item.get("pane_id") or project
+            engine = item.get("agent") or ""
+            model_name = _detect_herdr_agent_model(pane_id, engine, item.get("agent_session"))
             agents.append({
                 "id": pane_id,
                 "label": project,
                 "name": name,
                 "project": project,
-                "engine": item.get("agent") or "",
+                "engine": engine,
+                "model": model_name,
                 "status": item.get("agent_status") or "unknown",
                 "pane_id": pane_id,
                 "cwd": cwd,

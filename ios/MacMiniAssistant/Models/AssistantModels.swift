@@ -766,6 +766,7 @@ public struct HerdrAgentInfo: Codable, Identifiable, Equatable, Sendable {
     public let name: String
     public let project: String
     public let engine: String
+    public let model: String?
     public let status: String
     public let paneId: String
     public let cwd: String
@@ -777,6 +778,7 @@ public struct HerdrAgentInfo: Codable, Identifiable, Equatable, Sendable {
         case name
         case project
         case engine
+        case model
         case status
         case paneId = "pane_id"
         case cwd

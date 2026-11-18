@@ -2004,9 +2004,11 @@ struct HandsFreeMainView: View {
                                                     .foregroundColor(.white.opacity(0.6))
                                             }
                                         }
-                                        Text("\(agent.engine.uppercased()) · \(agent.paneId) · \(agent.status == "idle" ? "閒置待機" : agent.status)")
+                                        let modelTag = (agent.model?.isEmpty == false) ? " · \(agent.model!)" : ""
+                                        Text("\(agent.engine.uppercased())\(modelTag) · \(agent.status == "idle" ? "閒置待機" : agent.status)")
                                             .font(.system(size: 11))
-                                            .foregroundColor(.white.opacity(0.55))
+                                            .foregroundColor(.white.opacity(0.62))
+                                            .lineLimit(1)
                                     }
 
                                     Spacer()
