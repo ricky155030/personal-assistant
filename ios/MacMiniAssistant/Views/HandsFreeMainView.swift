@@ -546,6 +546,7 @@ struct HandsFreeMainView: View {
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.78)
 
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 10, weight: .semibold))
@@ -557,6 +558,7 @@ struct HandsFreeMainView: View {
                                 .font(.system(size: 10.5, weight: .medium))
                                 .foregroundColor(Color(white: 0.58))
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.85)
 
                             if coordinator.currentEngineSupportsQuota {
                                 let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
@@ -586,10 +588,9 @@ struct HandsFreeMainView: View {
                     }
                 }
                 .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .frame(height: 42)
+                .padding(.trailing, 12)
+                .frame(width: 166, height: 42, alignment: .leading)
                 .liquidGlass(in: Capsule())
-                .fixedSize(horizontal: true, vertical: false)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("模型與語音設定，目前 \(coordinator.selectedModelFamily.displayName)")
