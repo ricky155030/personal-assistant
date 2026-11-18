@@ -1333,7 +1333,15 @@ class AgyBrainPool:
         }
 
         if model_override:
-            target_model = model_override
+            ov_key = model_override.strip().lower()
+            if ov_key in family_map:
+                tier_key = chosen_level.split(":", 1)[1] if ":" in chosen_level else chosen_level
+                tier_key = "med" if tier_key == "medium" else tier_key
+                fam_levels = family_map[ov_key]
+                target_model = fam_levels.get(tier_key) or fam_levels.get("med") or next(iter(fam_levels.values()))
+                chosen_level = f"{ov_key}:{tier_key}"
+            else:
+                target_model = model_override
         elif ":" in chosen_level:
             fam_key, tier_key = chosen_level.split(":", 1)
             tier_key = "med" if tier_key == "medium" else tier_key

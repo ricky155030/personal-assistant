@@ -375,3 +375,44 @@ def test_brain_router_shared_postprocess_pipeline(tmp_path):
     mock_log.assert_called_once()
     assert mock_log.call_args.args[0] == "查狀態"
     assert mock_log.call_args.args[1] == "ok"
+
+
+def test_agy_brain_pool_resolves_family_model_override():
+    from agy_singleton import AgyBrainPool
+
+    pool = object.__new__(AgyBrainPool)
+    pool.low_model = "gemini-4-hydrogen-low"
+    pool.med_model = "gemini-4-hydrogen-medium"
+    pool.high_model = "gemini-4-hydrogen-high"
+
+    captured_targets = []
+
+    class DummyWorker:
+        name = "UNIFIED"
+        session_id = "dummy-session"
+        last_turn_result = {}
+        last_usage = {}
+
+        def send_query_stream(self, query, media=None, target_model=None):
+            captured_targets.append(target_model)
+            yield ("text", "ok")
+            return {"status": "OK", "clean_reply": "ok", "model": target_model}
+
+    pool.primary_worker = DummyWorker()
+
+    with patch("agy_singleton.memory_manager.log_interaction"):
+        gen = pool.send_query_stream("hi", level="argon:med", model_override="argon")
+        try:
+            while True:
+                next(gen)
+        except StopIteration:
+            pass
+
+        gen2 = pool.send_query_stream("hi", level="high", model_override="argon")
+        try:
+            while True:
+                next(gen2)
+        except StopIteration:
+            pass
+
+    assert captured_targets == ["gemini-4-argon-medium", "gemini-4-argon-high"]
