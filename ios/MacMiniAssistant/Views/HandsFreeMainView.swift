@@ -330,10 +330,37 @@ struct HandsFreeMainView: View {
                 coordinator.errorMessage = "檔案選取失敗：\(err.localizedDescription)"
             }
         }
-        .onAppear { syncIdleTimer() }
+        .onAppear {
+            syncIdleTimer()
+            Task { await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active) }
+        }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .onChange(of: shouldKeepScreenAwake) { syncIdleTimer() }
-        .onChange(of: scenePhase) { syncIdleTimer() }
+        .onChange(of: scenePhase) { _, newPhase in
+            syncIdleTimer()
+            switch newPhase {
+            case .active:
+                Task { await MacMiniAPIClient.shared.reportAppState(active: true) }
+            case .background:
+                // 切到背景時短暫申請背景任務確保狀態回報送達伺服器，方便後端決定是否補發唯一 HA 重要通知
+                var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+                bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "ReportAppBackground") {
+                    if bgTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTaskId)
+                        bgTaskId = .invalid
+                    }
+                }
+                Task {
+                    await MacMiniAPIClient.shared.reportAppState(active: false)
+                    if bgTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTaskId)
+                        bgTaskId = .invalid
+                    }
+                }
+            default:
+                break
+            }
+        }
     }
 
     /// 思考、串流、語音朗讀或開啟語音對話期間保持螢幕常亮，結束後自動恢復系統休眠

@@ -684,4 +684,17 @@ public final class MacMiniAPIClient {
             return []
         }
     }
+
+    /// 回報 iOS App 前景/背景狀態：切回前景時後端會自動回收未讀的唯一 HA 重要通知
+    public func reportAppState(active: Bool) async {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/app/state") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 4.0
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["active": active])
+        _ = try? await session.data(for: request)
+    }
 }

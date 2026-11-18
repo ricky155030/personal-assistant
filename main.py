@@ -1,7 +1,9 @@
 import os
 import re
 import json
+import time
 import asyncio
+import threading
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, Header, HTTPException, Depends, status, File, Form, UploadFile
@@ -190,6 +192,59 @@ class ChatResponse(BaseModel):
     finished_at: Optional[str] = None
     latency_seconds: Optional[float] = None
     task_id: Optional[str] = None # async 模式回傳，供 GET /api/chat/result/{task_id} 輪詢
+
+
+class AppStateRequest(BaseModel):
+    active: bool = True
+
+
+_UNREAD_ALERT_TAG = "assistant_unread_reply"
+_APP_STATE_LOCK = threading.Lock()
+_APP_STATE = {
+    "active": True,
+    "has_unread_alert": False,
+    "updated_at": 0.0,
+}
+
+
+def _notify_app_unread_reply(reply_text: str) -> bool:
+    """當 iOS App 處於背景或已斷線時，發送唯一一則靜音置頂的 Home Assistant 重要通知。"""
+    try:
+        from scripts.ios_notify import IOSNotifier
+        preview = sanitize_for_tts(reply_text or "").strip()
+        if len(preview) > 140:
+            preview = preview[:139].rstrip() + "…"
+        if not preview:
+            preview = "助理已完成回覆，點此開啟 App 查看完整內容。"
+        ok = IOSNotifier().send_critical_alert(
+            title="Mac mini 助理新回覆",
+            message=preview,
+            url="macminiassistant://open",
+            tag=_UNREAD_ALERT_TAG,
+            volume=0.0,
+        )
+        if ok:
+            with _APP_STATE_LOCK:
+                _APP_STATE["has_unread_alert"] = True
+        return ok
+    except Exception as ex:
+        print(f"[AppNotify] ⚠️ 發送未讀重要通知失敗: {ex}")
+        return False
+
+
+def _clear_app_unread_alert(force: bool = False) -> bool:
+    """當主人回到 iOS App 前景讀取訊息時，自動遠端撤回既有的唯一重要通知。"""
+    with _APP_STATE_LOCK:
+        should_clear = force or bool(_APP_STATE.get("has_unread_alert"))
+        _APP_STATE["has_unread_alert"] = False
+    if not should_clear:
+        return False
+    try:
+        from scripts.ios_notify import IOSNotifier
+        return IOSNotifier().clear_notification(tag=_UNREAD_ALERT_TAG)
+    except Exception as ex:
+        print(f"[AppNotify] ⚠️ 回收重要通知失敗: {ex}")
+        return False
 
 def verify_token(
     x_agent_key: Optional[str] = Header(None), 
@@ -902,20 +957,12 @@ async def voice_chat_stream(
             }
             loop.call_soon_threadsafe(event_queue.put_nowait, done_payload)
 
-            # 串流結束後，同步至 Telegram
-            try:
-                send_formatted_telegram_reply(
-                    reply=clean_reply,
-                    user_query=user_query,
-                    latency=total_latency,
-                    actions=actions,
-                    report_link_html=report_link_html,
-                    thinking_level=turn_result.get("thinking_level", level),
-                    thought_text=turn_result.get("thought"),
-                    quick_replies=quick_replies
-                )
-            except Exception as tg_e:
-                print(f"[voice_chat_stream] Telegram sync error: {tg_e}")
+            # App 語音/文字對話通道已關閉 Telegram 同步；若主人切至背景或斷線未讀，
+            # 改發送唯一一則靜音置頂的 Home Assistant 重要通知，待回 App 讀取後自動撤回。
+            with _APP_STATE_LOCK:
+                app_in_foreground = bool(_APP_STATE.get("active", True))
+            if client_disconnected.is_set() or not app_in_foreground:
+                _notify_app_unread_reply(clean_reply)
 
         except Exception as e:
             print(f"[voice_chat_stream] Worker exception: {e}")
@@ -1544,6 +1591,19 @@ def compact_context(_authorized: bool = Depends(verify_token)):
         "compact": res,
         "context": stat
     }
+
+
+@app.post("/api/app/state")
+def update_app_state(req: AppStateRequest, _authorized: bool = Depends(verify_token)):
+    """回報 iOS App 前景/背景狀態；回到前景讀取時自動撤回未讀的唯一重要通知。"""
+    with _APP_STATE_LOCK:
+        _APP_STATE["active"] = bool(req.active)
+        _APP_STATE["updated_at"] = time.time()
+    cleared = False
+    if req.active:
+        threading.Thread(target=_clear_app_unread_alert, daemon=True).start()
+        cleared = True
+    return {"status": "ok", "active": bool(req.active), "clear_scheduled": cleared}
 
 
 @app.post("/api/system/safe-reload")
