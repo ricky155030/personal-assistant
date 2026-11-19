@@ -1,29 +1,46 @@
-# 🏛️ Personal Assistant (私有化常駐個人 AI 助理)
+<p align="center">
+  <img src="assets/readme-banner.jpg" alt="Personal Assistant Banner" width="100%">
+</p>
 
-專為 **本機私有化常駐（macOS / Windows / Linux）** 與 **穿戴行動裝置（Apple Watch、iPhone、Telegram）** 設計的高效能個人 AI 助理。
+<h1 align="center">Personal Assistant</h1>
 
-由您的個人主機（Mac mini、Windows PC、Linux 迷你伺服器等）擔任「大腦與記憶中樞」，支援**雙核心常駐大腦引擎（Google Antigravity CLI / Gemini 或 Anthropic Claude Code CLI）**，結合 **FastAPI** 驅動，維護本地模組化的永久記憶庫，並透過 Tailscale 加密網道提供全天候秒級安全連線。
+<p align="center">
+  <strong>住在家用主機上的全天候個人 AI 助理與多代理調度中樞</strong><br>
+  結合 Mac mini 常駐大腦、iOS 免持語音 App、Apple Watch、HomePod 與 Telegram，打造秒級響應的隨身智慧夥伴。
+</p>
+
+<p align="center">
+  <a href="https://github.com/ricky155030/personal-assistant/actions"><img src="https://img.shields.io/github/actions/workflow/status/ricky155030/personal-assistant/ci.yml?branch=main&style=flat-square&label=CI" alt="CI Status"></a>
+  <a href="https://github.com/ricky155030/personal-assistant/releases"><img src="https://img.shields.io/github/v/release/ricky155030/personal-assistant?style=flat-square&color=0ea5e9&label=iOS%20App" alt="Latest iOS Release"></a>
+  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/iOS-SwiftUI%2017%2B-F05138?style=flat-square&logo=swift&logoColor=white" alt="SwiftUI iOS 17+">
+  <img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License: MIT">
+</p>
 
 ---
 
 ## 🌟 核心架構亮點
 
-1. **⚡ 雙核心常駐大腦引擎 (Dual Brain Engine: AGY / Claude)**：
-   - **Antigravity CLI (`agy`) 模式**：預設引擎，預熱常駐 `stream-json` 行程，支援 Low / Med / High 三級思考大腦分流，對話延遲由 2.4s 降至 **<0.6s**。
-   - **Claude Code CLI (`claude`) 模式**：原生支援 Anthropic Claude 模型常駐進程池（`claude_singleton.py`），具備獨立 Session 與上下文保護防線，透過 `.env` 變數 `AGENT_ENGINE=claude` 一鍵無縫切換。
-   - 內建 **Context 上下文防線**：對話超過閾值（30%）或閒置超時自動重啟，確保記憶體永不膨脹。
-2. **🧠 秘書級模組化長效記憶庫 (`memory/`)**：
-   - 解耦為 `profile.md`（身分與溝通分流）、`preferences.md`（生活與系統偏好）、`projects.md`（專案目標）與 `notes.md`（重要備忘）。
-   - **Google Calendar 待辦唯一真實來源**：所有日常日程與待辦一律寫入日曆，杜絕過期文字堆積。
-   - 每日夜間自動排程執行 LLM 審查與 Git 自動提交歸檔。
-3. **📱 三大溝通管道與模式分流**：
-   - **終端機開發模式 (CLI)**：不受長度限制，完整 Markdown 結構、代碼區塊與架構討論。
-   - **Apple Watch 穿戴模式**：按下 Action Button 語音隨口交代，手錶彈出 200 字內簡短卡片，兩端 **1:1 鏡像同步**。
-   - **Telegram 雙向通訊**：隨時收發文字、照片辨識、語音輸入，並即時產出報表連結。
-4. **⚙️ 背景任務守護神 (`task_manager.py`) 與 Fast Handoff**：
-   - 耗時任務（價格監控、社團雷達等）秒級登記脫鉤，主大腦立即釋放，背景 Worker 獨立輪詢並在命中時主動推播。
-5. **🛡️ Browser Relay 真實 Chrome 自動化**：
-   - 直接操控本機真實 Google Chrome（Chrome-Assistant Profile），跨平台原生支援 macOS、Windows 與 Linux，零外掛依賴，天然免疫 Cloudflare / Akamai 等驗證盾。
+1. **⚡ 多核心常駐大腦引擎 (`brain_engine.py`)**：
+   - 支援 **Antigravity CLI (`agy_singleton.py`)**、**Claude Code CLI (`claude_singleton.py`)** 與 **OMP (`omp_singleton.py`)** 常駐進程池，預熱連線將首字延遲降至毫秒級。
+   - 支援 Low / Med / High 三級思考深度分流，並內建 **Context 上下文防線**，超過閾值或閒置超時自動重啟輪替，確保長駐不膨脹。
+2. **🎙️ 原生 iOS 免持語音隨身助理 (`ios/MacMiniAssistant`)**：
+   - **零延遲流式語音對話**：整合 Apple 即時語音辨識、智慧靜音 VAD 斷句與 Edge-TTS 真人神經語音，散步或開車時免持連續對話。
+   - **關鍵詞語音打斷（Barge-in）**：助理說話期間不以音量盲目中斷，僅當本機 `SFSpeechRecognizer` 偵測到「等一下」或「等下」時才立即停止播放，並重置為安靜等待開口狀態。
+   - **待決策佇列（Action Queue）**：頂部集中收納背景 Agent 的請示卡片，點擊選項或口語回覆即可一鍵 `relay` 回對應終端解鎖，不怕被聊天洗掉。
+   - **GitHub Releases + SideStore 自動發布與更新提醒**：App 啟動時背景比對倉庫內 `ios/apps.json`，若有新 Build 會自動彈出提示橫幅並一鍵跳轉 SideStore。
+3. **🧑‍✈️ 跨專案 Herdr 工頭派工與自動驗收 (`scripts/herdr_coordinator.py`)**：
+   - 統一將跨專案開發任務派發至本機各 `agy` / `omp` 終端視窗，自動注入條列請示規範並掛載背景守護。
+   - 完工後自動觸發無狀態 `agy -p` 驗收迴圈與失敗重試，結案時自動寫入歷史紀錄與閒置主大腦記憶。
+4. **📱 四端管道分流與 1:1 鏡像同步**：
+   - **Terminal CLI**：完整技術架構討論與代碼開發，不受長度限制。
+   - **iOS Voice App**：支援標準 / 細節 / 深度三段語音長度約束，搭配嵌入式 HTML/SVG 視覺小卡（`<widget_html>`）。
+   - **Apple Watch & HomePod**：手錶 200 字內結構化卡片、HomePod 零符號純淨口語朗讀，並與 **Telegram Bot** 1:1 鏡像同步。
+5. **🧠 模組化長效記憶與背景守護 (`memory/` & `task_manager.py`)**：
+   - 記憶庫解耦為 `profile.md`、`preferences.md`、`projects.md` 與 `notes.md`，每日排程審查歸檔；Google Calendar 作為待辦事項唯一真實來源。
+   - 耗時監控與 CI 追蹤透過 `task_manager.py` 與 `task_supervisor.py` 秒級脫鉤，搭配心跳健康檢查與自動重啟守護。
+6. **🛡️ Browser Relay 真實 Chrome 自動化**：
+   - 直接操控本機真實 Google Chrome 專屬 Profile，跨平台支援 macOS / Windows / Linux，零外掛依賴並具備極強抗驗證盾能力。
 
 ---
 
@@ -31,238 +48,169 @@
 
 ```mermaid
 flowchart LR
-    subgraph Clients ["終端裝置"]
-        AW["Apple Watch 動作按鈕"]
+    subgraph Clients ["終端互動裝置"]
+        iOS["iOS Voice App\n(Live 語音 / Action Queue)"]
+        AW["Apple Watch / HomePod"]
         TG["Telegram Bot"]
         CLI["Terminal CLI"]
     end
 
-    subgraph Network ["Tailscale 加密網道"]
-        TS["Tailscale DNS (:8899)"]
+    subgraph Release ["App 分發與更新"]
+        GH["GitHub Releases\n(.ipa + ios/apps.json)"]
+        SS["SideStore"]
     end
 
-    subgraph Core ["主機常駐服務 (Host Engine)"]
-        API["FastAPI 後端"]
+    subgraph Core ["主機常駐服務 (FastAPI :8899)"]
+        API["FastAPI + TurnQueue"]
         Fast["fast_intent 極速通道"]
-        BrainPool["雙核心大腦引擎\n(agy_singleton / claude_singleton)"]
+        Brain["三引擎常駐大腦\n(AGY / Claude / OMP)"]
+        Herdr["Herdr 工頭協調器\n(派工 / 驗收 / Action Queue)"]
+        TM["TaskManager + Supervisor"]
         Mem["memory/ 模組化記憶庫"]
-        TM["TaskManager 背景進程"]
-        Reports["/reports 靜態服務"]
     end
 
-    subgraph Skills ["專屬技能庫"]
+    subgraph Skills ["可插拔技能庫 (.agents/skills/)"]
         BR["browser-relay"]
         CP["coupang-tracker"]
         FB["fb-group-monitor"]
-        GCal["google-calendar"]
-        GSheet["google-sheets"]
-        GMail["gmail"]
-        Shop["shopping-list"]
-        iMsg["imessage (macOS)"]
-        HA["home-assistant"]
-        Loc["current-location"]
-        Bill["bill-auditor"]
-        Brief["personal-briefing"]
+        GSuite["Calendar / Sheets / Gmail"]
+        HA["home-assistant / location"]
+        Life["shopping-list / bill-auditor / baby-supplies"]
     end
 
-    AW --> TS --> API
+    iOS <-->|Tailscale| API
+    AW -->|Tailscale| API
     TG <--> API
-    CLI --> BrainPool
+    CLI --> Brain
+    GH --> SS --> iOS
+    iOS -.->|檢查更新| GH
+
     API --> Fast
-    API --> BrainPool
-    BrainPool <--> Mem
-    BrainPool --> TM
-    BrainPool --> Skills
+    API --> Brain
+    Brain <--> Mem
+    Brain --> Herdr
+    Brain --> TM
+    Brain --> Skills
     TM --> Skills
-    Reports --> TS
 ```
 
 ---
 
-## 📦 模組化技能庫與載入架構 (`skills/` ➔ `.agents/skills/`)
+## 📦 模組化技能庫 (`skills/` ➔ `.agents/skills/`)
 
-本系統採**模組化軟連結（Symlinks）架構**，所有開發完成的技能存放於 `skills/` 總庫，僅在使用者選中時透過相對符號連結動態掛載至 `.agents/skills/`，有效節省 Prompt Token 並避免 AI 意圖誤判。
+本系統採**模組化軟連結（Symlinks）架構**，所有技能存放於 `skills/` 總庫，僅在啟用時透過相對符號連結動態掛載至 `.agents/skills/`，節省 Prompt Token 並避免意圖誤判。
 
 | 技能模組 | 類別 | 預設狀態 | 核心功能 |
 | :--- | :--- | :--- | :--- |
-| **`setup-wizard`** | 核心 | 🔒 **必備** | 互動式與 LLM 對話式設定嚮導，管理身分、金鑰與技能開關 |
-| **`browser-relay`** | 核心 | 🔒 **必備** | 操控本機真實 Chrome 進行 DOM 辨識、填表、點擊與批次動作（抗驗證盾） |
-| **`google-calendar`** | 生產力 | 🟢 **啟用** | Google 行事曆日程查詢、新增、自訂日曆 API 動態比對與「待辦事項」維護 |
-| **`google-sheets`** | 生產力 | 🟢 **啟用** | 通用 Google Sheets 管理：支援試算表網址自動解析 ID、表頭動態對齊搜尋、讀寫與追加 |
-| **`gmail`** | 生產力 | 🟢 **啟用** | 透過 Google Workspace CLI 安全搜尋與多線程並發讀取郵件摘要 |
-| **`shopping-list`** | 生產力 | 🟢 **啟用** | 家庭通用待買清單：支援日常生鮮、日本代購、3C家電等多情境地點分類、批次新增與快速勾銷 |
-| **`home-assistant`** | 物聯網 | ⚪ *可選* | 控制與查詢 Home Assistant 智慧家電（燈光開關、冷氣空調、窗簾與環境感測器） |
-| **`current-location`** | 工具 | ⚪ *可選* | 由 Home Assistant GPS 座標逆地理編碼解析出具體國家、城市、行政區與商圈地標 |
-| **`bill-auditor`** | 財務 | ⚪ *可選* | 信用卡帳單本機安全解密、逐筆明細解析、自動同步至 Google Sheets 總帳與固定訂閱雷達 |
-| **`personal-briefing`** | 生產力 | ⚪ *可選* | 晨間個人簡報：整合 Google Calendar 待辦事項、核心專案目標與重要備忘筆記 |
-| **`imessage`** | 通訊 | ⚪ *可選* | 透過 macOS 原生 AppleScript 安全發送 iMessage（白名單防誤發） |
-| **`coupang-tracker`** | 電商 | ⚪ *可選* | 酷澎雙軌通用價格監控（購物車直連 + 搜尋比價），破盤自動通報 |
-| **`fb-group-monitor`** | 社群 | ⚪ *可選* | 監控 FB 社團最新貼文，以 LLM 語意條件自動篩選並即時推播 |
-| **`shopee-seller`** | 電商 | ⚪ *可選* | 拍照自動視覺辨識商品、產生文案、圖床壓縮、CDP 批次自動上架 |
-
-### 🛠️ 技能管理指令 (CLI & LLM 均支援)
+| **`setup-wizard`** | 核心 | 🔒 **必備** | 互動式與對話式設定嚮導，管理身分、金鑰、技能開關與相依健檢 |
+| **`browser-relay`** | 核心 | 🔒 **必備** | 操控本機真實 Chrome 進行 DOM 辨識、填表、點擊與批次動作 |
+| **`google-calendar`** | 生產力 | 🟢 **啟用** | Google 行事曆查詢與寫入，統一維護「待辦事項」日曆 |
+| **`google-sheets`** | 生產力 | 🟢 **啟用** | 雲端試算表讀寫、表頭動態對齊搜尋與批次追加 |
+| **`gmail`** | 生產力 | 🟢 **啟用** | 透過 Google Workspace CLI 安全搜尋與多線程讀取郵件摘要 |
+| **`shopping-list`** | 生產力 | 🟢 **啟用** | 通用待買清單管理，支援多情境分類、批次新增與快速勾銷 |
+| **`ios-app-release`** | 開發 | ⚪ *可選* | iOS App 語意化升版、編譯打包 `.ipa`、更新 `ios/apps.json` 與 GitHub Release |
+| **`home-assistant`** | 物聯網 | ⚪ *可選* | 控制與查詢 Home Assistant 智慧家電與溫濕度感測器 |
+| **`current-location`** | 工具 | ⚪ *可選* | 透過定位資訊逆地理編碼解析目前所在區域與周邊地標 |
+| **`bill-auditor`** | 財務 | ⚪ *可選* | 信用卡帳單本機解密審計、同步 Google Sheets 與固定訂閱雷達 |
+| **`personal-briefing`** | 生產力 | ⚪ *可選* | 晨間個人簡報：彙整行事曆待辦與專案進度 |
+| **`imessage`** | 通訊 | ⚪ *可選* | 透過 macOS 原生 iMessage 安全發送訊息（白名單保護） |
+| **`coupang-tracker`** | 電商 | ⚪ *可選* | 酷澎雙軌價格監控（購物車直連 + 全網比價），降價即時通報 |
+| **`fb-group-monitor`** | 社群 | ⚪ *可選* | 定期巡檢 FB 社團最新貼文，並以 LLM 語意條件過濾推播 |
+| **`shopee-seller`** | 電商 | ⚪ *可選* | 拍照辨識商品、生成 SEO 文案與批次上架流程 |
+| **`baby-supplies`** | 生活 | ⚪ *可選* | 待產與嬰幼兒備品清單管理，支援照片歸檔與試算表查詢 |
 
 ```bash
-# 列出所有技能與當前啟用狀態
+# 列出技能與啟用狀態 / 執行依賴健檢 (Doctor)
 python3 setup.py skills list
-
-# 技能前置相依性與外部授權健檢 (Doctor)
 python3 setup.py skills doctor
-python3 setup.py skills doctor google-calendar
 
-# 檢視或更新特定技能設定參數
-python3 setup.py skills config google-calendar --set GOOGLE_CALENDAR_TODO_ID="primary"
-
-# 啟用/停用指定技能
-python3 setup.py skills enable imessage shopee-seller
+# 啟用或停用指定技能
+python3 setup.py skills enable ios-app-release home-assistant
 python3 setup.py skills disable coupang-tracker
-
-# 批量設定啟用清單（其餘選配自動停用）
-python3 setup.py skills set google-calendar,google-sheets,imessage
 ```
-
-> 💡 **LLM 對話隨時開關與健檢**：您可直接在對話中說「**幫我啟用 iMessage 技能**」、「**把待辦日曆 ID 設為 primary**」或「**幫我檢查行事曆技能狀態 (doctor)**」，助理會自動執行相應指令並即時回報！
 
 ---
 
 ## 🚀 快速上手指南
 
-### 1. 系統需求
-- **作業系統**：跨平台原生支援 **macOS**（Sonoma / Sequoia 等）、**Windows 10/11**（原生直接支援，免 WSL）、或 **Linux**（Ubuntu / Debian 等家用伺服器）
-- **硬體**：任何可常駐連網的電腦設備（Mac mini、MacBook、Windows PC、迷你主機等）
-- **軟體環境**：
-  - Python 3.11+（推薦使用 [uv](https://github.com/astral-sh/uv) 管理）
-  - [Google Chrome](https://www.google.com/chrome/)（用於真實瀏覽器自動化）
-  - [Google Antigravity CLI (`agy`)](https://github.com)
-  - [Tailscale](https://tailscale.com/)（用於穿戴裝置與手機之安全內網連線）
+### 1. 系統與環境需求
+- **作業系統**：跨平台原生支援 **macOS**（Apple Silicon / Intel）、**Windows 10/11** 與 **Linux**。
+- **軟體依賴**：
+  - Python 3.11+（推薦使用 [uv](https://github.com/astral-sh/uv) 管理環境）
+  - [Google Chrome](https://www.google.com/chrome/)（Browser Relay 真實瀏覽器自動化）
+  - Antigravity CLI (`agy`) / Claude Code CLI (`claude`) / OMP (`omp`)
+  - [Tailscale](https://tailscale.com/)（用於手機與穿戴裝置安全加密連線）
 
-### 2. 安裝與設定虛擬環境
+### 2. 安裝與初始化設定
 ```bash
 # 複製專案
-git clone <your-repo-url> personal-assistant
+git clone https://github.com/ricky155030/personal-assistant.git
 cd personal-assistant
 
-# 使用 uv 建立虛擬環境並安裝相依套件
+# 建立虛擬環境並安裝相依套件
 uv venv
-
-# 啟用環境 (macOS / Linux)
-source .venv/bin/activate
-# 或 Windows (PowerShell)
-# .venv\Scripts\Activate.ps1
-
-# 安裝依賴
+source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 uv pip install -e .
-```
 
-### 3. 一鍵初始化設定嚮導 (推薦)
-我們提供了全自動的互動式設定嚮導，自動引導填寫主人身分、Telegram Token、自動偵測 Tailscale 網域並自動生成安全金鑰：
-
-```bash
-# 啟動互動式設定嚮導
+# 啟動互動式初始化嚮導（設定身分、Token、Tailscale 與安全金鑰）
 python3 setup.py
-# 或使用 ./start.sh setup
 ```
 
-> 💡 **對話式設定**：服務啟動後，您亦可隨時在 Antigravity CLI 或 Telegram 對話中說「**幫我設定個人資訊**」或「**初始化設定**」，直接呼叫內建的 `setup-wizard` 技能以對話方式完成配置！
-
-### 4. 啟動服務 (手動啟動 vs 開機自啟)
-
-系統提供多種運行方式，可依您的使用情境選擇：
-
-#### 🔹 模式 A：前台手動啟動 (開發除錯最推薦)
-能直接在終端機查看即時思考、工具調用與錯誤訊息：
+### 3. 啟動常駐服務
 ```bash
-# macOS / Linux:
-./start.sh
+# 前台手動啟動（開發除錯推薦）
+./start.sh                  # Windows: .\start.ps1
 
-# Windows (PowerShell):
-.\start.ps1
-
-# 或跨平台通用直接指令:
-uv run uvicorn main:app --host 0.0.0.0 --port 8899
-```
-
-#### 🔹 模式 B：背景不掛斷啟動 (終端關閉繼續跑)
-```bash
-# macOS / Linux:
-nohup ./start.sh > data/assistant.log 2>&1 &
-```
-
-#### 🔹 模式 C：開機常駐守護 (全天候家電模式，防重開機失聯)
-若您經常透過 Apple Watch 隨身交代，建議掛載為系統常駐守護（支援開機自啟與崩潰自動重啟）：
-- **macOS (`launchd`)**：
-  參考 `scripts/com.user.personal-assistant.plist.example`，將設定檔複製至 `~/Library/LaunchAgents/` 並以 `launchctl load` 載入即可。
-- **Windows (工作排程器)**：
-  在 PowerShell 以系統管理員執行：
-  ```powershell
-  $action = New-ScheduledTaskAction -Execute "uv" -Argument "run uvicorn main:app --host 0.0.0.0 --port 8899" -WorkingDirectory "$PWD"
-  $trigger = New-ScheduledTaskTrigger -AtLogOn
-  $settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0
-  Register-ScheduledTask -TaskName "PersonalAssistant" -Action $action -Trigger $trigger -Settings $settings
-  ```
-
-啟動後，API 預設監聽於 `http://0.0.0.0:8899`。
-
-#### 🔹 模式 D：多實例與不同大腦獨立運行 (Multi-Instance)
-系統支援透過 `ENV_FILE` 與動態埠號在同一台電腦並行多個助理實例（例如 port 8899 跑生產環境，port 8900 跑測試或 Claude 大腦）：
-```bash
-# 實例 1：生產環境 (讀取 .env，Port 8899，預設 agy 引擎)
-./start.sh
-
-# 實例 2：測試環境 (讀取 .env.test，Port 8900，例如設定 AGENT_ENGINE=claude)
+# 或透過環境變數啟動多實例（例如切換 Claude 大腦測試）
 ENV_FILE=.env.test ./start.sh
 ```
+> 若需 macOS 開機常駐守護，可參考 `scripts/com.user.personal-assistant.plist.example` 掛載 `launchd`。
 
 ---
 
-## ⌚ Apple Watch 與穿戴裝置捷徑設定
+## 📱 iOS App 安裝與自動發布 (SideStore + GitHub Releases)
 
-透過 iPhone / Mac 的「捷徑 (Shortcuts)」App 建立語音捷徑，並綁定到 **Apple Watch 側邊「動作按鈕 (Action Button)」** 或錶面複雜功能，即可實現抬手一鍵隨口交代助理：
+1. **在 iPhone 訂閱 SideStore 軟體源**：
+   將本倉庫的 `ios/apps.json` Raw 連結加入 SideStore Sources，即可直接從 GitHub Releases 下載並安裝 `MacMiniAssistant.ipa`。
+2. **語意化升版與一鍵發布**：
+   ```bash
+   # 僅本機預檢編譯（不發 Release）
+   ./package_ios.sh --local-only "本機測試編譯"
 
-### 🛠️ 步驟 1：建立新捷徑
-1. 開啟 iPhone 的 **「捷徑」** App 點擊右上角 **「+」**，命名為 `問問助理`。
-2. 點擊詳細資訊 (ⓘ 圖示)，勾選 **「在 Apple Watch 上顯示」**。
-
-### 📝 步驟 2：依序加入 4 個動作
-1. **【聽寫文字 (Dictate Text)】**：語言選「繁體中文 (台灣)」，停止聽寫選「暫停後」。
-2. **【取得 URL 內容 (Get Contents of URL)】**：
-   - **URL**：`http://<您的_TAILSCALE_DOMAIN>:8899/api/chat`
-   - **方法**：`POST`
-   - **標頭 (Headers)**：
-     - `Content-Type`: `application/json`
-     - `X-Agent-Key`: `<您在 .env 設定的 ASSISTANT_API_KEY>`
-   - **要求內文 (JSON)**：文字鍵值 `query` ➜ 帶入步驟 1 的 **【聽寫的文字】**
-3. **【取得辭典值 (Get Dictionary Value)】**：
-   - 金鑰：`reply`，來源：步驟 2 的 **【來自 URL 的內容】**
-4. **【顯示結果 (Show Result)】**：
-   - 文字：帶入步驟 3 的 **【辭典值】**（手錶安靜震動並彈出清晰卡片，點一下即關閉；若想朗讀可改用「朗讀文字」）。
-
-### ⌚ 步驟 3：綁定 Apple Watch 動作按鈕
-在 Apple Watch 上開啟「設定」➜「動作按鈕」➜「動作」選「捷徑」➜ 選擇「問問助理」。只要隨身攜帶的 iPhone 上開啟 Tailscale VPN，手錶發出的所有請求便能自動安全直連家中的主機！
+   # 依改動性質自動升版號 (patch / minor / major)、遞增 Build、更新 ios/apps.json 並建立 GitHub Release
+   ./package_ios.sh --bump patch "修復語音打斷體驗與更新檢查"
+   ```
 
 ---
 
-## 🛠️ 常見維護指令與測試
+## ⌚ Apple Watch 捷徑設定
+
+透過 iPhone **「捷徑 (Shortcuts)」** 建立語音捷徑並綁定至 Apple Watch 動作按鈕：
+1. **聽寫文字**：語言設為繁體中文，停止聽寫選「暫停後」。
+2. **取得 URL 內容**：`POST` 至 `http://<您的_TAILSCALE_DOMAIN>:8899/api/chat`，標頭帶入 `X-Agent-Key`，JSON Body 傳入 `{"query": "<聽寫文字>"}`。
+3. **取得辭典值**：讀取回傳 JSON 的 `reply` 欄位並以「顯示結果」呈現。
+
+---
+
+## 🛠️ 常見維護與開發指令
 
 ```bash
-# 本地相容性測試驗證 (跨平台 Windows/Linux/macOS 語法與邏輯)
+# 執行全量跨平台測試
 uv run pytest
 
-# 查看背景任務列表 (TaskManager)
+# 查看或終止背景任務 (TaskManager)
 python3 task_manager.py list
+python3 task_manager.py kill <task_id>
 
-# 停止背景任務
-python3 task_manager.py kill "<任務名稱>"
-
-# 手動同步與審查今日記憶
+# 手動執行記憶審查與歸檔
 python3 memory_scheduler.py --once
 
-# 追蹤最新 GitHub Actions CI 狀態
+# 查看 GitHub Actions CI 執行狀態
 gh run list -L 3
-gh run watch <run_id>
 ```
 
 ---
 
 ## 📄 License
+
 MIT License
