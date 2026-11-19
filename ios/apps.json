@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.1.0",
+          "buildVersion": "140",
+          "date": "2026-11-19T12:06:54Z",
+          "localizedDescription": "新增 Gemini 4 Neon 模型家族支援（支援 Low/Med/High/XHigh，同步 iOS App 與 Telegram 切換選單）",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.0/MacMiniAssistant.ipa",
+          "size": 4328626,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.2",
-          "buildVersion": "138",
-          "date": "2026-11-19T07:52:33Z",
-          "localizedDescription": "修復 Action Queue 拍板後前景即時顯示決策氣泡與自動同步主大腦回覆",
+          "buildVersion": "139",
+          "date": "2026-11-19T12:06:17Z",
+          "localizedDescription": "預檢編譯：新增 Gemini 4 Neon 模型清單支援",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.2/MacMiniAssistant.ipa",
-          "size": 4328791,
+          "size": 4328628,
           "minOSVersion": "17.0"
         },
         {
