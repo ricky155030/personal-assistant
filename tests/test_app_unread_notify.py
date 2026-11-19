@@ -188,3 +188,59 @@ def test_pending_action_queue_lifecycle(tmp_path):
     finally:
         main.app.dependency_overrides.pop(main.verify_token, None)
         settings.DATA_DIR = orig_data_dir
+
+
+def test_pending_action_brain_self_contained_context(tmp_path):
+    import threading
+    from config import settings
+
+    orig_data_dir = settings.DATA_DIR
+    settings.DATA_DIR = tmp_path
+    client = TestClient(main.app)
+    main.app.dependency_overrides[main.verify_token] = lambda: True
+    try:
+        resp_create = client.post("/api/actions/pending", json={
+            "agent": "brain:restaurant_booking",
+            "title": "主大腦確認 · 餐廳訂位",
+            "question": "請問要訂哪一間分店？",
+            "options": ["竹北店", "新竹巨城店"],
+            "source": "brain",
+            "context_prompt": "主人稍早要求訂明天晚上 7 點 2 位大人的鼎泰豐。",
+        })
+        assert resp_create.status_code == 200
+        action = resp_create.json()["action"]
+        assert action["context_prompt"] == "主人稍早要求訂明天晚上 7 點 2 位大人的鼎泰豐。"
+
+        dispatched = {}
+
+        def fake_chat(req_obj, *_args, **_kwargs):
+            dispatched["query"] = req_obj.query
+            dispatched["client"] = req_obj.client
+
+        class ImmediateThread:
+            def __init__(self, target=None, args=(), daemon=None):
+                self._target = target
+                self._args = args
+
+            def start(self):
+                if self._target:
+                    self._target(*self._args)
+
+        with patch.object(main, "chat", side_effect=fake_chat), \
+             patch.object(threading, "Thread", ImmediateThread):
+            resp_resolve = client.post(f"/api/actions/pending/{action['id']}/resolve", json={
+                "answer": "竹北店",
+                "dismiss": False,
+            })
+
+        assert resp_resolve.status_code == 200
+        body = resp_resolve.json()
+        assert body["relayed"] is True
+        assert body["dispatched_to"] == "brain"
+        assert body["count"] == 0
+        assert "鼎泰豐" in dispatched["query"]
+        assert "請問要訂哪一間分店？" in dispatched["query"]
+        assert "竹北店" in dispatched["query"]
+    finally:
+        main.app.dependency_overrides.pop(main.verify_token, None)
+        settings.DATA_DIR = orig_data_dir

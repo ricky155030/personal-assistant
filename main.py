@@ -210,6 +210,7 @@ class PendingActionCreateRequest(BaseModel):
     question: str
     options: List[str] = []
     source: str = "herdr"
+    context_prompt: str = ""
 
 
 class PendingActionResolveRequest(BaseModel):
@@ -241,7 +242,14 @@ def _save_pending_actions(items: List[dict]) -> None:
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _upsert_pending_action(agent: str, title: str, question: str, options: Optional[List[str]] = None, source: str = "herdr") -> dict:
+def _upsert_pending_action(
+    agent: str,
+    title: str,
+    question: str,
+    options: Optional[List[str]] = None,
+    source: str = "herdr",
+    context_prompt: str = "",
+) -> dict:
     import uuid
     now_iso = datetime.now().isoformat()
     item = {
@@ -251,6 +259,7 @@ def _upsert_pending_action(agent: str, title: str, question: str, options: Optio
         "question": question.strip(),
         "options": [o.strip() for o in (options or []) if o.strip()],
         "source": source,
+        "context_prompt": (context_prompt or "").strip(),
         "created_at": now_iso,
     }
     with _PENDING_ACTIONS_LOCK:
@@ -1808,6 +1817,7 @@ def create_pending_action(req: PendingActionCreateRequest, _authorized: bool = D
         question=req.question,
         options=req.options,
         source=req.source,
+        context_prompt=req.context_prompt,
     )
     with _PENDING_ACTIONS_LOCK:
         total = len(_load_pending_actions())
@@ -1827,28 +1837,49 @@ def resolve_pending_action(action_id: str, req: PendingActionResolveRequest, _au
             raise HTTPException(status_code=404, detail="找不到該待決策項目")
 
     relayed = False
+    dispatched_to = None
     if not req.dismiss:
         answer_text = (req.answer or "").strip()
         if not answer_text:
             raise HTTPException(status_code=400, detail="回覆內容不可為空")
-        agent_target = (target.get("agent") or "").strip()
-        if agent_target:
-            proc = subprocess.run(
-                [sys.executable, "scripts/herdr_coordinator.py", "relay", "--agent", agent_target, "--answer", answer_text],
-                cwd=str(settings.BASE_DIR),
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=15,
+        source_str = (target.get("source") or "herdr").strip().lower()
+        if source_str.startswith("brain"):
+            ctx = (target.get("context_prompt") or "").strip()
+            q = (target.get("question") or "").strip()
+            combined_prompt = (
+                "【接續先前待決策事項（來自 Action Queue）】\n"
+                + (f"原始任務背景：{ctx}\n" if ctx else "")
+                + (f"先前反問內容：{q}\n" if q else "")
+                + f"主人已選擇 / 回覆：{answer_text}\n\n"
+                + "請根據以上完整前後文直接接續完成任務並回報結果。"
             )
-            if proc.returncode != 0:
-                raise HTTPException(status_code=502, detail=proc.stderr.strip() or "relay 回寫失敗")
+            threading.Thread(
+                target=chat,
+                args=(ChatRequest(query=combined_prompt, client="ios-app"), None, True),
+                daemon=True,
+            ).start()
             relayed = True
+            dispatched_to = "brain"
+        else:
+            agent_target = (target.get("agent") or "").strip()
+            if agent_target:
+                proc = subprocess.run(
+                    [sys.executable, "scripts/herdr_coordinator.py", "relay", "--agent", agent_target, "--answer", answer_text],
+                    cwd=str(settings.BASE_DIR),
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if proc.returncode != 0:
+                    raise HTTPException(status_code=502, detail=proc.stderr.strip() or "relay 回寫失敗")
+                relayed = True
+                dispatched_to = "herdr"
 
     with _PENDING_ACTIONS_LOCK:
         remaining = [x for x in _load_pending_actions() if x.get("id") != action_id]
         _save_pending_actions(remaining)
-    return {"status": "ok", "relayed": relayed, "actions": remaining, "count": len(remaining)}
+    return {"status": "ok", "relayed": relayed, "dispatched_to": dispatched_to, "actions": remaining, "count": len(remaining)}
 
 
 @app.post("/api/system/safe-reload")
