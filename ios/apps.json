@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.0.2",
+          "buildVersion": "138",
+          "date": "2026-11-19T07:52:33Z",
+          "localizedDescription": "修復 Action Queue 拍板後前景即時顯示決策氣泡與自動同步主大腦回覆",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.2/MacMiniAssistant.ipa",
+          "size": 4328791,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.1",
-          "buildVersion": "136",
-          "date": "2026-11-19T00:50:25Z",
-          "localizedDescription": "修復語音打斷體驗：說出「等一下」後立即停止助理說話並進入安靜等待開口狀態",
+          "buildVersion": "137",
+          "date": "2026-11-19T07:51:53Z",
+          "localizedDescription": "預檢編譯：Action Queue 拍板後前景即時顯示與同步回覆",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.1/MacMiniAssistant.ipa",
-          "size": 4325018,
+          "size": 4328788,
           "minOSVersion": "17.0"
         },
         {
