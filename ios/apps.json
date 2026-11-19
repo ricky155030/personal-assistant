@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.0.1",
+          "buildVersion": "136",
+          "date": "2026-11-19T00:50:25Z",
+          "localizedDescription": "修復語音打斷體驗：說出「等一下」後立即停止助理說話並進入安靜等待開口狀態",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.1/MacMiniAssistant.ipa",
+          "size": 4325018,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.0.0",
-          "buildVersion": "134",
-          "date": "2026-11-19T00:46:40Z",
-          "localizedDescription": "v1.0.0 初始正式版：支援語意化版本系統、GitHub Releases 發布與 App 內更新提醒",
+          "buildVersion": "135",
+          "date": "2026-11-19T00:50:03Z",
+          "localizedDescription": "預檢編譯：等一下打斷後進入等待說話狀態",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.0/MacMiniAssistant.ipa",
-          "size": 4323588,
+          "size": 4325017,
           "minOSVersion": "17.0"
         }
       ]
