@@ -403,10 +403,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
             self.currentToolStatus = nil
             self.currentStreamingText = ""
+            self.liveTranscript = ""
             self.silenceProgress = 0.0
             self.silenceElapsed = 0.0
             self.silenceWarned = false
-            self.state = .listening(isSpeaking: true, currentDb: self.currentDb)
+            self.state = .listening(isSpeaking: false, currentDb: self.currentDb)
+            self.resetIdleAutoStopTimer()
             self.rigidHaptic.impactOccurred()
         }
 

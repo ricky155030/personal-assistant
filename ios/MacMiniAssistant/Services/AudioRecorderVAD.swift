@@ -286,26 +286,35 @@ public final class AudioRecorderVAD: NSObject {
                                 return
                             }
 
-                            // 偵測到「等一下」！立即觸發打斷並轉入正式收音
-                            self.isBargeInMonitoring = false
-                            self.isSpeaking = true
-                            self.recordingStartTime = now
-                            self.lastTranscriptChangeTime = now
-                            self.lastSpeechTime = now
-
-                            // 擷取「等一下」起算的句子
-                            let relevantText: String
+                            // 偵測到「等一下」！立即觸發打斷
+                            let afterKeyword: String
                             if let range = text.range(of: keyword) {
-                                relevantText = String(text[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                                afterKeyword = String(text[range.upperBound...])
+                                    .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
                             } else {
-                                relevantText = text
+                                afterKeyword = ""
                             }
-                            self.currentTranscript = relevantText
 
-                            DispatchQueue.main.async {
-                                self.onBargeInDetected?()
-                                self.onSpeechStarted?()
-                                self.onPartialTranscript?(relevantText)
+                            if afterKeyword.isEmpty {
+                                // 主人只說了「等一下」：停止助理說話，並重置為安靜等待主人開口的聆聽狀態
+                                self.transitionFromBargeInToNormalListening()
+                                DispatchQueue.main.async {
+                                    self.onBargeInDetected?()
+                                }
+                            } else {
+                                // 主人「等一下」後緊接著繼續說出指令：保留後半段文字直接進入收音
+                                self.isBargeInMonitoring = false
+                                self.isSpeaking = true
+                                self.recordingStartTime = now
+                                self.lastTranscriptChangeTime = now
+                                self.lastSpeechTime = now
+                                self.currentTranscript = afterKeyword
+
+                                DispatchQueue.main.async {
+                                    self.onBargeInDetected?()
+                                    self.onSpeechStarted?()
+                                    self.onPartialTranscript?(afterKeyword)
+                                }
                             }
                             return
                         }
