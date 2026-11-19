@@ -406,7 +406,7 @@ def extract_completion_summary(
     agent_or_text: str,
     raw_text: str = "",
     agent_info: Optional[Dict[str, Any]] = None,
-    max_chars: int = 3500
+    max_chars: int = 20000
 ) -> str:
     """擷取 Agent 任務完工時的最後成果文字摘要，優先從對話日誌讀取完整乾淨文字"""
     agent = ""
