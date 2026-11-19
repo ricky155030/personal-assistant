@@ -497,12 +497,36 @@ def send_telegram_alert(text: str, parse_mode: str = "HTML") -> bool:
     return _send_unified_app_alert(title="AI助理新回覆", message=clean_preview[:140])
 
 
+def resolve_workspace_label(
+    agent: str,
+    agent_info: Optional[Dict[str, Any]] = None,
+) -> str:
+    """永遠產出明確的 Workspace 與視窗身分標籤（例如: market-ticker · agy · w13:p1）。"""
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    if not info:
+        return f"Herdr · {agent}"
+
+    ws_name = ""
+    cwd = info.get("cwd") or info.get("foreground_cwd")
+    if cwd:
+        ws_name = Path(cwd).name
+    if not ws_name:
+        ws_name = info.get("tokens", {}).get("group") or info.get("workspace_id", "")
+
+    agent_kind = info.get("agent") or "agent"
+    pane_id = info.get("pane_id") or agent
+
+    if ws_name:
+        return f"{ws_name} · {agent_kind} · {pane_id}"
+    return f"{agent_kind} · {pane_id}"
+
+
 def resolve_agent_display_name(
     agent: str,
     custom_name: Optional[str] = None,
     agent_info: Optional[Dict[str, Any]] = None
 ) -> str:
-    """解析出更具語意、易讀的 Agent 顯示名稱 (例如: 個人助理 · agy 或 自訂名稱)"""
+    """解析出更具語意、易讀的 Agent 顯示名稱 (例如: market-ticker · agy (w13:p1) 或 自訂名稱)"""
     if custom_name and custom_name.strip():
         return custom_name.strip()
 
@@ -535,7 +559,80 @@ def _parse_question_options(question_text: str) -> List[str]:
     return options[:6]
 
 
-def _push_pending_action(agent: str, title: str, question_text: str) -> None:
+def refine_question_for_action_queue(
+    workspace_label: str,
+    raw_question_context: str,
+    timeout_sec: float = 12.0,
+) -> Dict[str, Any]:
+    """
+    透過無狀態 `agy -p` 將終端機原始請示訊息精煉為極簡、易懂的繁體中文決策卡片內容。
+    失敗或超時時自動降級為原始文字與正則選項解析，確保通知永不卡死。
+    """
+    raw_clean = (raw_question_context or "").strip()
+    fallback_options = _parse_question_options(raw_clean)
+    fallback = {
+        "formatted_question": raw_clean[:400],
+        "options": fallback_options,
+    }
+    if not raw_clean:
+        return fallback
+
+    agy_bin = shutil.which("agy") or "/opt/homebrew/bin/agy"
+    if not Path(agy_bin).exists() and not shutil.which("agy"):
+        return fallback
+
+    refine_prompt = (
+        f"你是工程師的隨身技術秘書。以下來自終端專案「{workspace_label}」的原始輸出中，"
+        "Agent 停下來等待主人決策。請精煉成手機上 2 秒就能看懂的繁體中文 JSON（不要加 markdown 圍欄）：\n"
+        '{"summary": "一句話說明目前進度與為何停下請示（35字內）", '
+        '"question": "核心請示問題（45字內）", '
+        '"options": ["選項 1：具體代表什麼動作（30字內）", "選項 2：具體代表什麼動作（30字內）"]}\n'
+        "注意：若無明確選項，options 可為空陣列 []；嚴禁編造未出現的選項。\n\n"
+        f"【終端原始內容】\n{raw_clean[-2000:]}"
+    )
+
+    try:
+        proc = subprocess.run(
+            [agy_bin, "-p", refine_prompt],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
+        raw_out = (proc.stdout or "").strip()
+        m = re.search(r"\{[\s\S]*\}", raw_out)
+        if m:
+            parsed = json.loads(m.group(0))
+            summary = str(parsed.get("summary") or "").strip()
+            question = str(parsed.get("question") or "").strip()
+            raw_opts = parsed.get("options")
+            options = (
+                [str(o).strip()[:100] for o in raw_opts if str(o).strip()][:4]
+                if isinstance(raw_opts, list)
+                else fallback_options
+            )
+            if not options and fallback_options:
+                options = fallback_options
+            if summary and question:
+                formatted = f"【背景】{summary}\n{question}"
+            elif question or summary:
+                formatted = question or summary
+            else:
+                formatted = fallback["formatted_question"]
+            return {"formatted_question": formatted, "options": options}
+    except Exception as e:
+        print(f"[HerdrCoordinator] ℹ️ Action Queue 無狀態精煉降級: {e}", file=sys.stderr)
+
+    return fallback
+
+
+def _push_pending_action(
+    agent: str,
+    title: str,
+    question_text: str,
+    options: Optional[List[str]] = None,
+) -> None:
     """將 Agent 請示同步登記到後端 Action Queue，讓 iOS App 頂部膠囊顯示並可一鍵回覆。"""
     import urllib.request
     from config import settings
@@ -549,7 +646,7 @@ def _push_pending_action(agent: str, title: str, question_text: str) -> None:
         "agent": agent,
         "title": title,
         "question": question_text.strip(),
-        "options": _parse_question_options(question_text),
+        "options": options if options is not None else _parse_question_options(question_text),
         "source": f"herdr:{agent}",
     }
     try:
@@ -571,9 +668,17 @@ def notify_question(
     name: Optional[str] = None,
     agent_info: Optional[Dict[str, Any]] = None
 ) -> bool:
-    """將 Agent 請示主人的問題注入主大腦 App 對話、登記 Action Queue，並透過統一靜音 HA 通道提醒主人。"""
-    display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
-    _push_pending_action(agent=agent, title=display_title, question_text=question_text)
+    """將 Agent 請示主人的問題經無狀態 LLM 精煉後登記 Action Queue，並透過統一通道提醒主人。"""
+    info = agent_info if agent_info is not None else get_herdr_agent(agent)
+    display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=info)
+    workspace_label = resolve_workspace_label(agent, agent_info=info)
+    refined = refine_question_for_action_queue(workspace_label, question_text)
+    _push_pending_action(
+        agent=agent,
+        title=workspace_label,
+        question_text=refined["formatted_question"],
+        options=refined["options"],
+    )
     memo = (
         f"Herdr Agent「{display_title}」（目標：{agent}）執行到一半需要請示主人確認：\n\n"
         f"{question_text.strip()}\n\n"

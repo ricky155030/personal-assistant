@@ -123,3 +123,36 @@ def test_run_wrapped_task_failure_triggers_on_fail_hook(tmp_path):
     mock_tg.assert_called_once()
     assert "執行失敗" in mock_tg.call_args[0][0]
     assert hook_marker.read_text(encoding="utf-8") == "2"
+
+
+def test_terminate_process_kills_entire_process_group(tmp_path):
+    if sys.platform == "win32":
+        return
+
+    import subprocess
+    import time
+
+    child_pid_file = tmp_path / "child.pid"
+    wrapper_code = (
+        f"import subprocess, sys, time; "
+        f"p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        f"open(r'{child_pid_file}', 'w').write(str(p.pid)); "
+        f"time.sleep(30)"
+    )
+    wrapper = subprocess.Popen([sys.executable, "-c", wrapper_code], start_new_session=True)
+    try:
+        for _ in range(30):
+            if child_pid_file.exists() and child_pid_file.read_text().strip():
+                break
+            time.sleep(0.05)
+
+        child_pid = int(child_pid_file.read_text().strip())
+        mgr = tm.TaskManager()
+        assert mgr._terminate_process(wrapper.pid) is True
+        wrapper.wait(timeout=3)
+
+        time.sleep(0.1)
+        assert not tm.is_pid_alive(child_pid)
+    finally:
+        if wrapper.poll() is None:
+            wrapper.kill()

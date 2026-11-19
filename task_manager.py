@@ -893,12 +893,29 @@ class TaskManager:
                 return False
 
         try:
-            os.kill(pid, signal.SIGTERM)
+            own_pgid = os.getpgid(os.getpid())
+            try:
+                target_pgid = os.getpgid(pid)
+            except ProcessLookupError:
+                return True
+
+            use_pg = target_pgid > 0 and target_pgid != own_pgid
+            if use_pg:
+                os.killpg(target_pgid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
+
             for _ in range(10):
                 time.sleep(0.1)
                 if not is_pid_alive(pid):
                     return True
-            os.kill(pid, signal.SIGKILL)
+
+            if use_pg:
+                os.killpg(target_pgid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
+            return True
+        except ProcessLookupError:
             return True
         except Exception as e:
             print(f"[TaskManager] 終止進程 {pid} 失敗: {e}", file=sys.stderr)

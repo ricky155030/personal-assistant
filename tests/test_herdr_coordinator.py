@@ -226,9 +226,11 @@ def test_relay_answer(mock_send_keys, mock_submit_prompt):
     mock_send_keys.assert_called_once_with("agy", "Enter")
 
 
+@patch("scripts.herdr_coordinator._push_pending_action")
+@patch("scripts.herdr_coordinator.refine_question_for_action_queue", return_value={"formatted_question": "Q1: 採用何種方案？\n選項 1: A\n選項 2: B", "options": ["選項 1: A", "選項 2: B"]})
 @patch("scripts.herdr_coordinator.get_herdr_agent", return_value=None)
 @patch("scripts.herdr_coordinator._send_unified_app_alert")
-def test_notify_question_and_completion(mock_app_alert, _mock_get):
+def test_notify_question_and_completion(mock_app_alert, _mock_get, _mock_refine, _mock_push):
     mock_app_alert.return_value = True
 
     # 測試發送提問卡片至統一 App 通道
@@ -515,5 +517,59 @@ def test_memory_manager_append_jsonl_locked(tmp_path):
     assert len(lines) == 2
     assert json.loads(lines[0])["content"] == "hello"
     assert json.loads(lines[1])["content"] == "world"
+
+
+def test_resolve_workspace_label_and_refine_question_success():
+    from scripts.herdr_coordinator import (
+        notify_question,
+        refine_question_for_action_queue,
+        resolve_workspace_label,
+    )
+
+    info = {"agent": "agy", "pane_id": "w13:p1", "cwd": "/Users/demo/Workspace/market-ticker"}
+    assert resolve_workspace_label("w13:p1", agent_info=info) == "market-ticker · agy · w13:p1"
+
+    mock_proc = MagicMock(
+        returncode=0,
+        stdout=json.dumps({
+            "summary": "平行抓取重構已完成測試，需確認是否重啟服務",
+            "question": "是否立即重啟線上報價服務？",
+            "options": ["選項 1：立即重啟服務套用", "選項 2：稍後手動重啟"],
+        }),
+    )
+    with patch("scripts.herdr_coordinator.shutil.which", return_value="/usr/local/bin/agy"), \
+         patch("scripts.herdr_coordinator.subprocess.run", return_value=mock_proc):
+        refined = refine_question_for_action_queue("market-ticker · agy · w13:p1", "Q1: 請選擇\n選項 1: A\n選項 2: B")
+
+    assert "【背景】平行抓取重構已完成測試" in refined["formatted_question"]
+    assert "是否立即重啟線上報價服務？" in refined["formatted_question"]
+    assert refined["options"] == ["選項 1：立即重啟服務套用", "選項 2：稍後手動重啟"]
+
+    with patch("scripts.herdr_coordinator.get_herdr_agent", return_value=info), \
+         patch("scripts.herdr_coordinator.refine_question_for_action_queue", return_value=refined), \
+         patch("scripts.herdr_coordinator._push_pending_action") as mock_push, \
+         patch("scripts.herdr_coordinator._send_unified_app_alert", return_value=True):
+        ok = notify_question("w13:p1", "raw question", name="自訂任務名稱")
+
+    assert ok is True
+    mock_push.assert_called_once_with(
+        agent="w13:p1",
+        title="market-ticker · agy · w13:p1",
+        question_text=refined["formatted_question"],
+        options=refined["options"],
+    )
+
+
+def test_refine_question_for_action_queue_fallback_on_timeout():
+    import subprocess
+    from scripts.herdr_coordinator import refine_question_for_action_queue
+
+    raw = "目前已完成單元測試\nQ1: 請選擇部署方式\n選項 1: 直接推上 main\n選項 2: 僅留本機測試"
+    with patch("scripts.herdr_coordinator.shutil.which", return_value="/usr/local/bin/agy"), \
+         patch("scripts.herdr_coordinator.subprocess.run", side_effect=subprocess.TimeoutExpired("agy", 12)):
+        res = refine_question_for_action_queue("market-ticker · agy · w13:p1", raw)
+
+    assert "目前已完成單元測試" in res["formatted_question"]
+    assert res["options"] == ["選項 1: 直接推上 main", "選項 2: 僅留本機測試"]
 
 
