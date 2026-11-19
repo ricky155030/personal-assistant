@@ -33,6 +33,15 @@ TELEGRAM_MODEL_FAMILIES = {
             "xhigh": "gemini-4-hydrogen-xhigh",
         },
     },
+    "neon": {
+        "label": "Gemini 4 Neon",
+        "levels": {
+            "low": "gemini-4-neon-low",
+            "medium": "gemini-4-neon-medium",
+            "high": "gemini-4-neon-high",
+            "xhigh": "gemini-4-neon-xhigh",
+        },
+    },
     "argon": {
         "label": "Gemini 4 Argon",
         "levels": {
@@ -155,8 +164,8 @@ def build_model_settings_card() -> Tuple[str, dict]:
 
     reply_markup = {
         "inline_keyboard": [
-            [_m_btn("hydrogen", "G4 Hydrogen"), _m_btn("argon", "G4 Argon"), _m_btn("flash", "G3.8 Flash")],
-            [_m_btn("sonnet", "Claude Sonnet 5.5"), _m_btn("opus", "Claude Opus 5.5")],
+            [_m_btn("hydrogen", "G4 Hydrogen"), _m_btn("neon", "G4 Neon"), _m_btn("argon", "G4 Argon")],
+            [_m_btn("flash", "G3.8 Flash"), _m_btn("sonnet", "Claude Sonnet 5.5"), _m_btn("opus", "Claude Opus 5.5")],
             [_t_btn("auto"), _t_btn("low"), _t_btn("medium")],
             [_t_btn("high"), _t_btn("xhigh")],
         ]
@@ -1766,7 +1775,7 @@ async def start_telegram_bot():
                         parts = u_lower.split(maxsplit=1)
                         if len(parts) == 2:
                             arg = parts[1].strip()
-                            if arg in ("hydrogen", "argon", "flash", "sonnet", "opus"):
+                            if arg in ("hydrogen", "neon", "argon", "flash", "sonnet", "opus"):
                                 prefs["model_family"] = arg
                                 save_telegram_prefs(prefs)
                             elif arg in ("auto", "low", "med", "medium", "high", "xhigh"):

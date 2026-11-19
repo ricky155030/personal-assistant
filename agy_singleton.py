@@ -34,6 +34,7 @@ logger = logging.getLogger("AgyBrainPool")
 # 各模型家族每百萬 Tokens 参考定價 (USD: input / cache_read / output)
 _MODEL_PRICING_PER_M = {
     "hydrogen": (2.00, 0.20, 12.00),
+    "neon": (2.00, 0.20, 12.00),
     "argon": (1.25, 0.125, 10.00),
     "flash": (0.30, 0.03, 2.50),
     "sonnet": (3.00, 0.30, 15.00),
@@ -1306,6 +1307,12 @@ class AgyBrainPool:
                 "med": "gemini-4-hydrogen-medium",
                 "high": "gemini-4-hydrogen-high",
                 "xhigh": "gemini-4-hydrogen-xhigh",
+            },
+            "neon": {
+                "low": "gemini-4-neon-low",
+                "med": "gemini-4-neon-medium",
+                "high": "gemini-4-neon-high",
+                "xhigh": "gemini-4-neon-xhigh",
             },
             "argon": {
                 "low": "gemini-4-argon-low",

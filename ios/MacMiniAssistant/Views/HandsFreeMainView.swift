@@ -1051,6 +1051,10 @@ struct HandsFreeMainView: View {
             let pct = snap.weeklyRemainingPct
             let tint: Color = pct >= 50 ? .cyan : (pct >= 20 ? .orange : .red)
             return (pct, snap.weeklyRefreshesIn, tint, "flame.fill")
+        case .neon:
+            let pct = snap.weeklyRemainingPct
+            let tint: Color = pct >= 50 ? .mint : (pct >= 20 ? .orange : .red)
+            return (pct, snap.weeklyRefreshesIn, tint, "sparkles.rectangle.stack.fill")
         case .flash:
             let pct = snap.weeklyRemainingPct
             let tint: Color = pct >= 50 ? .green : (pct >= 20 ? .orange : .red)

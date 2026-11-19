@@ -159,6 +159,7 @@ class AgyEngineAdapter(BaseBrainEngine):
     def get_available_models(self) -> List[dict]:
         return [
             {"id": "hydrogen", "label": "Gemini 4 Hydrogen", "thinking_levels": ["low", "med", "high", "xhigh"]},
+            {"id": "neon", "label": "Gemini 4 Neon", "thinking_levels": ["low", "med", "high", "xhigh"]},
             {"id": "argon", "label": "Gemini 4 Argon", "thinking_levels": ["low", "med", "high"]},
             {"id": "flash", "label": "Gemini 3.8 Flash", "thinking_levels": ["low", "med", "high"]},
             {"id": "claude", "label": "Claude Sonnet 5.5", "thinking_levels": ["low", "med", "high"]},

@@ -9,6 +9,7 @@ public enum VoiceInputMode: String, Equatable {
 
 public enum ModelFamily: String, CaseIterable, Identifiable {
     case hydrogen = "hydrogen"
+    case neon = "neon"
     case argon = "argon"
     case flash = "flash"
     case claude = "claude"
@@ -19,6 +20,7 @@ public enum ModelFamily: String, CaseIterable, Identifiable {
     public var displayName: String {
         switch self {
         case .hydrogen: return "Hydrogen"
+        case .neon: return "Neon"
         case .argon: return "Argon"
         case .flash: return "Flash"
         case .claude: return "Sonnet 5.5"
@@ -29,6 +31,7 @@ public enum ModelFamily: String, CaseIterable, Identifiable {
     public var fullName: String {
         switch self {
         case .hydrogen: return "Gemini 4 Hydrogen"
+        case .neon: return "Gemini 4 Neon"
         case .argon: return "Gemini 4 Argon"
         case .flash: return "Gemini 3.8 Flash"
         case .claude: return "Claude Sonnet 5.5"
@@ -39,6 +42,7 @@ public enum ModelFamily: String, CaseIterable, Identifiable {
     public var icon: String {
         switch self {
         case .hydrogen: return "flame.fill"
+        case .neon: return "sparkles.rectangle.stack.fill"
         case .argon: return "atom"
         case .flash: return "bolt.fill"
         case .claude: return "sparkles"
@@ -249,6 +253,7 @@ public struct TurnMetadata: Codable, Equatable {
         if let m = model, !m.isEmpty {
             let shortModel = m
                 .replacingOccurrences(of: "gemini-4-hydrogen-", with: "G4 Hydrogen ")
+                .replacingOccurrences(of: "gemini-4-neon-", with: "G4 Neon ")
                 .replacingOccurrences(of: "gemini-4-argon-", with: "G4 Argon ")
                 .replacingOccurrences(of: "gemini-3.8-flash-", with: "G3.8 Flash ")
                 .replacingOccurrences(of: "claude-sonnet-5-5-", with: "Sonnet 5.5 ")
