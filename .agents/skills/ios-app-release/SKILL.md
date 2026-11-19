@@ -1,29 +1,42 @@
 ---
 name: ios-app-release
-description: MacMiniAssistant iOS App 自動編譯打包與 SideStore 遠端軟體源發布技能。每當修改 `ios/` 目錄下任何程式碼（SwiftUI 介面、API Client、Widget 等）並確認編譯通過後，或主人要求「打包 iOS App」、「發布新版 App」、「放到 static」、「更新 SideStore」時觸發，自動執行 `./package_ios.sh` 產出新版 `.ipa` 並更新 `static/apps.json`。
+description: MacMiniAssistant iOS App 自動編譯打包、語意化升版與 GitHub Releases / SideStore 發布技能。每當修改 `ios/` 目錄下任何程式碼（SwiftUI 介面、API Client、Widget 等）並確認編譯通過後，或主人要求「打包 iOS App」、「發布新版 App」、「更新 SideStore」時觸發，自動執行 `./package_ios.sh` 產出新版 `.ipa`、更新 `ios/apps.json` 並建立 GitHub Release。
 ---
 
-# iOS App 自動打包與 SideStore 發布技能 (iOS App Release Skill)
+# iOS App 自動打包與 GitHub Release / SideStore 發布技能
 
-> **核心原則**：只要修改了 `ios/MacMiniAssistant/` 或 `ios/MacMiniAssistantWidget/` 內的任何程式碼並確認無誤，**必須主動完成打包與軟體源更新**，無需等主人事後提醒「放到 static」。
+> **核心原則**：只要修改了 `ios/` 內的任何程式碼並確認無誤，**必須主動完成打包、更新 `ios/apps.json` 與 GitHub Release 發布**，無需等主人事後提醒。
+
+## 語意化版號升級判定原則 (SemVer + Build)
+
+- **Build 號 (`CFBundleVersion`)**：每次打包嚴格遞增 1（主 App、Widget 與 Share Extension 同步），作為 SideStore 與 App 內更新檢查的唯一比對依據。
+- **版號 (`CFBundleShortVersionString` / `MARKETING_VERSION`)**：
+  - `patch`（如 `1.0.0` → `1.0.1`）：Bug 修復、效能優化、UI 微調（對應 `fix` / `perf` / `style`）。
+  - `minor`（如 `1.0.1` → `1.1.0`）：新增完整功能或新頁面（對應 `feat`）。
+  - `major`（如 `1.x.x` → `2.0.0`）：整體架構或介面重大翻新、前後端 API 不相容變更。
+  - `--local-only`：僅本機驗證編譯，只加 Build 號、不升版號、不發 GitHub Release。
 
 ## 標準執行流程
 
-1. **執行打包腳本**（帶入本次改動的簡潔中文說明作為 Changelog）：
+1. **本機預檢編譯**（於 `git commit` 程式碼改動前）：
    ```bash
-   ./package_ios.sh "<本次更新重點摘要>"
+   ./package_ios.sh --local-only "<測試摘要>"
    ```
+2. **正式發布（升版 + 更新 `ios/apps.json` + 建立 GitHub Release）**：
+   ```bash
+   ./package_ios.sh --bump <patch|minor|major> "<本次更新重點摘要>"
+   ```
+   （若需指定特定版號如 `1.0.0`，可使用 `--version 1.0.0`）
    該腳本會自動完成：
-   - 遞增 `CFBundleVersion`（同步寫入主 App 與 Widget 的 `Info.plist`）
-   - 執行 `xcodegen generate` 與 `xcodebuild` 編譯（無須接上實機）
-   - 打包輸出至 `static/MacMiniAssistant.ipa`
-   - 更新 `static/apps.json` 與已訂閱的外部 SideStore 軟體源
-
-2. **驗證輸出結果**：
-   - 確認指令退出碼為 `0`，且輸出包含新的 `Build <N>`、`mac-mini-assistant 軟體源已更新` 與檔案大小。
+   - 依 `--bump` 或 `--version` 更新 `ios/project.yml` 與三支 `Info.plist` 的 `CFBundleShortVersionString` 及遞增 `CFBundleVersion`
+   - 執行 `xcodegen generate` 與 `xcodebuild` 編譯並打包 `static/MacMiniAssistant.ipa`
+   - 更新追蹤於倉庫的 `ios/apps.json`（含零機敏 GitHub Raw `sourceURL` / `iconURL` 與 GitHub Releases `downloadURL`）
+   - 同步更新本機 `static/apps.json` 與外部訂閱軟體源（若存在）
+   - 自動提交 `ios/apps.json`、`ios/project.yml` 與 `Info.plist` 版本異動、推送 `main`，並透過 `gh release create v<VERSION>` 上傳 `MacMiniAssistant.ipa`
 
 3. **版本控管邊界（Zero-Data-Leak / Clean Repo）**：
-   - **嚴禁將 `static/MacMiniAssistant.ipa` 或含私有 Tailscale 域名的 `static/apps.json` 加入 `git commit`**；僅提交 `ios/` 原始碼變更。
+   - **嚴禁將 `static/MacMiniAssistant.ipa` 或含私有 Tailscale 域名的 `static/apps.json` 加入 `git commit`**。
+   - 公開託管於倉庫的 `ios/apps.json` 僅能包含公開 GitHub Raw 與 GitHub Releases 連結，絕對不可出現任何私有 IP 或域名。
 
 4. **回報主人**：
-   - 在最終回覆中明確附上**最新 Build 編號**與更新摘要，並提醒主人可直接在 iPhone 的 **SideStore** 下拉重新整理軟體源進行遠端更新。
+   - 在最終回覆中附上**最新版號與 Build 編號**（如 `v1.0.0 (Build 134)`）與更新摘要，並提醒主人可直接在 iPhone 的 **SideStore** 重新整理軟體源更新。

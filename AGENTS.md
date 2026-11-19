@@ -136,8 +136,9 @@
 9. **本機開發與交付核心原則 (Local Development & Delivery Discipline)**：
    - **小步原子推進 (Small Atomic Commits)**：一次只完成單一功能或修復單一 Bug，絕不將重構與新功能混成一大包一次提交，確保每筆改動都能獨立測試與快速回滾。
    - **改動必補測試 (Test-With-Change)**：新增業務邏輯或修復 Bug 時，必須同步補上對應單元測試與邊界條件，避免後續回歸破壞。
-   - **本機先驗再推送 (Local Pre-Push Gate)**：每次 Commit 與 Push 前，Python 必跑全量 `uv run pytest`，修改 `ios/` 必執行 `./package_ios.sh` 驗證編譯無誤與無新增警告，並通過機敏資訊掃描。
-   - **改完自測即提交 (Auto-Commit on Green)**：每次程式碼改完，助理必須自行跑對應 build/test（Python 跑全量 `uv run pytest`；改 `ios/` 加跑 `./package_ios.sh`）加機敏掃描，全綠後直接 `git commit`，免等主人確認；一事一 commit，commit message 一律使用英文（Conventional Commits、祈使句、範圍明確，如 `feat(calendar): add retry on timeout`）；commit 後依第 7 條決定是否 push 並跟 CI 到綠燈。
+   - **本機先驗再推送 (Local Pre-Push Gate)**：每次 Commit 與 Push 前，Python 必跑全量 `uv run pytest`，修改 `ios/` 必執行 `./package_ios.sh --local-only` 驗證編譯無誤與無新增警告，並通過機敏資訊掃描。
+   - **改完自測即提交 (Auto-Commit on Green)**：每次程式碼改完，助理必須自行跑對應 build/test（Python 跑全量 `uv run pytest`；改 `ios/` 先跑 `./package_ios.sh --local-only` 驗證編譯）加機敏掃描，全綠後直接 `git commit`，免等主人確認；一事一 commit，commit message 一律使用英文（Conventional Commits、祈使句、範圍明確，如 `feat(calendar): add retry on timeout`）；commit 後依第 7 條決定是否 push 並跟 CI 到綠燈。
+   - **iOS 版號與 GitHub Release 發布規範 (SemVer + Build + SideStore)**：修改 `ios/` 並完成測試與提交準備對外發布時，依改動性質決定語意化版號（`fix`/`perf` 升 `patch`、`feat` 升 `minor`、重大架構不相容變更升 `major`），執行 `./package_ios.sh --bump <patch|minor|major> "<更新摘要>"` 遞增 `Build` 號、更新 `ios/apps.json`（託管於公開 GitHub 倉庫供 SideStore 讀取）並自動建立 GitHub Release 上傳 `.ipa`。
    - **嚴守修改範圍 (Minimal Diff & Scope Discipline)**：只改當前任務相關程式碼，不順手重構無關模組或刪除既有防呆與註解；發現其他問題應另外排單處理。
    - **前後端契約相容 (Contract-First Compatibility)**：後端 API 與 iOS App 有欄位連動時，必須保留向下相容性，確保舊版 App 尚未更新也不會閃退。
    - **服務安全重啟 (Safe Service Reload)**：修改常駐後端後，嚴禁在語音串流進行中直接強殺服務；但完成開發、通過本機測試與 GitHub CI 驗證且判定需要重載套用時，助理可直接主動透過 `scripts/idle_safe_reload.py --quiet 8 --interval 2` 排程安全重載（免再反問主人確認，允許服務短暫重啟數秒）。

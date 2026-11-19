@@ -189,6 +189,9 @@ struct HandsFreeMainView: View {
     @State private var isLoadingHerdrAgents: Bool = false
     @State private var pendingActions: [PendingActionItem] = []
     @State private var showPendingActionsSheet: Bool = false
+    @State private var availableAppUpdate: MacMiniAPIClient.AppUpdateInfo? = nil
+    @State private var isUpdateBannerDismissed: Bool = false
+    @Environment(\.openURL) private var openURL
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
     @AppStorage("showQuickSkillBar") private var showQuickSkillBar: Bool = true
     @FocusState private var isInputFocused: Bool
@@ -216,6 +219,14 @@ struct HandsFreeMainView: View {
                 // 離線提示橫幅（確認離線時自動滑出，恢復後自動收起）
                 if isConfirmedOffline {
                     offlineBanner
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                // 新版 App 更新提醒橫幅（比對 GitHub SideStore 軟體源）
+                if let update = availableAppUpdate, !isUpdateBannerDismissed {
+                    appUpdateBanner(update)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -366,8 +377,13 @@ struct HandsFreeMainView: View {
             syncIdleTimer()
             Task {
                 await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active)
-                let latest = await MacMiniAPIClient.shared.fetchPendingActions()
-                await MainActor.run { self.pendingActions = latest }
+                async let pendingTask = MacMiniAPIClient.shared.fetchPendingActions()
+                async let updateTask = MacMiniAPIClient.shared.checkForAppUpdate()
+                let (latest, update) = await (pendingTask, updateTask)
+                await MainActor.run {
+                    self.pendingActions = latest
+                    self.availableAppUpdate = update
+                }
             }
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
@@ -463,6 +479,62 @@ struct HandsFreeMainView: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    private func appUpdateBanner(_ update: MacMiniAPIClient.AppUpdateInfo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.cyan)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("發現新版 v\(update.version) (Build \(update.buildVersion))")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                Text("您尚未更新，請前往 SideStore 下載新版")
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(white: 0.72))
+            }
+
+            Spacer()
+
+            Button(action: {
+                haptic.impactOccurred()
+                if let url = URL(string: "sidestore://") {
+                    openURL(url)
+                }
+            }) {
+                Text("去更新")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.cyan)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Capsule().fill(Color.cyan.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isUpdateBannerDismissed = true
+                }
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Color(white: 0.55))
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(red: 0.06, green: 0.16, blue: 0.22).opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
                 )
         )
     }

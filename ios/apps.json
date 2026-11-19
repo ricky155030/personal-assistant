@@ -1,0 +1,27 @@
+{
+  "name": "Personal Assistant Repo",
+  "identifier": "com.hungwei.altstore.repo",
+  "sourceURL": "https://raw.githubusercontent.com/ricky155030/personal-assistant/main/ios/apps.json",
+  "apps": [
+    {
+      "name": "MacMiniAssistant",
+      "bundleIdentifier": "com.hungwei.MacMiniAssistant",
+      "developerName": "Personal Assistant",
+      "subtitle": "散步/開車免持連續語音對話與口語 Vibe Coding 隨身助理",
+      "localizedDescription": "專為邊走路散步、邊開車時免持連續語音聊天與口語 Vibe Coding 打造的 iOS 原生 SwiftUI 客戶端。0.05s 零延遲首句朗讀、智慧靜音 VAD 斷句與工具狀態播報。",
+      "iconURL": "https://raw.githubusercontent.com/ricky155030/personal-assistant/main/ios/MacMiniAssistant/Assets.xcassets/AppIcon.appiconset/icon_1024.png",
+      "tintColor": "007AFF",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "134",
+          "date": "2026-11-19T00:46:40Z",
+          "localizedDescription": "v1.0.0 初始正式版：支援語意化版本系統、GitHub Releases 發布與 App 內更新提醒",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.0.0/MacMiniAssistant.ipa",
+          "size": 4323588,
+          "minOSVersion": "17.0"
+        }
+      ]
+    }
+  ]
+}

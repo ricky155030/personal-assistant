@@ -17,6 +17,10 @@ struct AssistantSettingsView: View {
     @State private var newPromptIcon: String = "sparkles"
     @State private var isTriggeringReload: Bool = false
     @State private var reloadFeedback: String? = nil
+    @State private var availableUpdate: MacMiniAPIClient.AppUpdateInfo? = nil
+    @State private var isCheckingUpdate: Bool = false
+    @State private var updateStatusMessage: String? = nil
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -265,11 +269,68 @@ struct AssistantSettingsView: View {
                     HStack {
                         Text("版本")
                         Spacer()
-                        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
-                        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "16"
-                        Text("\(ver) (Build \(build))")
+                        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+                        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+                        Text("v\(ver) (Build \(build))")
                             .foregroundColor(.secondary)
                     }
+
+                    if let update = availableUpdate {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundColor(.orange)
+                                Text("發現新版本 v\(update.version) (Build \(update.buildVersion))")
+                                    .font(.subheadline.weight(.medium))
+                                Spacer()
+                                Button("前往 SideStore") {
+                                    if let url = URL(string: "sidestore://") {
+                                        openURL(url)
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                            }
+                            if !update.releaseNotes.isEmpty {
+                                Text(update.releaseNotes)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    } else {
+                        Button(action: {
+                            Task {
+                                isCheckingUpdate = true
+                                updateStatusMessage = nil
+                                let found = await MacMiniAPIClient.shared.checkForAppUpdate()
+                                await MainActor.run {
+                                    isCheckingUpdate = false
+                                    availableUpdate = found
+                                    if found == nil {
+                                        updateStatusMessage = "目前已是最新版本"
+                                    }
+                                }
+                            }
+                        }) {
+                            HStack {
+                                if isCheckingUpdate {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                }
+                                Text(isCheckingUpdate ? "正在檢查 GitHub 版本..." : "檢查 App 更新")
+                                Spacer()
+                                if let msg = updateStatusMessage {
+                                    Text(msg)
+                                        .font(.caption)
+                                        .foregroundColor(.green)
+                                }
+                            }
+                        }
+                        .disabled(isCheckingUpdate)
+                    }
+
                     HStack {
                         Text("專屬主人")
                         Spacer()
@@ -282,6 +343,11 @@ struct AssistantSettingsView: View {
                         Text("SFSpeechRecognizer + Edge-TTS")
                             .foregroundColor(.secondary)
                     }
+                }
+            }
+            .task {
+                if availableUpdate == nil {
+                    availableUpdate = await MacMiniAPIClient.shared.checkForAppUpdate()
                 }
             }
             .navigationTitle("助理設定")

@@ -761,4 +761,64 @@ public final class MacMiniAPIClient {
             return (false, [])
         }
     }
+
+    // MARK: - App 版本檢查 (GitHub SideStore Repo)
+
+    public struct AppUpdateInfo: Equatable {
+        public let version: String
+        public let buildVersion: Int
+        public let releaseNotes: String
+        public let downloadURL: String
+    }
+
+    private struct SideStoreRepoPayload: Decodable {
+        struct AppEntry: Decodable {
+            struct VersionEntry: Decodable {
+                let version: String
+                let buildVersion: String
+                let localizedDescription: String?
+                let downloadURL: String?
+            }
+            let bundleIdentifier: String?
+            let versions: [VersionEntry]
+        }
+        let apps: [AppEntry]
+    }
+
+    /// 從公開 GitHub 軟體源檢查是否有較新的 Build 版本
+    public func checkForAppUpdate(
+        repoURLString: String = "https://raw.githubusercontent.com/ricky155030/personal-assistant/main/ios/apps.json"
+    ) async -> AppUpdateInfo? {
+        guard let url = URL(string: "\(repoURLString)?t=\(Int(Date().timeIntervalSince1970))") else {
+            return nil
+        }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8.0)
+        request.httpMethod = "GET"
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            let payload = try JSONDecoder().decode(SideStoreRepoPayload.self, from: data)
+            let bundleId = Bundle.main.bundleIdentifier ?? "com.hungwei.MacMiniAssistant"
+            let targetApp = payload.apps.first(where: { $0.bundleIdentifier == bundleId }) ?? payload.apps.first
+            guard let latest = targetApp?.versions.first,
+                  let remoteBuild = Int(latest.buildVersion) else {
+                return nil
+            }
+            let localBuildStr = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+            let localBuild = Int(localBuildStr) ?? 0
+            guard remoteBuild > localBuild else {
+                return nil
+            }
+            return AppUpdateInfo(
+                version: latest.version,
+                buildVersion: remoteBuild,
+                releaseNotes: latest.localizedDescription ?? "",
+                downloadURL: latest.downloadURL ?? ""
+            )
+        } catch {
+            return nil
+        }
+    }
 }
