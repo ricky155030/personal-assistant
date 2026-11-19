@@ -445,7 +445,7 @@ def _send_unified_app_alert(title: str, message: str, memory_summary: Optional[s
     from config import settings
 
     port = getattr(settings, "PORT", 8899)
-    api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    api_key = getattr(settings, "API_KEY", "") or getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-Agent-Key"] = api_key
@@ -638,7 +638,7 @@ def _push_pending_action(
     from config import settings
 
     port = getattr(settings, "PORT", 8899)
-    api_key = getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    api_key = getattr(settings, "API_KEY", "") or getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-Agent-Key"] = api_key
