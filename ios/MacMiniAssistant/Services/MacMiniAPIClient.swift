@@ -738,11 +738,11 @@ public final class MacMiniAPIClient {
         }
     }
 
-    /// 回覆或忽略一筆待決策項目，並回傳更新後的佇列
-    public func resolvePendingAction(id: String, answer: String, dismiss: Bool = false) async -> (Bool, [PendingActionItem]) {
+    /// 回覆或忽略一筆待決策項目，並回傳更新後的佇列與派發目標（brain / herdr）
+    public func resolvePendingAction(id: String, answer: String, dismiss: Bool = false) async -> (Bool, [PendingActionItem], String?) {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(cleanBase)/api/actions/pending/\(id)/resolve") else {
-            return (false, [])
+            return (false, [], nil)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -753,12 +753,12 @@ public final class MacMiniAPIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-                return (false, [])
+                return (false, [], nil)
             }
             let decoded = try JSONDecoder().decode(PendingActionsResponse.self, from: data)
-            return (true, decoded.actions)
+            return (true, decoded.actions, decoded.dispatched_to)
         } catch {
-            return (false, [])
+            return (false, [], nil)
         }
     }
 

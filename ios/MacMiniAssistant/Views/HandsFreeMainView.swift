@@ -278,7 +278,7 @@ struct HandsFreeMainView: View {
                     }
                 },
                 onResolve: { item, answer, dismiss in
-                    let (ok, updated) = await MacMiniAPIClient.shared.resolvePendingAction(
+                    let (ok, updated, dispatchedTo) = await MacMiniAPIClient.shared.resolvePendingAction(
                         id: item.id,
                         answer: answer,
                         dismiss: dismiss
@@ -286,6 +286,13 @@ struct HandsFreeMainView: View {
                     await MainActor.run {
                         if ok {
                             self.pendingActions = updated
+                            if !dismiss {
+                                self.coordinator.recordAndSyncActionDecision(
+                                    title: item.title,
+                                    answer: answer,
+                                    dispatchedTo: dispatchedTo
+                                )
+                            }
                         }
                     }
                     return ok

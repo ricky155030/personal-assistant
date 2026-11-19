@@ -813,4 +813,5 @@ public struct PendingActionItem: Codable, Identifiable, Equatable, Sendable {
 public struct PendingActionsResponse: Codable, Sendable {
     public let actions: [PendingActionItem]
     public let count: Int
+    public let dispatched_to: String?
 }

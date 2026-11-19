@@ -1163,6 +1163,48 @@ public final class VoiceSessionCoordinator: ObservableObject {
         saveUnifiedTimeline()
     }
 
+    /// 使用者在 Action Queue 拍板送出後，立即在對話流顯示決策氣泡並輪詢同步主大腦後續回覆
+    @MainActor
+    public func recordAndSyncActionDecision(title: String, answer: String, dispatchedTo: String?) {
+        let userText = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "已決策：\(answer)"
+            : "已決策（\(title)）：\(answer)"
+        messages.append(ChatMessage(role: .user, content: userText, status: .completed))
+        syncCurrentSessionToHistory()
+
+        guard dispatchedTo == "brain" else { return }
+
+        let placeholder = ChatMessage(role: .assistant, content: "", status: .streaming)
+        let placeholderId = placeholder.id
+        messages.append(placeholder)
+        syncCurrentSessionToHistory()
+
+        Task { [weak self] in
+            guard let self = self else { return }
+            for _ in 0..<25 {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await self.syncRemoteHistory()
+                let done = await MainActor.run {
+                    if let idx = self.messages.firstIndex(where: { $0.id == placeholderId }) {
+                        return self.messages[idx].status == .completed && !self.messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
+                    return true
+                }
+                if done { return }
+            }
+            await MainActor.run {
+                if let idx = self.messages.firstIndex(where: { $0.id == placeholderId }),
+                   self.messages[idx].status == .streaming {
+                    if self.messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.messages[idx].content = "⏳ 已交由主大腦背景處理中，稍後可下拉同步結果。"
+                    }
+                    self.messages[idx].status = .completed
+                    self.syncCurrentSessionToHistory()
+                }
+            }
+        }
+    }
+
     public func syncRemoteHistory(limit: Int = 40) async {
         // 初次升級至伺服器為準架構（或補充背景回報來源標記）時，自動以 Mac mini 最新紀錄重建乾淨時間軸
         if !UserDefaults.standard.bool(forKey: "macmini_timeline_v2_rebuilt") ||

@@ -241,6 +241,7 @@ def test_pending_action_brain_self_contained_context(tmp_path):
         assert "鼎泰豐" in dispatched["query"]
         assert "請問要訂哪一間分店？" in dispatched["query"]
         assert "竹北店" in dispatched["query"]
+        assert main._clean_history_query(dispatched["query"]) == "已決策（主大腦確認 · 餐廳訂位）：竹北店"
     finally:
         main.app.dependency_overrides.pop(main.verify_token, None)
         settings.DATA_DIR = orig_data_dir

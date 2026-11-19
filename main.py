@@ -1185,6 +1185,15 @@ def chat_task_result(task_id: str, _authorized: bool = Depends(verify_token)):
 def _clean_history_query(raw_query: str) -> str:
     """移除 iOS/Watch/HomePod 的系統前綴規範、跨大腦交接提要與展開的檔案內文，保留使用者對話文字與精簡檔案標記"""
     q = (raw_query or "").strip()
+    if q.startswith("【接續先前待決策事項（來自 Action Queue）】"):
+        title_match = re.search(r"^決策標題：(.+)$", q, re.MULTILINE)
+        ans_match = re.search(r"^主人已選擇 / 回覆：(.+)$", q, re.MULTILINE)
+        if ans_match:
+            ans_text = ans_match.group(1).strip()
+            if title_match and title_match.group(1).strip():
+                return f"已決策（{title_match.group(1).strip()}）：{ans_text}"
+            return f"已決策：{ans_text}"
+
     prefix_markers = (
         "[來源管道:",
         "[跨大腦記憶交接提要",
@@ -1844,10 +1853,12 @@ def resolve_pending_action(action_id: str, req: PendingActionResolveRequest, _au
             raise HTTPException(status_code=400, detail="回覆內容不可為空")
         source_str = (target.get("source") or "herdr").strip().lower()
         if source_str.startswith("brain"):
+            title_str = (target.get("title") or "").strip()
             ctx = (target.get("context_prompt") or "").strip()
             q = (target.get("question") or "").strip()
             combined_prompt = (
                 "【接續先前待決策事項（來自 Action Queue）】\n"
+                + (f"決策標題：{title_str}\n" if title_str else "")
                 + (f"原始任務背景：{ctx}\n" if ctx else "")
                 + (f"先前反問內容：{q}\n" if q else "")
                 + f"主人已選擇 / 回覆：{answer_text}\n\n"
