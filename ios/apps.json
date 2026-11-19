@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.1.1",
+          "buildVersion": "142",
+          "date": "2026-11-19T12:40:47Z",
+          "localizedDescription": "超過 20 行助理回覆自動摺疊並支援一鍵展開全文",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.1/MacMiniAssistant.ipa",
+          "size": 4343911,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.1.0",
-          "buildVersion": "140",
-          "date": "2026-11-19T12:06:54Z",
-          "localizedDescription": "新增 Gemini 4 Neon 模型家族支援（支援 Low/Med/High/XHigh，同步 iOS App 與 Telegram 切換選單）",
+          "buildVersion": "141",
+          "date": "2026-11-19T12:40:17Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.0/MacMiniAssistant.ipa",
-          "size": 4328626,
+          "size": 4343911,
           "minOSVersion": "17.0"
         },
         {
