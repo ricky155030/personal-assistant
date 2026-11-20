@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.1.2",
+          "buildVersion": "144",
+          "date": "2026-11-20T10:16:04Z",
+          "localizedDescription": "單則訊息截圖分享自動內嵌 HTML Widget 卡片與完整 Markdown 排版",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.2/MacMiniAssistant.ipa",
+          "size": 4360156,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.1.1",
-          "buildVersion": "142",
-          "date": "2026-11-19T12:40:47Z",
-          "localizedDescription": "超過 20 行助理回覆自動摺疊並支援一鍵展開全文",
+          "buildVersion": "143",
+          "date": "2026-11-20T10:15:36Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.1/MacMiniAssistant.ipa",
-          "size": 4343911,
+          "size": 4360159,
           "minOSVersion": "17.0"
         },
         {
