@@ -999,6 +999,46 @@ def _locate_publish_button(draft_page):
     return None
 
 
+PUBLISH_SUCCESS_JS = """() => {
+    const nodes = Array.from(document.querySelectorAll('.eds-toast, .eds-message, .eds-notification, .product-edit__submit-bottom-tip'));
+    return nodes.some(n => {
+        const visible = !!(n.offsetWidth || n.offsetHeight || n.getClientRects().length);
+        const t = (n.innerText || '').trim();
+        return visible && /成功上架|上架成功|已成功上架|發布成功/.test(t);
+    });
+}"""
+
+
+def _is_publish_succeeded(draft_page) -> bool:
+    """以網址跳轉或『成功上架』可見提示判定上架成功。"""
+    try:
+        current_url = draft_page.url or ""
+        if ("/portal/product/list" in current_url) or ("portal/product/" in current_url and "unpublished" not in current_url):
+            return True
+        return bool(draft_page.evaluate(PUBLISH_SUCCESS_JS))
+    except Exception:
+        return False
+
+
+def _dismiss_blocking_modals(draft_page) -> int:
+    """關閉擋住上架的可見系統彈窗（如『請填入商品資訊』、『已綁定標準化商品』、『系統推薦優化』）。"""
+    clicked = 0
+    try:
+        btns = draft_page.locator(".eds-modal button:visible, .eds-popover button:visible").filter(
+            has_text=re.compile(r"^\s*(確認|Confirm|確定|我知道了|下一步|完成)\s*$")
+        )
+        for idx in range(min(btns.count(), 4)):
+            try:
+                btns.nth(idx).click(timeout=2000)
+                clicked += 1
+                time.sleep(0.4)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return clicked
+
+
 def auto_fill_unresolved_attributes(draft_page, product_title: str, category_id: Optional[str] = None, condition: Optional[str] = None, product_description: str = "") -> tuple:
     """
     自動巡檢草稿頁所有未填/報錯的必填欄位（下拉、單選、文字輸入皆涵蓋）。
@@ -1696,10 +1736,11 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
 
                 for prod in targets:
                     product_info = dict(prod)
-                    shop_id = os.getenv("SHOPEE_SHOP_ID", "YOUR_SHOP_ID")
+                    shop_id = (os.getenv("SHOPEE_SHOP_ID") or "").strip()
                     item_id = product_info["item_id"]
-                    product_info["shop_id"] = shop_id
-                    product_info["live_url"] = f"https://shopee.tw/product/{shop_id}/{item_id}"
+                    product_info["shop_id"] = shop_id or None
+                    # 未設定 SHOPEE_SHOP_ID 時不產生假網址；等匹配到架上商品 ID 後改指向賣家中心商品頁
+                    product_info["live_url"] = None
                     product_info["draft_url"] = f"https://seller.shopee.tw/portal/product/unpublished/{item_id}"
                     product_info["product_url"] = product_info["draft_url"]
 
@@ -1736,6 +1777,7 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
                             product_info["unresolved_fields"] = unresolved
 
                         time.sleep(1.5)
+                        _dismiss_blocking_modals(draft_page)
 
                         publish_btn = _locate_publish_button(draft_page)
                         if publish_btn is not None and publish_btn.count() > 0:
@@ -1755,11 +1797,7 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
                                             confirm_btn.first.click()
                                     except Exception:
                                         pass
-                                tip = draft_page.evaluate("""() => {
-                                    const tip = document.querySelector(".product-edit__submit-bottom-tip, .eds-message");
-                                    return tip ? tip.innerText.trim() : null;
-                                }""")
-                                if tip and ("成功" in tip or "發布" in tip):
+                                if _is_publish_succeeded(draft_page):
                                     product_info["is_published"] = True
                                     product_info["status"] = "published"
                                     break
@@ -1771,15 +1809,29 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
                                     product_info["learned_rules"] = learned_rules
                                 if second_open:
                                     product_info["unresolved_fields"] = second_open
-                                if second_learned:
-                                    publish_btn.click()
-                                    for _ in range(12):
+                                # 無論是否學到新規則都重試：首次點擊常因圖片處理中 / 系統彈窗被吞掉
+                                for _retry in range(2):
+                                    if product_info.get("is_published"):
+                                        break
+                                    _dismiss_blocking_modals(draft_page)
+                                    time.sleep(2.0)
+                                    retry_btn = _locate_publish_button(draft_page)
+                                    if retry_btn is None or retry_btn.count() == 0:
+                                        break
+                                    try:
+                                        retry_btn.scroll_into_view_if_needed()
+                                        retry_btn.click()
+                                    except Exception as click_err:
+                                        sys.stderr.write(f"[Publish] 第 {_retry + 2} 次點擊上架失敗: {click_err}\n")
+                                        continue
+                                    sys.stderr.write(f"[Publish] 首次上架未生效，第 {_retry + 2} 次重試點擊\n")
+                                    for _ in range(15):
                                         time.sleep(0.8)
-                                        current_url = draft_page.url
-                                        if ("/portal/product/list" in current_url) or ("portal/product/" in current_url and "unpublished" not in current_url):
+                                        if _is_publish_succeeded(draft_page):
                                             product_info["is_published"] = True
                                             product_info["status"] = "published"
                                             break
+                                        _dismiss_blocking_modals(draft_page)
 
                                 if not product_info.get("is_published"):
                                     field_errs = _collect_field_errors(draft_page)
@@ -1846,7 +1898,9 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
                                         for (const kw of keywords) {
                                             if (text.includes(kw)) hits++;
                                         }
-                                        if (hits >= Math.min(1, keywords.length)) {
+                                        // 嚴格匹配：至少命中 60% 關鍵字（且至少 2 個），避免同品牌/同字首的其他商品被誤認
+                                        const need = Math.min(keywords.length, Math.max(2, Math.ceil(keywords.length * 0.6)));
+                                        if (keywords.length > 0 && hits >= need) {
                                             const m = text.match(/商品 ID[:：\\s]+(\\d+)/);
                                             if (m) return m[1];
                                         }
@@ -1861,7 +1915,10 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
 
                     if matched_live_id:
                         product_info["item_id"] = matched_live_id
-                        product_info["live_url"] = f"https://shopee.tw/product/{shop_id}/{matched_live_id}"
+                        product_info["live_url"] = (
+                            f"https://shopee.tw/product/{shop_id}/{matched_live_id}" if shop_id
+                            else f"https://seller.shopee.tw/portal/product/{matched_live_id}"
+                        )
                         product_info["is_published"] = True
                         product_info["status"] = "published"
                         product_info["pending_reason"] = None

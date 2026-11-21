@@ -198,3 +198,50 @@ def test_async_upload_uses_zero_coupling_task_manager_sync():
     source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
     assert 'notify="ios"' in source
     assert "sync_memory=True" in source
+
+
+def test_live_matching_requires_strict_keyword_ratio():
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    assert "hits >= Math.min(1, keywords.length)" not in source
+    assert "Math.max(2, Math.ceil(keywords.length * 0.6))" in source
+
+
+def test_no_placeholder_shop_id_in_live_url():
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    assert 'os.getenv("SHOPEE_SHOP_ID", "YOUR_SHOP_ID")' not in source
+
+
+def test_publish_retry_does_not_depend_on_new_learned_rules():
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    assert "for _retry in range(2):" in source
+    assert "_dismiss_blocking_modals(draft_page)" in source
+
+
+def test_is_publish_succeeded_by_url():
+    import re as _re
+    import time as _time
+
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(SHOPEE_TOOL_PATH))
+    nodes = [
+        n for n in tree.body
+        if (isinstance(n, ast.FunctionDef) and n.name == "_is_publish_succeeded")
+        or (isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "PUBLISH_SUCCESS_JS" for t in n.targets))
+    ]
+    mod_ast = ast.Module(body=nodes, type_ignores=[])
+    ast.fix_missing_locations(mod_ast)
+    ns = {"re": _re, "time": _time}
+    exec(compile(mod_ast, str(SHOPEE_TOOL_PATH), "exec"), ns)
+    check = ns["_is_publish_succeeded"]
+
+    class _Page:
+        def __init__(self, url, toast=False):
+            self.url = url
+            self._toast = toast
+
+        def evaluate(self, _js):
+            return self._toast
+
+    assert check(_Page("https://seller.shopee.tw/portal/product/list/unpublished/draft")) is True
+    assert check(_Page("https://seller.shopee.tw/portal/product/unpublished/123")) is False
+    assert check(_Page("https://seller.shopee.tw/portal/product/unpublished/123", toast=True)) is True
