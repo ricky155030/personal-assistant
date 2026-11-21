@@ -162,6 +162,7 @@ struct HandsFreeMainView: View {
     @State private var showQuotaSheet: Bool = false
     @State private var showQuickPromptDrawer: Bool = false
     @State private var showArtifactsSheet: Bool = false
+    @State private var showBackgroundTasksSheet: Bool = false
     @State private var quickPrompts: [QuickPromptPreset] = QuickPromptStore.loadPresets()
     @State private var showSettings: Bool = false
     @State private var showSearchSheet: Bool = false
@@ -278,6 +279,11 @@ struct HandsFreeMainView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showBackgroundTasksSheet) {
+            BackgroundTasksSheetView(coordinator: coordinator)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showSettings) {
             AssistantSettingsView(coordinator: coordinator)
@@ -1702,14 +1708,10 @@ struct HandsFreeMainView: View {
                     }) {
                         Label("常用指令", systemImage: "square.grid.2x2")
                             .font(.caption.weight(.semibold))
-                            .foregroundColor(.cyan)
+                            .foregroundColor(.primary)
                             .padding(.horizontal, 12)
                             .frame(minHeight: 34)
-                            .background(
-                                Capsule()
-                                    .fill(Color.cyan.opacity(0.14))
-                                    .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
-                            )
+                            .liquidGlass(in: Capsule())
                     }
                     .buttonStyle(.plain)
 
@@ -1730,7 +1732,7 @@ struct HandsFreeMainView: View {
                     Button(action: {
                         haptic.impactOccurred()
                         isInputFocused = false
-                        showQuotaSheet = true
+                        showBackgroundTasksSheet = true
                     }) {
                         HStack(spacing: 5) {
                             Image(systemName: "bolt.fill")
@@ -3406,8 +3408,6 @@ struct GeminiMessageRow: View {
 struct QuotaDetailSheetView: View {
     @ObservedObject var coordinator: VoiceSessionCoordinator
     @Environment(\.dismiss) private var dismiss
-    @State private var trackedTasks: MacMiniAPIClient.TrackedTasksResponse? = nil
-    @State private var selectedTaskForLog: MacMiniAPIClient.TrackedTaskItem? = nil
 
     private var snap: QuotaSnapshot {
         coordinator.quotaSnapshot ?? QuotaSnapshot()
@@ -3459,10 +3459,7 @@ struct QuotaDetailSheetView: View {
                         // 5. Prompt / Flow Credits 配額卡片
                         creditsCard
 
-                        // 6. 子代理 / 背景常駐任務狀態提示
-                        backgroundTasksCard
-
-                        // 7. ACP 統一大腦 Context 記憶容量
+                        // 6. ACP 統一大腦 Context 記憶容量
                         contextMemoryCard
                     }
                     .padding(16)
@@ -3494,15 +3491,6 @@ struct QuotaDetailSheetView: View {
                         dismiss()
                     }
                     .bold()
-                }
-            }
-            .task {
-                trackedTasks = await coordinator.apiClient.fetchTrackedTasks()
-            }
-            .sheet(item: $selectedTaskForLog) { task in
-                TaskLogViewerSheet(task: task, coordinator: coordinator) {
-                    selectedTaskForLog = nil
-                    dismiss()
                 }
             }
         }
@@ -3569,111 +3557,6 @@ struct QuotaDetailSheetView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.white.opacity(0.05))
         )
-    }
-
-    private var backgroundTasksCard: some View {
-        let runningItems = trackedTasks?.running ?? []
-        let failedItems = trackedTasks?.failed ?? []
-        let activeCount = max(snap.activeTaskCount, runningItems.count)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("背景任務追蹤 (進行中 / 失敗)", systemImage: "gearshape.2.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer()
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(activeCount > 0 ? Color.green : Color.gray)
-                        .frame(width: 8, height: 8)
-                    Text("\(activeCount) 執行中")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundColor(activeCount > 0 ? .green : .secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(activeCount > 0 ? Color.green.opacity(0.15) : Color.white.opacity(0.05))
-                .cornerRadius(6)
-            }
-
-            if !runningItems.isEmpty {
-                Divider().background(Color.white.opacity(0.08))
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(runningItems) { item in
-                        trackedTaskRow(item: item, isError: false)
-                    }
-                }
-            } else if !snap.activeTaskNames.isEmpty {
-                Divider().background(Color.white.opacity(0.08))
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(snap.activeTaskNames, id: \.self) { name in
-                        HStack(spacing: 7) {
-                            Image(systemName: "circle.fill")
-                                .font(.system(size: 6))
-                                .foregroundColor(.green)
-                            Text(name)
-                                .font(.system(size: 12.5, weight: .medium))
-                                .foregroundColor(Color(white: 0.88))
-                                .lineLimit(1)
-                        }
-                    }
-                }
-            } else {
-                Text("目前無執行中的背景任務")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            if !failedItems.isEmpty {
-                Divider().background(Color.white.opacity(0.08))
-                Text("近期失敗 / 異常紀錄（點擊查看日誌）")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundColor(.orange)
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(failedItems.prefix(15)) { item in
-                        trackedTaskRow(item: item, isError: true)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.05))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
-    }
-
-    private func trackedTaskRow(item: MacMiniAPIClient.TrackedTaskItem, isError: Bool) -> some View {
-        Button(action: {
-            selectedTaskForLog = item
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: isError ? "exclamationmark.triangle.fill" : "circle.fill")
-                    .font(.system(size: isError ? 11 : 7))
-                    .foregroundColor(isError ? .red : .green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    Text("\(item.status) · \(item.started_at ?? item.task_id)")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private var contextMemoryCard: some View {
