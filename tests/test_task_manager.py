@@ -156,3 +156,18 @@ def test_terminate_process_kills_entire_process_group(tmp_path):
     finally:
         if wrapper.poll() is None:
             wrapper.kill()
+
+
+def test_send_task_alert_dispatches_to_requested_channels():
+    with patch("task_manager._send_ios_notification", return_value=True) as mock_ios, \
+         patch("task_manager._send_telegram_notification", return_value=True) as mock_tg:
+        res = tm.send_task_alert(
+            title="🔐 蝦皮需要登入驗證",
+            message="請完成 OTP 驗證 <test>",
+            channels="ios,telegram",
+        )
+
+    assert res == {"ios": True, "telegram": True}
+    mock_ios.assert_called_once_with(title="🔐 蝦皮需要登入驗證", message="請完成 OTP 驗證 <test>")
+    mock_tg.assert_called_once()
+    assert "&lt;test&gt;" in mock_tg.call_args[0][0]

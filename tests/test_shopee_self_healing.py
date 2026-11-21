@@ -130,3 +130,71 @@ def test_scan_js_filters_optional_date_pickers_and_non_required_fields():
     assert "const mustCheck = hasAsterisk || isError || isCondition;" in source
     assert "if (!mustCheck) continue;" in source
     assert "if (isDatePicker && !isError) continue;" in source
+
+
+def _load_login_helpers():
+    import sys
+    import time
+    import urllib.parse
+
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(SHOPEE_TOOL_PATH))
+    wanted = {"_is_shopee_login_url", "_is_shopee_verification_url", "handle_shopee_login"}
+    nodes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in wanted
+    ]
+    mod_ast = ast.Module(body=nodes, type_ignores=[])
+    ast.fix_missing_locations(mod_ast)
+    ns = {"urllib": urllib, "time": time, "sys": sys}
+    exec(compile(mod_ast, str(SHOPEE_TOOL_PATH), "exec"), ns)
+    return ns
+
+
+def test_shopee_login_and_verification_url_detection():
+    ns = _load_login_helpers()
+    is_login = ns["_is_shopee_login_url"]
+    is_verify = ns["_is_shopee_verification_url"]
+
+    assert is_login("https://accounts.shopee.tw/seller/login?next=foo") is True
+    assert is_login("https://seller.shopee.tw/portal/product/list?is_from_login=true") is False
+    assert is_verify("https://shopee.tw/verify/ivs?is_from_login=true") is True
+    assert is_verify("https://seller.shopee.tw/portal/product/list") is False
+
+
+def test_handle_shopee_login_waits_for_otp_and_resumes(monkeypatch):
+    ns = _load_login_helpers()
+    handle_login = ns["handle_shopee_login"]
+    monkeypatch.setattr(ns["time"], "sleep", lambda _s: None)
+
+    class _OtpPage:
+        def __init__(self):
+            self._urls = [
+                "https://shopee.tw/verify/ivs?step=1",
+                "https://shopee.tw/verify/ivs?step=1",
+                "https://seller.shopee.tw/portal/product-mass/import/upload",
+            ]
+            self._idx = 0
+
+        @property
+        def url(self):
+            val = self._urls[min(self._idx, len(self._urls) - 1)]
+            self._idx += 1
+            return val
+
+    alerts = []
+    ok = handle_login(
+        _OtpPage(),
+        otp_wait_timeout=10.0,
+        on_otp_required=lambda u: alerts.append(u),
+    )
+    assert ok is True
+    assert len(alerts) == 1
+    assert "verify/ivs" in alerts[0]
+
+
+def test_async_upload_uses_zero_coupling_task_manager_sync():
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    assert 'notify="ios"' in source
+    assert "sync_memory=True" in source

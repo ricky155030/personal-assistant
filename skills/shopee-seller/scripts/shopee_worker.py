@@ -262,6 +262,10 @@ def run_worker(payload_file: str, task_id: str):
 
         send_telegram_notification(msg)
         print("✅ Telegram 通知發送完畢。")
+        summary_state = "已上架發布" if is_published else "已匯入草稿箱"
+        print(f"任務結果: {summary_state} | 商品={item_title} | item_id={item_id or '-'}")
+        print(f"\n=== 任務 {task_id} 結束 ===")
+        return 0
 
     except Exception as e:
         elapsed = time.perf_counter() - start_time
@@ -283,8 +287,9 @@ def run_worker(payload_file: str, task_id: str):
             f"* 📋 **查看日誌**：`data/task_logs/{task_id}.log`"
         )
         send_telegram_notification(err_msg)
-
-    print(f"\n=== 任務 {task_id} 結束 ===")
+        print(f"任務結果: 失敗 | 商品={item_title} | 原因={err_str}", file=sys.stderr)
+        print(f"\n=== 任務 {task_id} 結束 ===")
+        return 1
 
 
 def main():
@@ -293,7 +298,7 @@ def main():
     parser.add_argument("--task-id", required=True, help="TaskManager 任務識別碼")
     args = parser.parse_args()
 
-    run_worker(args.payload_file, args.task_id)
+    sys.exit(run_worker(args.payload_file, args.task_id))
 
 
 if __name__ == "__main__":

@@ -1378,17 +1378,71 @@ def ensure_chrome_assistant(port: int = 9223, timeout: float = 10.0) -> None:
     raise TimeoutError(f"Chrome-Assistant 啟動超時 ({timeout}s)，未能於 {cdp_url} 回應。")
 
 
-def handle_shopee_login(page, timeout: float = 15.0) -> bool:
-    """若頁面處於蝦皮賣家登入頁，使用環境變數帳密自動登入"""
+def _is_shopee_login_url(url: str) -> bool:
+    """判斷網址是否位於蝦皮賣家登入頁。"""
+    parsed_path = urllib.parse.urlparse(url or "").path
+    return "/seller/login" in parsed_path or parsed_path.rstrip("/").endswith("/login")
+
+
+def _is_shopee_verification_url(url: str) -> bool:
+    """判斷網址是否位於蝦皮 OTP / 二階段 / 滑塊驗證頁。"""
+    lowered = (url or "").lower()
+    return any(tok in lowered for tok in ("/verify/", "/captcha", "two_step", "verify/ivs", "verify/otp"))
+
+
+def _notify_shopee_otp_required(cur_url: str) -> None:
+    """透過 TaskManager 零耦合通道發送蝦皮等待 OTP 驗證通知。"""
+    try:
+        from task_manager import send_task_alert
+        send_task_alert(
+            title="🔐 蝦皮需要登入驗證",
+            message="偵測到蝦皮 OTP 或安全驗證，請於 Chrome-Assistant 完成輸入，系統將自動等待最多 3 分鐘並接續上架。",
+            channels="ios,telegram",
+        )
+    except Exception as e:
+        print(f"[handle_shopee_login] 發送 OTP 提醒失敗: {e}", file=sys.stderr)
+
+
+def handle_shopee_login(
+    page,
+    timeout: float = 15.0,
+    otp_wait_timeout: float = 180.0,
+    on_otp_required=None,
+) -> bool:
+    """若頁面處於蝦皮賣家登入或驗證頁，自動登入並支援等待手動 OTP 驗證後接續。"""
     import os
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except Exception:
         pass
+
+    def _wait_for_otp_clear(cur_url: str) -> bool:
+        if otp_wait_timeout <= 0:
+            return False
+        print(f"[handle_shopee_login] 偵測到需人工驗證 ({cur_url})，等待最多 {int(otp_wait_timeout)} 秒...")
+        notifier = on_otp_required or _notify_shopee_otp_required
+        try:
+            notifier(cur_url)
+        except Exception as notify_err:
+            print(f"[handle_shopee_login] OTP 通知回呼失敗: {notify_err}", file=sys.stderr)
+        otp_deadline = time.perf_counter() + otp_wait_timeout
+        while time.perf_counter() < otp_deadline:
+            time.sleep(2.0)
+            now_url = page.url
+            if not _is_shopee_login_url(now_url) and not _is_shopee_verification_url(now_url):
+                print("[handle_shopee_login] ✅ 偵測到驗證完成，自動接續上架流程！")
+                return True
+        print("[handle_shopee_login] ❌ 等待 OTP 驗證逾時")
+        return False
+
+    if _is_shopee_verification_url(page.url):
+        return _wait_for_otp_clear(page.url)
+
     username = os.getenv("SHOPEE_USERNAME")
     password = os.getenv("SHOPEE_PASSWORD")
     if not username or not password:
+        print("[handle_shopee_login] 缺少 SHOPEE_USERNAME 或 SHOPEE_PASSWORD")
         return False
     try:
         # 若頁面跳出「選擇語言」彈窗（#modal），先點選「繁體中文」解除遮罩
@@ -1413,10 +1467,23 @@ def handle_shopee_login(page, timeout: float = 15.0) -> bool:
                 deadline = time.perf_counter() + timeout
                 while time.perf_counter() < deadline:
                     time.sleep(0.8)
-                    cur_path = urllib.parse.urlparse(page.url).path
-                    if "/seller/login" not in cur_path and not cur_path.rstrip("/").endswith("/login"):
+                    now_url = page.url
+                    if _is_shopee_verification_url(now_url):
+                        return _wait_for_otp_clear(now_url)
+                    if not _is_shopee_login_url(now_url):
                         return True
-                return False
+                    # 若頁面明確顯示帳密錯誤，立即失敗不空等 3 分鐘
+                    try:
+                        err_loc = page.locator(".error-message, .shopee-authen-error, [role='alert']").first
+                        if err_loc.count() > 0 and err_loc.is_visible():
+                            err_txt = (err_loc.inner_text() or "").strip()
+                            if err_txt and any(k in err_txt for k in ("錯誤", "不正確", "error", "incorrect", "invalid")):
+                                print(f"[handle_shopee_login] 登入被拒: {err_txt}")
+                                return False
+                    except Exception:
+                        pass
+                # 超出初始等待仍停在登入/驗證頁（可能是頁內 OTP 彈窗），進入 OTP 等待
+                return _wait_for_otp_clear(page.url)
     except Exception as e:
         print(f"[handle_shopee_login] 自動登入嘗試失敗: {e}")
     return False
@@ -1518,18 +1585,16 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
         upload_page.goto("https://seller.shopee.tw/portal/product-mass/import/upload", wait_until="domcontentloaded", timeout=30000)
         upload_page.wait_for_timeout(2000)
 
-        # 精確比對路徑是否為登入頁（避免 URL query 帶有 is_from_login=true 造成誤判）
-        parsed_path = urllib.parse.urlparse(upload_page.url).path
-        if "/seller/login" in parsed_path or parsed_path.rstrip("/").endswith("/login"):
+        # 精確比對路徑是否為登入或驗證頁（避免 URL query 帶有 is_from_login=true 造成誤判）
+        if _is_shopee_login_url(upload_page.url) or _is_shopee_verification_url(upload_page.url):
             logged_in = handle_shopee_login(upload_page)
             if not logged_in:
                 cur_url = upload_page.url
-                raise RuntimeError(f"蝦皮賣家中心未登入且自動登入未完成（可能需 OTP / 驗證碼或未設定帳密），目前頁面: {cur_url}")
+                raise RuntimeError(f"蝦皮賣家中心未登入且驗證未完成（帳密錯誤、未設定或 OTP 等待逾時），目前頁面: {cur_url}")
             upload_page.goto("https://seller.shopee.tw/portal/product-mass/import/upload", wait_until="domcontentloaded", timeout=30000)
             upload_page.wait_for_timeout(2000)
-            parsed_path_after = urllib.parse.urlparse(upload_page.url).path
-            if "/seller/login" in parsed_path_after or parsed_path_after.rstrip("/").endswith("/login"):
-                raise RuntimeError(f"蝦皮賣家登入後仍被導回登入頁，請於 Chrome-Assistant 手動完成登入驗證: {upload_page.url}")
+            if _is_shopee_login_url(upload_page.url) or _is_shopee_verification_url(upload_page.url):
+                raise RuntimeError(f"蝦皮賣家登入後仍被導回登入/驗證頁，請於 Chrome-Assistant 手動完成登入驗證: {upload_page.url}")
 
         # 確保處於「上傳檔案」頁籤
         upload_tab = upload_page.get_by_text("上傳檔案", exact=True)
@@ -2145,7 +2210,9 @@ def main():
             name=f"shopee_upload_{task_id}",
             script=str(worker_script),
             args=["--payload-file", str(payload_path), "--task-id", task_id],
-            ttl_minutes=15
+            ttl_minutes=15,
+            notify="ios",
+            sync_memory=True,
         )
 
         first_item = items[0]

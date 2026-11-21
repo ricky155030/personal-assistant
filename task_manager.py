@@ -135,6 +135,19 @@ def _send_ios_notification(title: str, message: str) -> bool:
         return False
 
 
+def send_task_alert(title: str, message: str, channels: str = "ios,telegram") -> Dict[str, bool]:
+    """供背景腳本在執行中（如等待 OTP 驗證、登入失敗）發送零耦合跨通道即時提醒。"""
+    targets = {c.strip().lower() for c in (channels or "").split(",") if c.strip()}
+    results: Dict[str, bool] = {}
+    if "ios" in targets:
+        results["ios"] = _send_ios_notification(title=title, message=message)
+    if "telegram" in targets:
+        results["telegram"] = _send_telegram_notification(
+            f"<b>{html.escape(title)}</b>\n\n{html.escape(message)}"
+        )
+    return results
+
+
 def _dispatch_notifications(
     notify_channels: str,
     name: str,
