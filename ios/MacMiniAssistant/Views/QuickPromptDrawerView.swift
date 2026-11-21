@@ -77,7 +77,7 @@ struct QuickPromptDrawerView: View {
                     .foregroundColor(.red)
                 }
             }
-            .navigationTitle("快捷指令抽屜")
+            .navigationTitle("常用指令")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

@@ -285,6 +285,12 @@ class MemoryManager:
         if images:
             record["images"] = list(images)
         self._append_jsonl_locked(settings.HISTORY_LOG_PATH, record)
+        if reply:
+            try:
+                from artifacts_store import register_artifacts_from_reply
+                register_artifacts_from_reply(reply, user_query=query)
+            except Exception:
+                pass
 
     def _log_audit(self, event_type: str, data: Dict[str, Any]):
         audit_file = settings.DATA_DIR / "audit.jsonl"

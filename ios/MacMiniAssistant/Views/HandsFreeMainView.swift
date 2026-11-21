@@ -161,6 +161,7 @@ struct HandsFreeMainView: View {
 
     @State private var showQuotaSheet: Bool = false
     @State private var showQuickPromptDrawer: Bool = false
+    @State private var showArtifactsSheet: Bool = false
     @State private var quickPrompts: [QuickPromptPreset] = QuickPromptStore.loadPresets()
     @State private var showSettings: Bool = false
     @State private var showSearchSheet: Bool = false
@@ -262,6 +263,18 @@ struct HandsFreeMainView: View {
                 haptic.impactOccurred()
                 isInputFocused = false
                 coordinator.sendQuickReply(prompt)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showArtifactsSheet) {
+            ArtifactsDrawerView { artifact in
+                haptic.impactOccurred()
+                quotedMessage = ChatMessage(
+                    role: .assistant,
+                    content: "產物「\(artifact.title)」：\(artifact.url)"
+                )
+                isInputFocused = true
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -787,7 +800,7 @@ struct HandsFreeMainView: View {
                 let waitingDecisionCount = pendingActions.filter { $0.isWaitingDecision }.count
                 let completedReviewCount = pendingActions.filter { $0.isCompleted }.count
                 let workingCount = pendingActions.filter { $0.isWorking }.count
-                let attentionCount = waitingDecisionCount + completedReviewCount
+                let activeBadgeCount = waitingDecisionCount + completedReviewCount + workingCount
                 let iconTint: Color = waitingDecisionCount > 0
                     ? .orange
                     : (completedReviewCount > 0 ? .cyan : (workingCount > 0 ? .green : .white.opacity(0.72)))
@@ -799,21 +812,21 @@ struct HandsFreeMainView: View {
                         .frame(width: 40, height: 40)
                         .liquidGlass(in: Circle())
 
-                    if attentionCount > 0 {
-                        let badgeColor: Color = waitingDecisionCount > 0 ? .orange : .cyan
-                        Text("\(min(attentionCount, 99))")
+                    if activeBadgeCount > 0 {
+                        let badgeColor: Color = waitingDecisionCount > 0
+                            ? .orange
+                            : (completedReviewCount > 0 ? .cyan : .green)
+                        Text("\(min(activeBadgeCount, 99))")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .padding(.horizontal, 5)
-                            .frame(minWidth: 17, minHeight: 17)
-                            .background(Capsule().fill(badgeColor))
-                            .offset(x: 3, y: -3)
-                    } else if workingCount > 0 {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 10, height: 10)
-                            .overlay(Circle().stroke(Color.black.opacity(0.6), lineWidth: 1.5))
-                            .offset(x: 1, y: -1)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(
+                                Capsule()
+                                    .fill(badgeColor)
+                                    .overlay(Capsule().stroke(Color.black.opacity(0.65), lineWidth: 1.5))
+                            )
+                            .offset(x: 4, y: -4)
                     }
                 }
             }
@@ -849,7 +862,6 @@ struct HandsFreeMainView: View {
     // MARK: - 用量膠囊（Context ◔ + 背景任務 ⚡）
     private var usageCapsuleButton: some View {
         let ctx = latestContextUsage
-        let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
 
         return Button(action: {
             haptic.impactOccurred()
@@ -874,23 +886,6 @@ struct HandsFreeMainView: View {
                         .monospacedDigit()
                         .lineLimit(1)
                 }
-
-                if activeTasks > 0 {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.14))
-                        .frame(width: 1, height: 16)
-
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.cyan)
-                        Text("\(activeTasks)")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.cyan)
-                            .monospacedDigit()
-                            .lineLimit(1)
-                    }
-                }
             }
             .padding(.horizontal, 12)
             .frame(height: 44)
@@ -898,7 +893,7 @@ struct HandsFreeMainView: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("用量：Context \(ctx.pctText)\(activeTasks > 0 ? "，執行中任務 \(activeTasks) 個" : "")")
+        .accessibilityLabel("用量：Context \(ctx.pctText)")
     }
 
     // MARK: - Context 佔比圓形填充指示器 (與 ACP 統一大腦 Context 用量同步，點擊檢視明細 / 切換音訊)
@@ -1698,46 +1693,71 @@ struct HandsFreeMainView: View {
                 liveVoiceFloatingBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if showQuickSkillBar && coordinator.pendingImagesData.isEmpty && coordinator.pendingImageData == nil {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        Button(action: {
-                            haptic.impactOccurred()
-                            isInputFocused = false
-                            showQuickPromptDrawer = true
-                        }) {
-                            Image(systemName: "square.grid.2x2")
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(.cyan)
-                                .padding(.horizontal, 10)
-                                .frame(minHeight: 34)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.cyan.opacity(0.14))
-                                        .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
-                                )
-                                .accessibilityLabel("快捷抽屜")
-                        }
-                        .buttonStyle(.plain)
-
-                        ForEach(quickPrompts) { chip in
-                            Button(action: {
-                                guard !coordinator.isProcessingOrSpeaking else { return }
-                                haptic.impactOccurred()
-                                isInputFocused = false
-                                coordinator.sendQuickReply(chip.prompt)
-                            }) {
-                                Label(chip.title, systemImage: chip.icon)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(.primary)
-                                    .padding(.horizontal, 12)
-                                    .frame(minHeight: 34)
-                                    .liquidGlass(in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
+                let activeTasks = coordinator.quotaSnapshot?.activeTaskCount ?? 0
+                HStack(spacing: 8) {
+                    Button(action: {
+                        haptic.impactOccurred()
+                        isInputFocused = false
+                        showQuickPromptDrawer = true
+                    }) {
+                        Label("常用指令", systemImage: "square.grid.2x2")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 34)
+                            .background(
+                                Capsule()
+                                    .fill(Color.cyan.opacity(0.14))
+                                    .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
+                            )
                     }
-                    .padding(.horizontal, 2)
+                    .buttonStyle(.plain)
+
+                    Button(action: {
+                        haptic.impactOccurred()
+                        isInputFocused = false
+                        showArtifactsSheet = true
+                    }) {
+                        Label("產物", systemImage: "shippingbox.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 34)
+                            .liquidGlass(in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: {
+                        haptic.impactOccurred()
+                        isInputFocused = false
+                        showQuotaSheet = true
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "bolt.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(activeTasks > 0 ? .cyan : .secondary)
+                            Text("背景任務")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.primary)
+                            if activeTasks > 0 {
+                                Text("\(activeTasks)")
+                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 5)
+                                    .frame(minWidth: 16, minHeight: 16)
+                                    .background(Capsule().fill(Color.cyan))
+                                    .monospacedDigit()
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 34)
+                        .liquidGlass(in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 2)
             }
 
             // 若有附加圖片（支援單張與多張），於輸入列上方顯示橫向縮圖預覽列

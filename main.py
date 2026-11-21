@@ -511,6 +511,25 @@ def get_reports_list():
     reports.sort(key=lambda x: x["mtime"], reverse=True)
     return {"reports": reports, "total": len(reports)}
 
+
+@app.get("/api/artifacts")
+def get_artifacts(_authorized: bool = Depends(verify_token)):
+    """取得助理曾正式交付給主人的產物清單（報告與圖片網址，不含未交付伺服器檔案）"""
+    from artifacts_store import list_artifacts
+    items = list_artifacts()
+    return {"artifacts": items, "total": len(items)}
+
+
+@app.delete("/api/artifacts/{artifact_id}")
+def delete_artifact(artifact_id: str, _authorized: bool = Depends(verify_token)):
+    """從 App 產物清單軟移除項目（不刪除伺服器硬碟上的真實檔案）"""
+    from artifacts_store import hide_artifact, list_artifacts
+    ok = hide_artifact(artifact_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    items = list_artifacts()
+    return {"success": True, "artifacts": items, "total": len(items)}
+
 @app.get("/api/performance-review")
 def get_performance_review(hours: int = 24, min_latency: float = 15.0, notify: bool = False):
     """手動觸發慢問答效能審查與改進提案生成"""

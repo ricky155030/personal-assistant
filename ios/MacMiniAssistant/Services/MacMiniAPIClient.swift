@@ -838,4 +838,44 @@ public final class MacMiniAPIClient {
             return nil
         }
     }
+
+    /// 取得助理曾正式交付的產物清單
+    public func fetchArtifacts() async -> [ArtifactItem] {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/artifacts") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(ArtifactsResponse.self, from: data)
+            return decoded.artifacts
+        } catch {
+            return []
+        }
+    }
+
+    /// 從 App 產物清單軟移除（不刪除伺服器原檔）
+    public func removeArtifact(id: String) async -> [ArtifactItem]? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/artifacts/\(id)") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            let decoded = try JSONDecoder().decode(ArtifactsResponse.self, from: data)
+            return decoded.artifacts
+        } catch {
+            return nil
+        }
+    }
 }

@@ -918,3 +918,36 @@ public struct PendingActionsResponse: Codable, Sendable {
     public let history: [PendingActionItem]?
     public let dispatched_to: String?
 }
+
+public struct ArtifactItem: Codable, Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let url: String
+    public let type: String
+    public let createdAt: String
+    public let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case url
+        case type
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        self.title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? "交付產物"
+        self.url = (try? c.decodeIfPresent(String.self, forKey: .url)) ?? ""
+        self.type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? "report"
+        self.createdAt = (try? c.decodeIfPresent(String.self, forKey: .createdAt)) ?? ""
+        self.updatedAt = (try? c.decodeIfPresent(String.self, forKey: .updatedAt)) ?? ""
+    }
+}
+
+public struct ArtifactsResponse: Codable, Sendable {
+    public let artifacts: [ArtifactItem]
+    public let total: Int?
+}
