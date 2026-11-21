@@ -27,6 +27,13 @@ from scripts.herdr_coordinator import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pending_actions():
+    """避免單元測試呼叫本機後端 /api/actions/pending 寫入正式佇列。"""
+    with patch("scripts.herdr_coordinator._push_pending_action"):
+        yield
+
+
 def test_inject_coordination_rule():
     prompt = "請重構 database.py 中的連線池模組"
     injected = inject_coordination_rule(prompt)
