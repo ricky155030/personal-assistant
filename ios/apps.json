@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.1.3",
+          "buildVersion": "146",
+          "date": "2026-11-21T04:08:24Z",
+          "localizedDescription": "調高 HTML Widget 最大高度上限至 2400pt，避免長內容卡片被截斷",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.3/MacMiniAssistant.ipa",
+          "size": 4360159,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.1.2",
-          "buildVersion": "144",
-          "date": "2026-11-20T10:16:04Z",
-          "localizedDescription": "單則訊息截圖分享自動內嵌 HTML Widget 卡片與完整 Markdown 排版",
+          "buildVersion": "145",
+          "date": "2026-11-21T04:08:02Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.2/MacMiniAssistant.ipa",
-          "size": 4360156,
+          "size": 4360160,
           "minOSVersion": "17.0"
         },
         {
