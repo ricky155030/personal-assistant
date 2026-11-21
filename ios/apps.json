@@ -13,6 +13,15 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.2.0",
+          "buildVersion": "150",
+          "date": "2026-11-21T09:05:59Z",
+          "localizedDescription": "Herdr 派工督工中心：即時執行進度與終端實況、監工自動代答常規問題、結構化完工檢閱、同卡多輪原視窗續派與永久歷史紀錄分頁",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.0/MacMiniAssistant.ipa",
+          "size": 4464558,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.1.4",
           "buildVersion": "148",
           "date": "2026-11-21T07:19:39Z",
