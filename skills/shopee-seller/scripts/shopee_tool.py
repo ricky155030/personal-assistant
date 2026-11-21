@@ -970,6 +970,35 @@ def _fill_radio_group(row_loc, target_option: str) -> bool:
         pass
     return False
 
+
+def _locate_publish_button(draft_page):
+    """定位草稿頁底部可見的主『上架』按鈕，排除隱藏的『上架並綁定』outline 按鈕。"""
+    exact_re = re.compile(r"^\s*(儲存並)?上架\s*$")
+    primary_solid = draft_page.locator(
+        "button.eds-button--xl-large:not(.eds-button--outline):visible, "
+        "button.eds-button--primary:not(.eds-button--outline):visible"
+    )
+    exact_match = primary_solid.filter(has_text=exact_re)
+    if exact_match.count() > 0:
+        return exact_match.first
+
+    # 降級：在可見實心主按鈕中排除「上架並綁定」
+    broad = primary_solid.filter(has_text="上架")
+    for idx in range(broad.count()):
+        cand = broad.nth(idx)
+        try:
+            txt = (cand.inner_text() or "").strip()
+            if "上架並綁定" not in txt:
+                return cand
+        except Exception:
+            continue
+
+    fallback = draft_page.locator("button:visible").filter(has_text=exact_re)
+    if fallback.count() > 0:
+        return fallback.first
+    return None
+
+
 def auto_fill_unresolved_attributes(draft_page, product_title: str, category_id: Optional[str] = None, condition: Optional[str] = None, product_description: str = "") -> tuple:
     """
     自動巡檢草稿頁所有未填/報錯的必填欄位（下拉、單選、文字輸入皆涵蓋）。
@@ -1037,17 +1066,22 @@ def auto_fill_unresolved_attributes(draft_page, product_title: str, category_id:
         for (const item of formItems) {
             const labelEl = item.querySelector('label, .item-title-text, .eds-form-item__label, .edit-label, .edit-title');
             const rawLabel = labelEl ? labelEl.innerText.trim() : '';
-            const hasAsterisk = rawLabel.includes('*') || item.classList.contains('is-required') || !!item.querySelector('.eds-form-item__required');
+            const hasAsterisk = rawLabel.includes('*') || item.classList.contains('is-required') || !!item.querySelector('.eds-form-item__required, .mandatory');
             const labelText = rawLabel.replace(/\\*/g, '').trim().split('\\n')[0].trim();
             if (!labelText) continue;
+            const isCondition = /保存狀況|商品狀況|新舊/.test(labelText);
+            const isDatePicker = !!item.querySelector('.eds-date-picker, .eds-date-picker-input');
             const selectorEl = item.querySelector('.eds-selector');
             const radios = item.querySelectorAll("input[type='radio'], input[type='checkbox']");
             const textInput = item.querySelector("input[type='text'], input:not([type]), textarea");
             const errEl = item.querySelector('.eds-form-item__error, .product-edit-form-item-error, .eds-form-item__explain');
-            const isError = item.classList.contains('is-error') || item.classList.contains('error') || !!errEl;
             const errText = errEl ? errEl.innerText.trim().slice(0, 120) : '';
+            const isError = item.classList.contains('is-error') || item.classList.contains('error') || (!!errEl && errText.length > 0);
+            const mustCheck = hasAsterisk || isError || isCondition;
+            if (!mustCheck) continue;
+            if (isDatePicker && !isError) continue;
             let widget = '', value = '', filled = true;
-            if (selectorEl) {
+            if (selectorEl && !isDatePicker) {
                 widget = 'selector';
                 value = selectorEl.innerText.trim().slice(0, 60);
                 filled = !(value.includes('請選擇') || value === '');
@@ -1056,7 +1090,7 @@ def auto_fill_unresolved_attributes(draft_page, product_title: str, category_id:
                 const checked = Array.from(radios).find(r => r.checked);
                 filled = !!checked;
                 value = checked ? (checked.value || '已選') : '';
-            } else if (textInput && (hasAsterisk || isError)) {
+            } else if (textInput) {
                 widget = 'input';
                 value = (textInput.value || '').slice(0, 60);
                 filled = value.trim() !== '';
@@ -1638,8 +1672,9 @@ def upload_excel_to_shopee(excel_path: str, timeout_sec: int = 40, expected_titl
 
                         time.sleep(1.5)
 
-                        publish_btn = draft_page.locator("button.eds-button--xl-large, button.eds-button--primary").filter(has_text="上架").last
-                        if publish_btn.count() > 0:
+                        publish_btn = _locate_publish_button(draft_page)
+                        if publish_btn is not None and publish_btn.count() > 0:
+                            publish_btn.scroll_into_view_if_needed()
                             publish_btn.click()
                             for _ in range(18):
                                 time.sleep(0.8)
