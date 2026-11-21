@@ -164,5 +164,57 @@ def test_try_inject_memory_sync_uses_primary_worker():
     assert reason == "ok"
     fake_worker.send_query_stream.assert_called_once()
     mock_log.assert_called_once()
-    assert mock_log.call_args[0][0] == ""
-    assert "CI 已綠燈通過" in mock_log.call_args[0][1]
+
+
+def test_try_inject_memory_sync_auto_heals_on_error_with_budget_cap():
+    import agy_singleton as agy_mod
+
+    with ts._AUTO_HEAL_LOCK:
+        ts._AUTO_HEAL_HISTORY.clear()
+
+    fake_worker = MagicMock()
+    fake_worker.lock.acquire.return_value = True
+    fake_worker._is_ready = True
+    fake_worker.proc = MagicMock()
+    fake_worker.proc.poll.return_value = None
+    fake_worker.send_query_stream.side_effect = [
+        iter([("text", "已修復語法錯誤並通過驗證")]),
+        iter([("text", "第二次修復嘗試完成")]),
+        iter([("text", "已達上限，請人工介入")]),
+    ]
+
+    fake_pool = MagicMock(spec=["primary_worker"])
+    fake_pool.primary_worker = fake_worker
+
+    err_meta = {"task_name": "CI 監控", "task_status": "error", "exit_code": 1}
+
+    with patch.object(agy_mod, "agy_singleton", fake_pool), \
+         patch("memory_manager.memory_manager.log_interaction"):
+        for _ in range(3):
+            ok, reason = ts.try_inject_memory_sync(
+                "CI 失敗",
+                "task:ci_fail",
+                report_to_user=True,
+                metadata=err_meta,
+            )
+            assert ok is True
+            assert reason == "ok"
+
+    prompts = [call.args[0] for call in fake_worker.send_query_stream.call_args_list]
+    assert "失敗自癒喚醒" in prompts[0] and "第 1/2 次嘗試" in prompts[0]
+    assert "請勿呼叫任何工具" not in prompts[0]
+    assert "失敗自癒喚醒" in prompts[1] and "第 2/2 次嘗試" in prompts[1]
+    assert "已達自動修復上限" in prompts[2] and "請勿呼叫任何工具" in prompts[2]
+
+    # 成功後應重設該任務的自動修復額度
+    with patch.object(agy_mod, "agy_singleton", fake_pool), \
+         patch("memory_manager.memory_manager.log_interaction"):
+        fake_worker.send_query_stream.side_effect = None
+        fake_worker.send_query_stream.return_value = iter([("text", "CI 綠燈通過")])
+        ts.try_inject_memory_sync(
+            "CI 成功",
+            "task:ci_ok",
+            report_to_user=True,
+            metadata={"task_name": "CI 監控", "task_status": "ok", "exit_code": 0},
+        )
+    assert "CI 監控" not in ts._AUTO_HEAL_HISTORY

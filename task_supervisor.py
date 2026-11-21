@@ -21,6 +21,28 @@ _MEMO_QUEUE_LOCK = threading.Lock()
 _PENDING_MEMOS: Deque[Dict[str, Any]] = deque(maxlen=50)
 _RESTART_COOLDOWN_SEC = 60.0
 _LAST_RESTART_ATTEMPT: Dict[str, float] = {}
+_AUTO_HEAL_LOCK = threading.Lock()
+_AUTO_HEAL_HISTORY: Dict[str, list] = {}
+_AUTO_HEAL_MAX_ATTEMPTS = 2
+_AUTO_HEAL_WINDOW_SEC = 1800.0
+
+
+def _consume_auto_heal_budget(task_key: str) -> Tuple[bool, int]:
+    """檢查並扣減同一任務在時間窗內的自動修復喚醒額度，防止失敗重試無限迴圈。"""
+    now = time.time()
+    with _AUTO_HEAL_LOCK:
+        recent = [t for t in _AUTO_HEAL_HISTORY.get(task_key, []) if now - t < _AUTO_HEAL_WINDOW_SEC]
+        if len(recent) >= _AUTO_HEAL_MAX_ATTEMPTS:
+            _AUTO_HEAL_HISTORY[task_key] = recent
+            return False, len(recent)
+        recent.append(now)
+        _AUTO_HEAL_HISTORY[task_key] = recent
+        return True, len(recent)
+
+
+def _reset_auto_heal_budget(task_key: str) -> None:
+    with _AUTO_HEAL_LOCK:
+        _AUTO_HEAL_HISTORY.pop(task_key, None)
 
 
 def get_pending_memo_count() -> int:
@@ -64,12 +86,33 @@ def try_inject_memory_sync(
         return False, "worker_not_ready"
 
     if report_to_user:
-        memo_prompt = (
-            f"[系統背景任務回報（來源: {source}），請勿呼叫任何工具]\n"
-            f"請根據對話上下文與以下執行紀錄，用 2~3 句簡明自然的繁體中文直接向主人回報，"
-            f"內容必須包含：1) 這個背景任務在做什麼與對應哪次改動 2) 關鍵識別碼（如任務 ID 或 Run ID）"
-            f"3) 最終執行結果、耗時與有無需要注意的異常：\n{summary}"
-        )
+        is_error = bool(metadata and metadata.get("task_status") == "error")
+        task_key = str((metadata or {}).get("task_name") or source).strip()
+        if is_error:
+            allow_heal, attempt_no = _consume_auto_heal_budget(task_key)
+            if allow_heal:
+                memo_prompt = (
+                    f"[系統背景任務失敗自癒喚醒（來源: {source}，第 {attempt_no}/{_AUTO_HEAL_MAX_ATTEMPTS} 次嘗試）]\n"
+                    f"以下背景任務執行失敗或逾時，允許你呼叫工具（如 read_file、edit_file、run_command 等）診斷並自動修復。\n"
+                    f"處理原則：\n"
+                    f"1. 若屬程式碼、腳本、相依或 CI 問題，請直接排查 Log 並就地修正與驗證（若需重跑長任務請用 TaskManager 派發）。\n"
+                    f"2. 若屬無法自動排除之問題（如缺少憑證、外部服務中斷、需要主人決策），請立即停止並明確說明原因。\n"
+                    f"3. 最後請用 2~4 句簡明自然的繁體中文直接向主人回報：任務識別碼、失敗原因、是否已自動修復以及驗證結果：\n{summary}"
+                )
+            else:
+                memo_prompt = (
+                    f"[系統背景任務回報（來源: {source}，已達自動修復上限 {_AUTO_HEAL_MAX_ATTEMPTS} 次），請勿呼叫任何工具]\n"
+                    f"請根據對話上下文與以下執行紀錄，用 2~3 句簡明自然的繁體中文直接向主人回報失敗原因與建議處置，"
+                    f"內容必須包含：1) 這個背景任務在做什麼 2) 關鍵識別碼（如任務 ID 或 Run ID）3) 失敗結果與異常摘要：\n{summary}"
+                )
+        else:
+            _reset_auto_heal_budget(task_key)
+            memo_prompt = (
+                f"[系統背景任務回報（來源: {source}），請勿呼叫任何工具]\n"
+                f"請根據對話上下文與以下執行紀錄，用 2~3 句簡明自然的繁體中文直接向主人回報，"
+                f"內容必須包含：1) 這個背景任務在做什麼與對應哪次改動 2) 關鍵識別碼（如任務 ID 或 Run ID）"
+                f"3) 最終執行結果、耗時與有無需要注意的異常：\n{summary}"
+            )
     else:
         memo_prompt = (
             f"[系統背景備忘（來源: {source}），請僅回覆「收到」兩字，勿呼叫任何工具]\n"
