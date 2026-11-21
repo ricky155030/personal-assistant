@@ -720,10 +720,10 @@ public final class MacMiniAPIClient {
         }
     }
 
-    /// 取得目前等待主人決策的待辦佇列（Action Queue）
-    public func fetchPendingActions() async -> [PendingActionItem] {
+    /// 取得目前 Herdr 督工抽屜（目前派工 + 歷史歸檔紀錄）完整資料
+    public func fetchPendingActionsPayload() async -> (actions: [PendingActionItem], history: [PendingActionItem]) {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(cleanBase)/api/actions/pending") else { return [] }
+        guard let url = URL(string: "\(cleanBase)/api/actions/pending") else { return ([], []) }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 5.0
@@ -731,36 +731,51 @@ public final class MacMiniAPIClient {
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-                return []
+                return ([], [])
             }
             let decoded = try JSONDecoder().decode(PendingActionsResponse.self, from: data)
-            return decoded.actions
+            return (decoded.actions, decoded.history ?? [])
         } catch {
-            return []
+            return ([], [])
         }
     }
 
-    /// 回覆或忽略一筆待決策項目，並回傳更新後的佇列與派發目標（brain / herdr）
-    public func resolvePendingAction(id: String, answer: String, dismiss: Bool = false) async -> (Bool, [PendingActionItem], String?) {
+    /// 取得目前等待主人決策或執行中的待辦佇列（Action Queue）
+    public func fetchPendingActions() async -> [PendingActionItem] {
+        let payload = await fetchPendingActionsPayload()
+        return payload.actions
+    }
+
+    /// 回覆決策、原視窗續派修改（action: "followup"）或結案歸檔（dismiss: true）
+    public func resolvePendingAction(
+        id: String,
+        answer: String,
+        dismiss: Bool = false,
+        action: String? = nil
+    ) async -> (Bool, [PendingActionItem], [PendingActionItem], String?) {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(cleanBase)/api/actions/pending/\(id)/resolve") else {
-            return (false, [], nil)
+            return (false, [], [], nil)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 15.0
+        request.timeoutInterval = 20.0
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["answer": answer, "dismiss": dismiss])
+        var bodyObj: [String: Any] = ["answer": answer, "dismiss": dismiss]
+        if let action = action {
+            bodyObj["action"] = action
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: bodyObj)
         do {
             let (data, response) = try await session.data(for: request)
             guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
-                return (false, [], nil)
+                return (false, [], [], nil)
             }
             let decoded = try JSONDecoder().decode(PendingActionsResponse.self, from: data)
-            return (true, decoded.actions, decoded.dispatched_to)
+            return (true, decoded.actions, decoded.history ?? [], decoded.dispatched_to)
         } catch {
-            return (false, [], nil)
+            return (false, [], [], nil)
         }
     }
 

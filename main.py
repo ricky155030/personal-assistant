@@ -212,11 +212,22 @@ class PendingActionCreateRequest(BaseModel):
     options: List[str] = []
     source: str = "herdr"
     context_prompt: str = ""
+    status: Optional[str] = None
+    task_prompt: str = ""
+    summary: str = ""
+    elapsed_seconds: int = 0
+    tool_count: int = 0
+    tool_calls: List[str] = []
+    live_preview: str = ""
+    terminal_tail: str = ""
+    retry_count: int = 0
+    max_retries: int = 3
 
 
 class PendingActionResolveRequest(BaseModel):
     answer: str = ""
     dismiss: bool = False
+    action: Optional[str] = None
 
 
 _PENDING_ACTIONS_LOCK = threading.Lock()
@@ -224,6 +235,10 @@ _PENDING_ACTIONS_LOCK = threading.Lock()
 
 def _pending_actions_file():
     return settings.DATA_DIR / "pending_actions.json"
+
+
+def _herdr_history_file():
+    return settings.DATA_DIR / "herdr_history.json"
 
 
 def _load_pending_actions() -> List[dict]:
@@ -243,6 +258,50 @@ def _save_pending_actions(items: List[dict]) -> None:
     p.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_herdr_history() -> List[dict]:
+    p = _herdr_history_file()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_herdr_history(items: List[dict]) -> None:
+    p = _herdr_history_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(items[:100], ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _archive_herdr_action(item: dict) -> dict:
+    """將已結案的 Herdr 派工卡片歸檔至 herdr_history.json 永久留存。"""
+    now_iso = datetime.now().isoformat()
+    archived = dict(item)
+    archived["status"] = "archived"
+    archived["archived_at"] = now_iso
+    archived["updated_at"] = now_iso
+    history = _load_herdr_history()
+    history = [x for x in history if x.get("id") != archived.get("id")]
+    history.insert(0, archived)
+    _save_herdr_history(history)
+    return archived
+
+
+def _compute_action_counts(items: List[dict]) -> tuple[int, int]:
+    """回傳 (需主人注意的決策/完工待檢閱數, 執行中工人數)"""
+    attention = 0
+    working = 0
+    for x in items:
+        st = (x.get("status") or "waiting_decision").strip().lower()
+        if st in ("working", "retrying"):
+            working += 1
+        else:
+            attention += 1
+    return attention, working
+
+
 def _upsert_pending_action(
     agent: str,
     title: str,
@@ -250,23 +309,79 @@ def _upsert_pending_action(
     options: Optional[List[str]] = None,
     source: str = "herdr",
     context_prompt: str = "",
+    status: Optional[str] = None,
+    task_prompt: str = "",
+    summary: str = "",
+    elapsed_seconds: int = 0,
+    tool_count: int = 0,
+    tool_calls: Optional[List[str]] = None,
+    live_preview: str = "",
+    terminal_tail: str = "",
+    retry_count: int = 0,
+    max_retries: int = 3,
 ) -> dict:
     import uuid
     now_iso = datetime.now().isoformat()
-    item = {
-        "id": f"act_{int(time.time())}_{uuid.uuid4().hex[:6]}",
-        "agent": agent.strip(),
-        "title": title.strip(),
-        "question": question.strip(),
-        "options": [o.strip() for o in (options or []) if o.strip()],
-        "source": source,
-        "context_prompt": (context_prompt or "").strip(),
-        "created_at": now_iso,
-    }
+    agent_clean = agent.strip()
+    effective_status = (status or "waiting_decision").strip().lower()
+
     with _PENDING_ACTIONS_LOCK:
         items = _load_pending_actions()
-        # 同一 agent 僅保留最新一筆待決策項目，避免重複洗版
-        items = [x for x in items if x.get("agent") != item["agent"]]
+        existing = next((x for x in items if x.get("agent") == agent_clean), None)
+
+        round_no = int((existing or {}).get("round_no") or 1)
+        rounds = list((existing or {}).get("rounds") or [])
+        prev_task_prompt = (existing or {}).get("task_prompt") or ""
+        clean_task_prompt = (task_prompt or "").strip()
+
+        # 若該 Agent 先前處於 completed，且收到新一輪派工 (working + 新 task_prompt)，自動將上一輪收合進 rounds
+        if (
+            existing
+            and existing.get("status") == "completed"
+            and effective_status == "working"
+            and clean_task_prompt
+            and clean_task_prompt != prev_task_prompt
+        ):
+            rounds.append({
+                "round_no": round_no,
+                "task_prompt": prev_task_prompt,
+                "summary": (existing.get("summary") or existing.get("question") or "").strip(),
+                "completed_at": existing.get("updated_at") or existing.get("created_at") or now_iso,
+                "tool_count": int(existing.get("tool_count") or 0),
+            })
+            round_no += 1
+
+        effective_task_prompt = clean_task_prompt or prev_task_prompt
+        effective_summary = (summary or "").strip()
+        if not effective_summary and effective_status == "completed":
+            effective_summary = question.strip()
+        elif not effective_summary and existing and effective_status != "working":
+            effective_summary = (existing.get("summary") or "").strip()
+
+        item = {
+            "id": (existing or {}).get("id") or f"act_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+            "agent": agent_clean,
+            "title": title.strip() or (existing or {}).get("title", agent_clean),
+            "question": question.strip(),
+            "options": [o.strip() for o in (options or []) if o.strip()],
+            "source": source,
+            "context_prompt": (context_prompt or (existing or {}).get("context_prompt") or "").strip(),
+            "created_at": (existing or {}).get("created_at") or now_iso,
+            "updated_at": now_iso,
+            "status": effective_status,
+            "task_prompt": effective_task_prompt,
+            "summary": effective_summary,
+            "elapsed_seconds": int(elapsed_seconds if elapsed_seconds > 0 else ((existing or {}).get("elapsed_seconds") or 0 if effective_status != "working" else 0)),
+            "tool_count": int(tool_count if tool_count > 0 else ((existing or {}).get("tool_count") or 0 if effective_status != "working" else 0)),
+            "tool_calls": [str(t).strip() for t in (tool_calls or []) if str(t).strip()] or ((existing or {}).get("tool_calls") or [] if effective_status != "working" else []),
+            "live_preview": (live_preview or "").strip(),
+            "terminal_tail": (terminal_tail or "").strip() or ((existing or {}).get("terminal_tail") or "" if effective_status != "working" else ""),
+            "retry_count": int(retry_count),
+            "max_retries": int(max_retries),
+            "round_no": round_no,
+            "rounds": rounds,
+        }
+        items = [x for x in items if x.get("agent") != agent_clean]
         items.insert(0, item)
         _save_pending_actions(items)
     return item
@@ -1819,15 +1934,23 @@ def list_herdr_agents(_authorized: bool = Depends(verify_token)):
 
 @app.get("/api/actions/pending")
 def list_pending_actions(_authorized: bool = Depends(verify_token)):
-    """取得目前等待主人決策的待辦佇列（Action Queue）。"""
+    """取得目前 Herdr 派工督工抽屜（進行中 / 待決策 / 完工待檢閱）與歷史歸檔紀錄。"""
     with _PENDING_ACTIONS_LOCK:
         items = _load_pending_actions()
-    return {"actions": items, "count": len(items)}
+        history = _load_herdr_history()
+    attention_count, working_count = _compute_action_counts(items)
+    return {
+        "actions": items,
+        "count": len(items),
+        "attention_count": attention_count,
+        "working_count": working_count,
+        "history": history,
+    }
 
 
 @app.post("/api/actions/pending")
 def create_pending_action(req: PendingActionCreateRequest, _authorized: bool = Depends(verify_token)):
-    """新增或更新一筆待決策項目至 Action Queue。"""
+    """新增或更新一筆 Herdr 派工進度、待決策或完工項目至 Action Queue。"""
     item = _upsert_pending_action(
         agent=req.agent,
         title=req.title,
@@ -1835,52 +1958,170 @@ def create_pending_action(req: PendingActionCreateRequest, _authorized: bool = D
         options=req.options,
         source=req.source,
         context_prompt=req.context_prompt,
+        status=req.status,
+        task_prompt=req.task_prompt,
+        summary=req.summary,
+        elapsed_seconds=req.elapsed_seconds,
+        tool_count=req.tool_count,
+        tool_calls=req.tool_calls,
+        live_preview=req.live_preview,
+        terminal_tail=req.terminal_tail,
+        retry_count=req.retry_count,
+        max_retries=req.max_retries,
     )
     with _PENDING_ACTIONS_LOCK:
-        total = len(_load_pending_actions())
-    return {"status": "ok", "action": item, "count": total}
+        items = _load_pending_actions()
+        history = _load_herdr_history()
+    attention_count, working_count = _compute_action_counts(items)
+    return {
+        "status": "ok",
+        "action": item,
+        "count": len(items),
+        "attention_count": attention_count,
+        "working_count": working_count,
+        "history": history,
+    }
 
 
 @app.post("/api/actions/pending/{action_id}/resolve")
 def resolve_pending_action(action_id: str, req: PendingActionResolveRequest, _authorized: bool = Depends(verify_token)):
-    """處理主人於 App 內做出的決策：回寫至對應 Herdr Agent（或忽略移除）並更新佇列。"""
+    """處理主人於督工抽屜做出的決策、原視窗續派修改（Follow-up）或結案歸檔。"""
     import subprocess
     import sys
 
     with _PENDING_ACTIONS_LOCK:
         items = _load_pending_actions()
+        history_items = _load_herdr_history()
         target = next((x for x in items if x.get("id") == action_id), None)
+        from_history = False
         if not target:
-            raise HTTPException(status_code=404, detail="找不到該待決策項目")
+            target = next((x for x in history_items if x.get("id") == action_id), None)
+            from_history = target is not None
+        if not target:
+            raise HTTPException(status_code=404, detail="找不到該待決策或派工項目")
 
     relayed = False
     dispatched_to = None
-    if not req.dismiss:
-        answer_text = (req.answer or "").strip()
-        if not answer_text:
-            raise HTTPException(status_code=400, detail="回覆內容不可為空")
-        source_str = (target.get("source") or "herdr").strip().lower()
-        if source_str.startswith("brain"):
-            title_str = (target.get("title") or "").strip()
-            ctx = (target.get("context_prompt") or "").strip()
-            q = (target.get("question") or "").strip()
-            combined_prompt = (
-                "【接續先前待決策事項（來自 Action Queue）】\n"
-                + (f"決策標題：{title_str}\n" if title_str else "")
-                + (f"原始任務背景：{ctx}\n" if ctx else "")
-                + (f"先前反問內容：{q}\n" if q else "")
-                + f"主人已選擇 / 回覆：{answer_text}\n\n"
-                + "請根據以上完整前後文直接接續完成任務並回報結果。"
-            )
-            threading.Thread(
-                target=chat,
-                args=(ChatRequest(query=combined_prompt, client="ios-app"), None, True),
-                daemon=True,
-            ).start()
-            relayed = True
-            dispatched_to = "brain"
+    now_iso = datetime.now().isoformat()
+    target_status = (target.get("status") or "waiting_decision").strip().lower()
+    is_tracked_lifecycle = bool(target.get("task_prompt") or target.get("rounds") or target_status in ("working", "retrying", "completed", "archived"))
+
+    if req.dismiss:
+        with _PENDING_ACTIONS_LOCK:
+            if from_history:
+                new_hist = [x for x in _load_herdr_history() if x.get("id") != action_id]
+                _save_herdr_history(new_hist)
+                remaining = _load_pending_actions()
+            else:
+                if is_tracked_lifecycle and not (target.get("source") or "").startswith("brain"):
+                    _archive_herdr_action(target)
+                remaining = [x for x in _load_pending_actions() if x.get("id") != action_id]
+                _save_pending_actions(remaining)
+            history_out = _load_herdr_history()
+        attention_count, working_count = _compute_action_counts(remaining)
+        return {
+            "status": "ok",
+            "relayed": False,
+            "dispatched_to": "archived" if is_tracked_lifecycle else None,
+            "actions": remaining,
+            "count": len(remaining),
+            "attention_count": attention_count,
+            "working_count": working_count,
+            "history": history_out,
+        }
+
+    answer_text = (req.answer or "").strip()
+    if not answer_text:
+        raise HTTPException(status_code=400, detail="回覆內容不可為空")
+
+    source_str = (target.get("source") or "herdr").strip().lower()
+    if source_str.startswith("brain"):
+        title_str = (target.get("title") or "").strip()
+        ctx = (target.get("context_prompt") or "").strip()
+        q = (target.get("question") or "").strip()
+        combined_prompt = (
+            "【接續先前待決策事項（來自 Action Queue）】\n"
+            + (f"決策標題：{title_str}\n" if title_str else "")
+            + (f"原始任務背景：{ctx}\n" if ctx else "")
+            + (f"先前反問內容：{q}\n" if q else "")
+            + f"主人已選擇 / 回覆：{answer_text}\n\n"
+            + "請根據以上完整前後文直接接續完成任務並回報結果。"
+        )
+        threading.Thread(
+            target=chat,
+            args=(ChatRequest(query=combined_prompt, client="ios-app"), None, True),
+            daemon=True,
+        ).start()
+        relayed = True
+        dispatched_to = "brain"
+        with _PENDING_ACTIONS_LOCK:
+            remaining = [x for x in _load_pending_actions() if x.get("id") != action_id]
+            _save_pending_actions(remaining)
+            history_out = _load_herdr_history()
+    else:
+        agent_target = (target.get("agent") or "").strip()
+        is_followup = (req.action == "followup") or (target_status in ("completed", "archived")) or from_history
+
+        if is_followup:
+            if agent_target:
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/herdr_coordinator.py",
+                        "dispatch",
+                        "--agent",
+                        agent_target,
+                        "--prompt",
+                        answer_text,
+                        "--force",
+                    ],
+                    cwd=str(settings.BASE_DIR),
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                )
+                if proc.returncode != 0:
+                    raise HTTPException(status_code=502, detail=proc.stderr.strip() or "續派任務失敗")
+                relayed = True
+                dispatched_to = "herdr_followup"
+
+            with _PENDING_ACTIONS_LOCK:
+                current_items = _load_pending_actions()
+                prev_rounds = list(target.get("rounds") or [])
+                prev_round_no = int(target.get("round_no") or 1)
+                if target.get("task_prompt") or target.get("summary") or target.get("question"):
+                    prev_rounds.append({
+                        "round_no": prev_round_no,
+                        "task_prompt": (target.get("task_prompt") or "").strip(),
+                        "summary": (target.get("summary") or target.get("question") or "").strip(),
+                        "completed_at": target.get("updated_at") or target.get("created_at") or now_iso,
+                        "tool_count": int(target.get("tool_count") or 0),
+                    })
+                updated_card = dict(target)
+                updated_card["status"] = "working"
+                updated_card["round_no"] = prev_round_no + 1
+                updated_card["rounds"] = prev_rounds
+                updated_card["task_prompt"] = answer_text
+                updated_card["question"] = "🔨 續派任務已送出，工人執行中..."
+                updated_card["summary"] = ""
+                updated_card["options"] = []
+                updated_card["live_preview"] = f"第 {prev_round_no + 1} 輪續派：{answer_text[:80]}"
+                updated_card["elapsed_seconds"] = 0
+                updated_card["tool_count"] = 0
+                updated_card["tool_calls"] = []
+                updated_card["retry_count"] = 0
+                updated_card["updated_at"] = now_iso
+
+                remaining = [x for x in current_items if x.get("id") != action_id and x.get("agent") != agent_target]
+                remaining.insert(0, updated_card)
+                _save_pending_actions(remaining)
+
+                if from_history:
+                    new_hist = [x for x in _load_herdr_history() if x.get("id") != action_id]
+                    _save_herdr_history(new_hist)
+                history_out = _load_herdr_history()
         else:
-            agent_target = (target.get("agent") or "").strip()
             if agent_target:
                 proc = subprocess.run(
                     [sys.executable, "scripts/herdr_coordinator.py", "relay", "--agent", agent_target, "--answer", answer_text],
@@ -1895,10 +2136,37 @@ def resolve_pending_action(action_id: str, req: PendingActionResolveRequest, _au
                 relayed = True
                 dispatched_to = "herdr"
 
-    with _PENDING_ACTIONS_LOCK:
-        remaining = [x for x in _load_pending_actions() if x.get("id") != action_id]
-        _save_pending_actions(remaining)
-    return {"status": "ok", "relayed": relayed, "dispatched_to": dispatched_to, "actions": remaining, "count": len(remaining)}
+            with _PENDING_ACTIONS_LOCK:
+                current_items = _load_pending_actions()
+                if is_tracked_lifecycle:
+                    remaining = []
+                    for x in current_items:
+                        if x.get("id") == action_id:
+                            updated = dict(x)
+                            updated["status"] = "working"
+                            updated["options"] = []
+                            updated["question"] = f"🔨 已回覆決策（{answer_text}），工人繼續執行中..."
+                            updated["live_preview"] = f"已送出決策：{answer_text[:80]}"
+                            updated["updated_at"] = now_iso
+                            remaining.append(updated)
+                        else:
+                            remaining.append(x)
+                else:
+                    remaining = [x for x in current_items if x.get("id") != action_id]
+                _save_pending_actions(remaining)
+                history_out = _load_herdr_history()
+
+    attention_count, working_count = _compute_action_counts(remaining)
+    return {
+        "status": "ok",
+        "relayed": relayed,
+        "dispatched_to": dispatched_to,
+        "actions": remaining,
+        "count": len(remaining),
+        "attention_count": attention_count,
+        "working_count": working_count,
+        "history": history_out,
+    }
 
 
 @app.post("/api/system/safe-reload")

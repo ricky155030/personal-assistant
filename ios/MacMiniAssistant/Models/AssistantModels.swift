@@ -795,6 +795,31 @@ public struct HerdrAgentsResponse: Codable, Sendable {
     public let agents: [HerdrAgentInfo]
 }
 
+public struct HerdrRoundRecord: Codable, Equatable, Sendable {
+    public let roundNo: Int
+    public let taskPrompt: String
+    public let summary: String
+    public let completedAt: String
+    public let toolCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case roundNo = "round_no"
+        case taskPrompt = "task_prompt"
+        case summary
+        case completedAt = "completed_at"
+        case toolCount = "tool_count"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.roundNo = (try? c.decodeIfPresent(Int.self, forKey: .roundNo)) ?? 1
+        self.taskPrompt = (try? c.decodeIfPresent(String.self, forKey: .taskPrompt)) ?? ""
+        self.summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+        self.completedAt = (try? c.decodeIfPresent(String.self, forKey: .completedAt)) ?? ""
+        self.toolCount = (try? c.decodeIfPresent(Int.self, forKey: .toolCount)) ?? 0
+    }
+}
+
 public struct PendingActionItem: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let agent: String
@@ -803,6 +828,39 @@ public struct PendingActionItem: Codable, Identifiable, Equatable, Sendable {
     public let options: [String]
     public let source: String
     public let createdAt: String
+    public let updatedAt: String
+    public let status: String
+    public let taskPrompt: String
+    public let summary: String
+    public let elapsedSeconds: Int
+    public let toolCount: Int
+    public let toolCalls: [String]
+    public let livePreview: String
+    public let terminalTail: String
+    public let retryCount: Int
+    public let maxRetries: Int
+    public let roundNo: Int
+    public let rounds: [HerdrRoundRecord]
+
+    public var isWaitingDecision: Bool {
+        status == "waiting_decision"
+    }
+
+    public var isWorking: Bool {
+        status == "working" || status == "retrying"
+    }
+
+    public var isRetrying: Bool {
+        status == "retrying"
+    }
+
+    public var isCompleted: Bool {
+        status == "completed"
+    }
+
+    public var isArchived: Bool {
+        status == "archived"
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -812,11 +870,51 @@ public struct PendingActionItem: Codable, Identifiable, Equatable, Sendable {
         case options
         case source
         case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case status
+        case taskPrompt = "task_prompt"
+        case summary
+        case elapsedSeconds = "elapsed_seconds"
+        case toolCount = "tool_count"
+        case toolCalls = "tool_calls"
+        case livePreview = "live_preview"
+        case terminalTail = "terminal_tail"
+        case retryCount = "retry_count"
+        case maxRetries = "max_retries"
+        case roundNo = "round_no"
+        case rounds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        self.agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? ""
+        self.title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        self.question = (try? c.decodeIfPresent(String.self, forKey: .question)) ?? ""
+        self.options = (try? c.decodeIfPresent([String].self, forKey: .options)) ?? []
+        self.source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? "herdr"
+        self.createdAt = (try? c.decodeIfPresent(String.self, forKey: .createdAt)) ?? ""
+        self.updatedAt = (try? c.decodeIfPresent(String.self, forKey: .updatedAt)) ?? ""
+        self.status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "waiting_decision"
+        self.taskPrompt = (try? c.decodeIfPresent(String.self, forKey: .taskPrompt)) ?? ""
+        self.summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
+        self.elapsedSeconds = (try? c.decodeIfPresent(Int.self, forKey: .elapsedSeconds)) ?? 0
+        self.toolCount = (try? c.decodeIfPresent(Int.self, forKey: .toolCount)) ?? 0
+        self.toolCalls = (try? c.decodeIfPresent([String].self, forKey: .toolCalls)) ?? []
+        self.livePreview = (try? c.decodeIfPresent(String.self, forKey: .livePreview)) ?? ""
+        self.terminalTail = (try? c.decodeIfPresent(String.self, forKey: .terminalTail)) ?? ""
+        self.retryCount = (try? c.decodeIfPresent(Int.self, forKey: .retryCount)) ?? 0
+        self.maxRetries = (try? c.decodeIfPresent(Int.self, forKey: .maxRetries)) ?? 3
+        self.roundNo = (try? c.decodeIfPresent(Int.self, forKey: .roundNo)) ?? 1
+        self.rounds = (try? c.decodeIfPresent([HerdrRoundRecord].self, forKey: .rounds)) ?? []
     }
 }
 
 public struct PendingActionsResponse: Codable, Sendable {
     public let actions: [PendingActionItem]
     public let count: Int
+    public let attention_count: Int?
+    public let working_count: Int?
+    public let history: [PendingActionItem]?
     public let dispatched_to: String?
 }

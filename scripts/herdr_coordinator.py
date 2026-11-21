@@ -457,7 +457,7 @@ def _send_unified_app_alert(title: str, message: str, memory_summary: Optional[s
                 data=json.dumps({
                     "summary": memory_summary,
                     "source": source,
-                    "report_to_user": True,
+                    "report_to_user": False,
                 }).encode("utf-8"),
                 headers=headers,
                 method="POST",
@@ -582,11 +582,12 @@ def refine_question_for_action_queue(
         return fallback
 
     refine_prompt = (
-        f"你是工程師的隨身技術秘書。以下來自終端專案「{workspace_label}」的原始輸出中，"
-        "Agent 停下來等待主人決策。請精煉成手機上 2 秒就能看懂的繁體中文 JSON（不要加 markdown 圍欄）：\n"
+        f"你是工程師的隨身技術秘書與現場監工。以下來自終端專案「{workspace_label}」的原始輸出中，"
+        "Agent 停下來等待決策。請精煉成手機上 2 秒就能看懂的繁體中文 JSON（不要加 markdown 圍欄）：\n"
         '{"summary": "一句話說明目前進度與為何停下請示（35字內）", '
         '"question": "核心請示問題（45字內）", '
-        '"options": ["選項 1：具體代表什麼動作（30字內）", "選項 2：具體代表什麼動作（30字內）"]}\n'
+        '"options": ["選項 1：具體代表什麼動作（30字內）", "選項 2：具體代表什麼動作（30字內）"], '
+        '"auto_answer": "若該提問僅為詢問是否執行標準無害工程驗證（如是否跑 pytest 測試、lint 檢查、格式化），請直接填入簡短肯定回覆代答；若涉及產品方向、功能抉擇、架構選型或有任何外部副作用，必須填寫空字串 \\"\\""}\n'
         "注意：若無明確選項，options 可為空陣列 []；嚴禁編造未出現的選項。\n\n"
         f"【終端原始內容】\n{raw_clean[-2000:]}"
     )
@@ -606,6 +607,7 @@ def refine_question_for_action_queue(
             parsed = json.loads(m.group(0))
             summary = str(parsed.get("summary") or "").strip()
             question = str(parsed.get("question") or "").strip()
+            auto_answer = str(parsed.get("auto_answer") or "").strip()
             raw_opts = parsed.get("options")
             options = (
                 [str(o).strip()[:100] for o in raw_opts if str(o).strip()][:4]
@@ -620,7 +622,10 @@ def refine_question_for_action_queue(
                 formatted = question or summary
             else:
                 formatted = fallback["formatted_question"]
-            return {"formatted_question": formatted, "options": options}
+            out_dict: Dict[str, Any] = {"formatted_question": formatted, "options": options}
+            if auto_answer:
+                out_dict["auto_answer"] = auto_answer
+            return out_dict
     except Exception as e:
         print(f"[HerdrCoordinator] ℹ️ Action Queue 無狀態精煉降級: {e}", file=sys.stderr)
 
@@ -632,8 +637,18 @@ def _push_pending_action(
     title: str,
     question_text: str,
     options: Optional[List[str]] = None,
+    status: Optional[str] = None,
+    task_prompt: str = "",
+    summary: str = "",
+    elapsed_seconds: int = 0,
+    tool_count: int = 0,
+    tool_calls: Optional[List[str]] = None,
+    live_preview: str = "",
+    terminal_tail: str = "",
+    retry_count: int = 0,
+    max_retries: int = 3,
 ) -> None:
-    """將 Agent 請示同步登記到後端 Action Queue，讓 iOS App 頂部膠囊顯示並可一鍵回覆。"""
+    """將 Agent 執行進度、請示或完工摘要同步登記到後端 Action Queue（Herdr 督工抽屜）。"""
     import urllib.request
     from config import settings
 
@@ -642,13 +657,34 @@ def _push_pending_action(
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-Agent-Key"] = api_key
-    payload = {
+    payload: Dict[str, Any] = {
         "agent": agent,
         "title": title,
         "question": question_text.strip(),
         "options": options if options is not None else _parse_question_options(question_text),
         "source": f"herdr:{agent}",
     }
+    if status is not None:
+        payload["status"] = status
+    if task_prompt:
+        payload["task_prompt"] = task_prompt
+    if summary:
+        payload["summary"] = summary
+    if elapsed_seconds > 0:
+        payload["elapsed_seconds"] = elapsed_seconds
+    if tool_count > 0:
+        payload["tool_count"] = tool_count
+    if tool_calls:
+        payload["tool_calls"] = tool_calls
+    if live_preview:
+        payload["live_preview"] = live_preview
+    if terminal_tail:
+        payload["terminal_tail"] = terminal_tail
+    if retry_count > 0:
+        payload["retry_count"] = retry_count
+    if max_retries != 3:
+        payload["max_retries"] = max_retries
+
     try:
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/api/actions/pending",
@@ -666,19 +702,46 @@ def notify_question(
     agent: str,
     question_text: str,
     name: Optional[str] = None,
-    agent_info: Optional[Dict[str, Any]] = None
+    agent_info: Optional[Dict[str, Any]] = None,
+    **progress_kwargs: Any,
 ) -> bool:
-    """將 Agent 請示主人的問題經無狀態 LLM 精煉後登記 Action Queue，並透過統一通道提醒主人。"""
+    """將 Agent 請示主人的問題經無狀態 LLM 精煉；若監工能自動代答則直接解鎖，否則登記 Action Queue 請示主人。"""
     info = agent_info if agent_info is not None else get_herdr_agent(agent)
     display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=info)
     workspace_label = resolve_workspace_label(agent, agent_info=info)
     refined = refine_question_for_action_queue(workspace_label, question_text)
-    _push_pending_action(
-        agent=agent,
-        title=workspace_label,
-        question_text=refined["formatted_question"],
-        options=refined["options"],
-    )
+    auto_ans = str(refined.get("auto_answer") or "").strip()
+    if auto_ans:
+        relay_answer(agent, auto_ans)
+        if progress_kwargs:
+            _push_pending_action(
+                agent=agent,
+                title=workspace_label,
+                question_text=f"🤖 監工已自動代答常規確認：{auto_ans}",
+                options=[],
+                status="working",
+                live_preview=f"監工自動代答：{auto_ans[:60]}",
+                **progress_kwargs,
+            )
+        print(f"\n[HerdrCoordinator] 🤖 監工自動代答常規問題 (Agent: {display_title}): {auto_ans}\n")
+        return True
+
+    if progress_kwargs:
+        _push_pending_action(
+            agent=agent,
+            title=workspace_label,
+            question_text=refined["formatted_question"],
+            options=refined["options"],
+            status="waiting_decision",
+            **progress_kwargs,
+        )
+    else:
+        _push_pending_action(
+            agent=agent,
+            title=workspace_label,
+            question_text=refined["formatted_question"],
+            options=refined["options"],
+        )
     memo = (
         f"Herdr Agent「{display_title}」（目標：{agent}）執行到一半需要請示主人確認：\n\n"
         f"{question_text.strip()}\n\n"
@@ -758,7 +821,9 @@ def review_worker_output(
         f"【工人最後回覆內容】\n{worker_reply[:3000]}\n\n"
         + (f"【工作區 Git 異動證據】\n{git_evidence}\n\n" if git_evidence else "")
         + "請嚴格以 JSON 格式回覆（不要加 markdown 圍欄），格式如下：\n"
-        '{"verdict": "PASS" 或 "REJECT", "summary": "給主人的 2~3 句繁體中文精簡總結", "feedback": "若 REJECT，請給工人具體可執行的修正指示；若 PASS 則留空"}'
+        '{"verdict": "PASS" 或 "REJECT", '
+        '"summary": "給主人的繁體中文結構化完工摘要（嚴禁列出異動檔案清單），格式固定為：\\n✅ 完成項目\\n- 簡述完成重點 1\\n- 簡述完成重點 2\\n🧪 驗證結果\\n- 測試或驗證通過狀況", '
+        '"feedback": "若 REJECT，請給工人具體可執行的修正指示；若 PASS 則留空"}'
     )
 
     agy_bin = shutil.which("agy") or "/opt/homebrew/bin/agy"
@@ -808,20 +873,22 @@ def record_task_to_history_and_memory(
     summary: str,
     log_path: str = "",
     sync_idle_memory: bool = True,
+    log_to_chat_history: bool = False,
 ) -> None:
-    """將 Herdr 任務成果安全寫入 data/history.jsonl，並於主大腦閒置時靜默同步 3 行摘要"""
-    try:
-        from memory_manager import memory_manager
-        actions = [f"herdr_coordinator ({agent})"]
-        if log_path:
-            actions.append(f"session_log: {log_path}")
-        memory_manager.log_interaction(
-            f"[Herdr 派工 · {display_title}] {task_prompt[:300]}",
-            summary,
-            actions=actions,
-        )
-    except Exception as e:
-        print(f"[HerdrCoordinator] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
+    """將 Herdr 任務成果於主大腦閒置時靜默同步摘要（預設專注於督工抽屜，不在主聊天室 history.jsonl 貼長泡泡）"""
+    if log_to_chat_history:
+        try:
+            from memory_manager import memory_manager
+            actions = [f"herdr_coordinator ({agent})"]
+            if log_path:
+                actions.append(f"session_log: {log_path}")
+            memory_manager.log_interaction(
+                f"[Herdr 派工 · {display_title}] {task_prompt[:300]}",
+                summary,
+                actions=actions,
+            )
+        except Exception as e:
+            print(f"[HerdrCoordinator] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
 
     if not sync_idle_memory:
         return
@@ -935,6 +1002,17 @@ def dispatch_task(
     }
 
     if not no_watch:
+        workspace_label = resolve_workspace_label(agent, agent_info=agent_info)
+        _push_pending_action(
+            agent=agent,
+            title=workspace_label,
+            question_text="🔨 任務已派發，工人啟動執行中...",
+            options=[],
+            status="working",
+            task_prompt=prompt,
+            live_preview="已送出任務指令，等待工人回應...",
+            max_retries=max_retries,
+        )
         try:
             from task_manager import TaskManager
             tm = TaskManager()
@@ -991,6 +1069,42 @@ def relay_answer(agent: str, answer: str) -> Dict[str, Any]:
     return res
 
 
+def _extract_live_progress(
+    agent: str,
+    visible_text: str,
+    agent_info: Optional[Dict[str, Any]],
+    baseline_lines: int,
+    elapsed_seconds: int,
+) -> Dict[str, Any]:
+    """純本地（零 Token）萃取工人目前呼叫的工具軌跡、最新動態預覽與乾淨終端畫面尾部。"""
+    turns = read_session_turns(agent, agent_info=agent_info, baseline_lines=baseline_lines)
+    tool_calls = [str(t) for t in (turns.get("tool_calls") or []) if str(t).strip()]
+    tool_count = len(tool_calls)
+    cleaned_term = clean_terminal_text(visible_text)
+    term_lines = [ln.strip() for ln in cleaned_term.splitlines() if ln.strip()]
+    terminal_tail = "\n".join(cleaned_term.splitlines()[-18:]).strip()
+
+    latest_reply = (turns.get("latest_reply") or "").strip()
+    preview = ""
+    if latest_reply:
+        reply_lines = [ln.strip() for ln in latest_reply.splitlines() if ln.strip()]
+        if reply_lines:
+            preview = reply_lines[-1][:100]
+    if not preview and term_lines:
+        preview = term_lines[-1][:100]
+    if not preview and tool_calls:
+        preview = f"正在執行工具：{tool_calls[-1]}"
+
+    return {
+        "turn_data": turns,
+        "tool_calls": tool_calls[-8:],
+        "tool_count": tool_count,
+        "terminal_tail": terminal_tail,
+        "live_preview": preview,
+        "elapsed_seconds": max(0, int(elapsed_seconds)),
+    }
+
+
 def _finalize_watch_completion(
     agent: str,
     visible_text: str,
@@ -1004,6 +1118,7 @@ def _finalize_watch_completion(
     auto_review: bool,
     batch_id: Optional[str],
     batch_total: Optional[int],
+    elapsed_seconds: int = 0,
 ) -> Dict[str, Any]:
     """
     工人完工後的統一品管收尾：
@@ -1012,6 +1127,10 @@ def _finalize_watch_completion(
     turn_data = read_session_turns(agent, agent_info=agent_info, baseline_lines=baseline_lines)
     raw_summary = extract_completion_summary(agent, visible_text, agent_info=agent_info)
     display_title = resolve_agent_display_name(agent, custom_name=name, agent_info=agent_info)
+    workspace_label = resolve_workspace_label(agent, agent_info=agent_info)
+    tool_calls = [str(t) for t in (turn_data.get("tool_calls") or []) if str(t).strip()]
+    cleaned_term = clean_terminal_text(visible_text)
+    terminal_tail = "\n".join(cleaned_term.splitlines()[-18:]).strip()
 
     if auto_review and task_prompt:
         cwd = agent_info.get("cwd") or agent_info.get("foreground_cwd")
@@ -1036,6 +1155,21 @@ def _finalize_watch_completion(
                 "請直接修正並重新驗證完成。"
             )
             submit_herdr_prompt(agent, retry_prompt)
+            _push_pending_action(
+                agent=agent,
+                title=workspace_label,
+                question_text=f"🔁 監工品管未過，第 {attempt_no}/{max_retries} 次打回重修中...",
+                options=[],
+                status="retrying",
+                task_prompt=task_prompt or "",
+                elapsed_seconds=elapsed_seconds,
+                tool_count=len(tool_calls),
+                tool_calls=tool_calls[-8:],
+                live_preview=f"打回原因：{feedback[:90]}",
+                terminal_tail=terminal_tail,
+                retry_count=attempt_no,
+                max_retries=max_retries,
+            )
             print(f"[HerdrCoordinator] 🔁 【{display_title}】未通過驗收，已打回第 {attempt_no}/{max_retries} 次重修。")
             return {"action": "retry", "new_baseline": new_baseline}
 
@@ -1045,6 +1179,24 @@ def _finalize_watch_completion(
             final_text = reviewed_summary
     else:
         final_text = raw_summary
+
+    if task_prompt:
+        _push_pending_action(
+            agent=agent,
+            title=workspace_label,
+            question_text=final_text,
+            options=[],
+            status="completed",
+            task_prompt=task_prompt,
+            summary=final_text,
+            elapsed_seconds=elapsed_seconds,
+            tool_count=len(tool_calls),
+            tool_calls=tool_calls[-8:],
+            live_preview="✅ 驗收通過，等待主人檢閱或續派",
+            terminal_tail=terminal_tail,
+            retry_count=retries_used,
+            max_retries=max_retries,
+        )
 
     notify_completion(agent, final_text, name=name, agent_info=agent_info)
     if task_prompt:
@@ -1099,12 +1251,13 @@ def watch_agent(
     auto_review: bool = True,
 ) -> Dict[str, Any]:
     """
-    背景守護主循環（含自動驗收與打回重修迴圈）：
-    1. 輪詢 agent get 與 read visible lines
-    2. 提問辨識：偵測到提問且處於 idle/blocked，推播 Telegram 請示主人
+    背景守護主循環（含即時進度同步、自動代答常規問題、品管驗收與打回重修迴圈）：
+    1. 輪詢 agent get 與 read visible lines，同步即時進度至督工抽屜
+    2. 提問辨識：偵測到提問且處於 idle/blocked，先嘗試自動代答常規問題，無法代答才進 Action Queue
     3. 完工辨識：由 working 轉為 idle/done 且無提問 ➔ 讀取 JSONL 驗收（不通過最多打回 max_retries 次）
     """
     start_time = time.time()
+    round_started_time = start_time
     has_seen_working = False
     waiting_input = False
     last_question_content: Optional[str] = None
@@ -1132,10 +1285,41 @@ def watch_agent(
 
         agent_status = agent_info.get("agent_status", "unknown")
         visible_text = read_herdr_agent_visible(agent, lines=100)
+        elapsed_total = int(time.time() - round_started_time)
 
         if agent_status == "working":
             has_seen_working = True
             waiting_input = False
+            if task_prompt:
+                prog = _extract_live_progress(
+                    agent=agent,
+                    visible_text=visible_text,
+                    agent_info=agent_info,
+                    baseline_lines=current_baseline,
+                    elapsed_seconds=elapsed_total,
+                )
+                workspace_label = resolve_workspace_label(agent, agent_info=agent_info)
+                status_label = "retrying" if retries_used > 0 else "working"
+                q_label = (
+                    f"🔁 監工打回第 {retries_used}/{max_retries} 次重修執行中..."
+                    if retries_used > 0
+                    else "🔨 工人正在執行任務..."
+                )
+                _push_pending_action(
+                    agent=agent,
+                    title=workspace_label,
+                    question_text=q_label,
+                    options=[],
+                    status=status_label,
+                    task_prompt=task_prompt,
+                    elapsed_seconds=prog["elapsed_seconds"],
+                    tool_count=prog["tool_count"],
+                    tool_calls=prog["tool_calls"],
+                    live_preview=prog["live_preview"],
+                    terminal_tail=prog["terminal_tail"],
+                    retry_count=retries_used,
+                    max_retries=max_retries,
+                )
             time.sleep(interval)
             continue
 
@@ -1145,7 +1329,29 @@ def watch_agent(
             if not waiting_input or question_text != last_question_content:
                 waiting_input = True
                 last_question_content = question_text
-                notify_question(agent, question_text, name=name, agent_info=agent_info)
+                if task_prompt:
+                    prog = _extract_live_progress(
+                        agent=agent,
+                        visible_text=visible_text,
+                        agent_info=agent_info,
+                        baseline_lines=current_baseline,
+                        elapsed_seconds=elapsed_total,
+                    )
+                    notify_question(
+                        agent,
+                        question_text,
+                        name=name,
+                        agent_info=agent_info,
+                        task_prompt=task_prompt,
+                        elapsed_seconds=prog["elapsed_seconds"],
+                        tool_count=prog["tool_count"],
+                        tool_calls=prog["tool_calls"],
+                        terminal_tail=prog["terminal_tail"],
+                        retry_count=retries_used,
+                        max_retries=max_retries,
+                    )
+                else:
+                    notify_question(agent, question_text, name=name, agent_info=agent_info)
             time.sleep(interval)
             continue
 
@@ -1167,6 +1373,7 @@ def watch_agent(
             auto_review=auto_review,
             batch_id=batch_id,
             batch_total=batch_total,
+            elapsed_seconds=elapsed_total,
         )
         if outcome["action"] == "retry":
             retries_used += 1

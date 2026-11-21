@@ -573,3 +573,27 @@ def test_refine_question_for_action_queue_fallback_on_timeout():
     assert res["options"] == ["選項 1: 直接推上 main", "選項 2: 僅留本機測試"]
 
 
+def test_notify_question_supervisor_auto_answer():
+    """當工人提問屬於常規工程驗證（auto_answer 非空）時，監工應自動 relay 代答而不打擾主人。"""
+    from scripts.herdr_coordinator import notify_question
+
+    info = {"agent": "agy", "pane_id": "w13:p1", "cwd": "/Users/demo/Workspace/market-ticker"}
+    refined_auto = {
+        "formatted_question": "是否執行 pytest 驗證？",
+        "options": [],
+        "auto_answer": "請直接執行 pytest 並確認全綠",
+    }
+    with patch("scripts.herdr_coordinator.get_herdr_agent", return_value=info), \
+         patch("scripts.herdr_coordinator.refine_question_for_action_queue", return_value=refined_auto), \
+         patch("scripts.herdr_coordinator.relay_answer", return_value={"success": True}) as mock_relay, \
+         patch("scripts.herdr_coordinator._push_pending_action") as mock_push, \
+         patch("scripts.herdr_coordinator._send_unified_app_alert") as mock_alert:
+        ok = notify_question("w13:p1", "請問是否要跑 pytest？", task_prompt="重構報價服務")
+
+    assert ok is True
+    mock_relay.assert_called_once_with("w13:p1", "請直接執行 pytest 並確認全綠")
+    mock_alert.assert_not_called()
+    assert mock_push.call_args.kwargs["status"] == "working"
+
+
+

@@ -1173,16 +1173,16 @@ public final class VoiceSessionCoordinator: ObservableObject {
         saveUnifiedTimeline()
     }
 
-    /// 使用者在 Action Queue 拍板送出後，立即在對話流顯示決策氣泡並輪詢同步主大腦後續回覆
+    /// 使用者在 Action Queue 拍板送出後，僅針對主大腦 (brain) 案件在主對話流顯示氣泡（Herdr 派工專注於督工抽屜內處理）
     @MainActor
     public func recordAndSyncActionDecision(title: String, answer: String, dispatchedTo: String?) {
+        guard dispatchedTo == "brain" else { return }
+
         let userText = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "已決策：\(answer)"
             : "已決策（\(title)）：\(answer)"
         messages.append(ChatMessage(role: .user, content: userText, status: .completed))
         syncCurrentSessionToHistory()
-
-        guard dispatchedTo == "brain" else { return }
 
         let placeholder = ChatMessage(role: .assistant, content: "", status: .streaming)
         let placeholderId = placeholder.id

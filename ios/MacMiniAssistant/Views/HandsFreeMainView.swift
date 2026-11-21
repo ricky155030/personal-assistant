@@ -188,6 +188,7 @@ struct HandsFreeMainView: View {
     @State private var mentionQuery: String = ""
     @State private var isLoadingHerdrAgents: Bool = false
     @State private var pendingActions: [PendingActionItem] = []
+    @State private var herdrHistoryActions: [PendingActionItem] = []
     @State private var showPendingActionsSheet: Bool = false
     @State private var availableAppUpdate: MacMiniAPIClient.AppUpdateInfo? = nil
     @State private var isUpdateBannerDismissed: Bool = false
@@ -271,21 +272,25 @@ struct HandsFreeMainView: View {
         .sheet(isPresented: $showPendingActionsSheet) {
             PendingActionsSheetView(
                 actions: $pendingActions,
+                history: $herdrHistoryActions,
                 onRefresh: {
-                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
+                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
                     await MainActor.run {
-                        self.pendingActions = latest
+                        self.pendingActions = payload.actions
+                        self.herdrHistoryActions = payload.history
                     }
                 },
-                onResolve: { item, answer, dismiss in
-                    let (ok, updated, dispatchedTo) = await MacMiniAPIClient.shared.resolvePendingAction(
+                onResolve: { item, answer, dismiss, actionMode in
+                    let (ok, updated, updatedHistory, dispatchedTo) = await MacMiniAPIClient.shared.resolvePendingAction(
                         id: item.id,
                         answer: answer,
-                        dismiss: dismiss
+                        dismiss: dismiss,
+                        action: actionMode
                     )
                     await MainActor.run {
                         if ok {
                             self.pendingActions = updated
+                            self.herdrHistoryActions = updatedHistory
                             if !dismiss {
                                 self.coordinator.recordAndSyncActionDecision(
                                     title: item.title,
@@ -384,12 +389,24 @@ struct HandsFreeMainView: View {
             syncIdleTimer()
             Task {
                 await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active)
-                async let pendingTask = MacMiniAPIClient.shared.fetchPendingActions()
+                async let pendingTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
                 async let updateTask = MacMiniAPIClient.shared.checkForAppUpdate()
-                let (latest, update) = await (pendingTask, updateTask)
+                let (payload, update) = await (pendingTask, updateTask)
                 await MainActor.run {
-                    self.pendingActions = latest
+                    self.pendingActions = payload.actions
+                    self.herdrHistoryActions = payload.history
                     self.availableAppUpdate = update
+                }
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                guard scenePhase == .active else { continue }
+                let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                await MainActor.run {
+                    self.pendingActions = payload.actions
+                    self.herdrHistoryActions = payload.history
                 }
             }
         }
@@ -401,8 +418,11 @@ struct HandsFreeMainView: View {
             case .active:
                 Task {
                     await MacMiniAPIClient.shared.reportAppState(active: true)
-                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
-                    await MainActor.run { self.pendingActions = latest }
+                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    await MainActor.run {
+                        self.pendingActions = payload.actions
+                        self.herdrHistoryActions = payload.history
+                    }
                 }
             case .background:
                 // 切到背景時短暫申請背景任務確保狀態回報送達伺服器，方便後端決定是否補發唯一 HA 重要通知
@@ -750,36 +770,55 @@ struct HandsFreeMainView: View {
             // 右側：合併式「用量」膠囊（Context 佔比 + 當前模型配額），點擊開啟完整系統狀態面板
             usageCapsuleButton
 
-            // 待決策佇列 (Action Queue) 按鈕（原搜尋按鈕位置，顯示待處理個數）
+            // Herdr 派工督工抽屜 (Action Queue) 按鈕：
+            // 🟠 待決策 -> 橘色數字徽章；🔵 完工待檢閱 -> 藍色數字徽章；🟢 執行中 -> 小綠點
             Button(action: {
                 haptic.impactOccurred()
                 isInputFocused = false
                 showPendingActionsSheet = true
                 Task {
-                    let latest = await MacMiniAPIClient.shared.fetchPendingActions()
-                    await MainActor.run { self.pendingActions = latest }
+                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    await MainActor.run {
+                        self.pendingActions = payload.actions
+                        self.herdrHistoryActions = payload.history
+                    }
                 }
             }) {
+                let waitingDecisionCount = pendingActions.filter { $0.isWaitingDecision }.count
+                let completedReviewCount = pendingActions.filter { $0.isCompleted }.count
+                let workingCount = pendingActions.filter { $0.isWorking }.count
+                let attentionCount = waitingDecisionCount + completedReviewCount
+                let iconTint: Color = waitingDecisionCount > 0
+                    ? .orange
+                    : (completedReviewCount > 0 ? .cyan : (workingCount > 0 ? .green : .white.opacity(0.72)))
+
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: pendingActions.isEmpty ? "tray" : "tray.full.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(pendingActions.isEmpty ? .white.opacity(0.72) : .orange)
+                        .foregroundColor(iconTint)
                         .frame(width: 40, height: 40)
                         .liquidGlass(in: Circle())
 
-                    if !pendingActions.isEmpty {
-                        Text("\(min(pendingActions.count, 99))")
+                    if attentionCount > 0 {
+                        let badgeColor: Color = waitingDecisionCount > 0 ? .orange : .cyan
+                        Text("\(min(attentionCount, 99))")
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .padding(.horizontal, 5)
                             .frame(minWidth: 17, minHeight: 17)
-                            .background(Capsule().fill(Color.orange))
+                            .background(Capsule().fill(badgeColor))
                             .offset(x: 3, y: -3)
+                    } else if workingCount > 0 {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 10, height: 10)
+                            .overlay(Circle().stroke(Color.black.opacity(0.6), lineWidth: 1.5))
+                            .offset(x: 1, y: -1)
                     }
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("待決策佇列，目前 \(pendingActions.count) 項")
+            .accessibilityLabel("Herdr 派工督工抽屜，目前 \(pendingActions.count) 項活躍任務")
 
             // 設定按鈕
             Button(action: {
@@ -4375,15 +4414,24 @@ private struct MessageScreenshotCard: View {
     }
 }
 
-// MARK: - 待決策佇列 (Action Queue) 抽屜面板
+// MARK: - Herdr 派工督工中心 (Action Queue & Dispatch Hub) 抽屜面板
 private struct PendingActionsSheetView: View {
     @Binding var actions: [PendingActionItem]
+    @Binding var history: [PendingActionItem]
     let onRefresh: () async -> Void
-    let onResolve: (PendingActionItem, String, Bool) async -> Bool
+    let onResolve: (PendingActionItem, String, Bool, String?) async -> Bool
+
+    private enum HubTab: String, CaseIterable {
+        case active = "active"
+        case history = "history"
+    }
 
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedTab: HubTab = .active
     @State private var customReplies: [String: String] = [:]
     @State private var busyIds: Set<String> = []
+    @State private var expandedTerminals: Set<String> = []
+    @State private var expandedRounds: Set<String> = []
     @State private var isRefreshing: Bool = false
 
     var body: some View {
@@ -4391,32 +4439,51 @@ private struct PendingActionsSheetView: View {
             ZStack {
                 Color(red: 0.05, green: 0.07, blue: 0.14).ignoresSafeArea()
 
-                if actions.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(.cyan.opacity(0.8))
-                        Text("目前沒有待決策項目")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Text("當背景 Herdr Agent 需要請示或拍板時，會自動集中列在這裡。")
+                VStack(spacing: 0) {
+                    Picker("檢視分頁", selection: $selectedTab) {
+                        Text("📌 目前派工 (\(actions.count))").tag(HubTab.active)
+                        Text("🕘 歷史紀錄 (\(history.count))").tag(HubTab.history)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+
+                    let currentList = selectedTab == .active ? actions : history
+
+                    if currentList.isEmpty {
+                        Spacer()
+                        VStack(spacing: 12) {
+                            Image(systemName: selectedTab == .active ? "checkmark.seal.fill" : "clock.arrow.circlepath")
+                                .font(.system(size: 40))
+                                .foregroundColor(.cyan.opacity(0.8))
+                            Text(selectedTab == .active ? "目前沒有進行中或待處理的派工" : "尚無已結案的歷史派工紀錄")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text(
+                                selectedTab == .active
+                                    ? "當主大腦派工給 Herdr 工人時，這裡會即時顯示執行進度、待拍板問題與完工檢閱卡片。"
+                                    : "在目前派工卡片點擊「結案歸檔」後，所有派工與驗收紀錄都會永久保存在這裡，隨時可喚醒續派。"
+                            )
                             .font(.subheadline)
                             .foregroundColor(.white.opacity(0.6))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 28)
-                    }
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(actions) { item in
-                                actionCard(for: item)
-                            }
                         }
-                        .padding(16)
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(currentList) { item in
+                                    actionCard(for: item, isHistoryTab: selectedTab == .history)
+                                }
+                            }
+                            .padding(16)
+                        }
                     }
                 }
             }
-            .navigationTitle("待決策佇列 (\(actions.count))")
+            .navigationTitle("Herdr 派工督工中心")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -4438,44 +4505,236 @@ private struct PendingActionsSheetView: View {
                     Button("完成") { dismiss() }
                 }
             }
+            .task {
+                // 抽屜開啟期間每 3 秒自動同步即時進度
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    await onRefresh()
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
 
-    private func actionCard(for item: PendingActionItem) -> some View {
+    private func formatElapsed(_ seconds: Int) -> String {
+        guard seconds > 0 else { return "" }
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let m = seconds / 60
+        let s = seconds % 60
+        return "\(m)m \(s)s"
+    }
+
+    private func statusInfo(for item: PendingActionItem, isHistoryTab: Bool) -> (label: String, color: Color) {
+        if isHistoryTab || item.isArchived {
+            return ("已結案歸檔", .gray)
+        }
+        if item.isWaitingDecision {
+            return ("待您決策", .orange)
+        }
+        if item.isCompleted {
+            return ("完工待檢閱", .cyan)
+        }
+        if item.isRetrying {
+            let elapsedStr = formatElapsed(item.elapsedSeconds)
+            let suffix = elapsedStr.isEmpty ? "" : " · \(elapsedStr)"
+            return ("重修 \(item.retryCount)/\(item.maxRetries)\(suffix)", .yellow)
+        }
+        let elapsedStr = formatElapsed(item.elapsedSeconds)
+        let suffix = elapsedStr.isEmpty ? "" : " · \(elapsedStr)"
+        return ("執行中\(suffix)", .green)
+    }
+
+    private func actionCard(for item: PendingActionItem, isHistoryTab: Bool) -> some View {
         let isBusy = busyIds.contains(item.id)
+        let st = statusInfo(for: item, isHistoryTab: isHistoryTab)
+        let showTerminal = expandedTerminals.contains(item.id)
+        let showRounds = expandedRounds.contains(item.id)
         let draftBinding = Binding<String>(
             get: { customReplies[item.id] ?? "" },
             set: { customReplies[item.id] = $0 }
         )
 
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            // 1. 標題列：狀態圓點 + 專案視窗名稱 + 輪次標籤 + 狀態膠囊 + 結案/忽略按鈕
+            HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Circle().fill(Color.orange).frame(width: 8, height: 8)
+                    Circle().fill(st.color).frame(width: 8, height: 8)
                     Text(item.title)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
+                        .lineLimit(1)
                 }
-                Spacer()
-                Button("忽略") {
-                    submit(item: item, answer: "", dismiss: true)
+
+                if item.roundNo > 1 {
+                    Text("第 \(item.roundNo) 輪")
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.cyan.opacity(0.16)))
                 }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.55))
+
+                Text(st.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(st.color)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Capsule().fill(st.color.opacity(0.15)))
+
+                Spacer(minLength: 4)
+
+                Button(action: {
+                    submit(item: item, answer: "", dismiss: true, actionMode: nil, isFromHistory: isHistoryTab)
+                }) {
+                    Text(isHistoryTab ? "刪除" : (item.isCompleted ? "✅ 結案歸檔" : "歸檔"))
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundColor(item.isCompleted && !isHistoryTab ? .cyan : .white.opacity(0.55))
+                        .padding(.horizontal, item.isCompleted && !isHistoryTab ? 8 : 4)
+                        .padding(.vertical, item.isCompleted && !isHistoryTab ? 4 : 2)
+                        .background(
+                            Capsule().fill(item.isCompleted && !isHistoryTab ? Color.cyan.opacity(0.16) : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
                 .disabled(isBusy)
             }
 
-            Text(item.question)
-                .font(.system(size: 13.5))
-                .foregroundColor(.white.opacity(0.9))
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // 2. 前幾輪歷史紀錄摺疊區（多輪蓋樓）
+            if !item.rounds.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button(action: {
+                        if showRounds {
+                            expandedRounds.remove(item.id)
+                        } else {
+                            expandedRounds.insert(item.id)
+                        }
+                    }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: showRounds ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("📂 查看前 \(item.rounds.count) 輪派工與驗收紀錄")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                        }
+                        .foregroundColor(.cyan.opacity(0.88))
+                    }
+                    .buttonStyle(.plain)
 
-            if !item.options.isEmpty {
+                    if showRounds {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(item.rounds, id: \.roundNo) { r in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("第 \(r.roundNo) 輪 · \(r.taskPrompt)")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.88))
+                                    if !r.summary.isEmpty {
+                                        Text(r.summary)
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(.white.opacity(0.68))
+                                    }
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.white.opacity(0.05))
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. 本輪交辦任務需求
+            if !item.taskPrompt.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Text("📋 交辦：")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                    Text(item.taskPrompt)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.82))
+                        .lineLimit(3)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                )
+            }
+
+            // 4. 即時工具軌跡與最新動態預覽（執行中或有工具紀錄時）
+            if item.toolCount > 0 || !item.toolCalls.isEmpty || (!item.livePreview.isEmpty && item.isWorking) {
+                VStack(alignment: .leading, spacing: 5) {
+                    if item.toolCount > 0 || !item.toolCalls.isEmpty {
+                        let chain = item.toolCalls.suffix(5).joined(separator: " ➔ ")
+                        Text("🔧 已呼叫 \(max(item.toolCount, item.toolCalls.count)) 次工具\(chain.isEmpty ? "" : "：\(chain)")")
+                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(.green.opacity(0.9))
+                            .lineLimit(2)
+                    }
+                    if !item.livePreview.isEmpty && item.isWorking {
+                        Text("💬 \(item.livePreview)")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.75))
+                            .lineLimit(2)
+                    }
+                }
+            }
+
+            // 5. 主要內容（待決策問題 / 完工結構化摘要 / 執行中狀態）
+            let displayBody = (item.isCompleted || isHistoryTab) && !item.summary.isEmpty ? item.summary : item.question
+            if !displayBody.isEmpty {
+                Text(displayBody)
+                    .font(.system(size: 13.5))
+                    .foregroundColor(.white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // 6. 可展開的即時終端機畫面預覽
+            if !item.terminalTail.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button(action: {
+                        if showTerminal {
+                            expandedTerminals.remove(item.id)
+                        } else {
+                            expandedTerminals.insert(item.id)
+                        }
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "terminal.fill")
+                                .font(.system(size: 11))
+                            Text(showTerminal ? "收合終端機實況" : "展開終端機實況")
+                                .font(.system(size: 11.5, weight: .semibold))
+                        }
+                        .foregroundColor(.white.opacity(0.65))
+                    }
+                    .buttonStyle(.plain)
+
+                    if showTerminal {
+                        Text(item.terminalTail)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(Color(red: 0.65, green: 0.95, blue: 0.72))
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.black.opacity(0.6))
+                            )
+                    }
+                }
+            }
+
+            // 7. 待決策選項按鈕（僅在 waiting_decision 時出現）
+            if !item.options.isEmpty && item.isWaitingDecision && !isHistoryTab {
                 VStack(spacing: 6) {
                     ForEach(item.options, id: \.self) { opt in
                         Button(action: {
-                            submit(item: item, answer: opt, dismiss: false)
+                            submit(item: item, answer: opt, dismiss: false, actionMode: nil, isFromHistory: false)
                         }) {
                             HStack {
                                 Text(opt)
@@ -4504,31 +4763,42 @@ private struct PendingActionsSheetView: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                TextField("或輸入補充指令...", text: draftBinding)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.07))
-                    )
+            // 8. 底部互動輸入框（待決策補充 / 完工原視窗續派修改 / 歷史紀錄喚醒續派）
+            if !item.isWorking || isHistoryTab {
+                let placeholderText = isHistoryTab
+                    ? "在此視窗繼續交辦新任務..."
+                    : (item.isCompleted ? "不滿意或要加功能？輸入指令直接原視窗續派..." : "或輸入補充決策指令...")
+                let buttonTitle = isBusy
+                    ? "送出中"
+                    : (isHistoryTab ? "喚醒續派" : (item.isCompleted ? "續派" : "送出"))
+                let actionMode: String? = (item.isCompleted || isHistoryTab) ? "followup" : nil
 
-                Button(action: {
-                    let ans = (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !ans.isEmpty else { return }
-                    submit(item: item, answer: ans, dismiss: false)
-                }) {
-                    Text(isBusy ? "送出中" : "送出")
-                        .font(.system(size: 13, weight: .bold))
+                HStack(spacing: 8) {
+                    TextField(placeholderText, text: draftBinding)
+                        .font(.system(size: 13))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 14)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 8)
-                        .background(Capsule().fill(Color.blue))
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white.opacity(0.07))
+                        )
+
+                    Button(action: {
+                        let ans = (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !ans.isEmpty else { return }
+                        submit(item: item, answer: ans, dismiss: false, actionMode: actionMode, isFromHistory: isHistoryTab)
+                    }) {
+                        Text(buttonTitle)
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Capsule().fill(item.isCompleted || isHistoryTab ? Color.cyan.opacity(0.85) : Color.blue))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isBusy || (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .buttonStyle(.plain)
-                .disabled(isBusy || (customReplies[item.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(14)
@@ -4537,18 +4807,27 @@ private struct PendingActionsSheetView: View {
                 .fill(Color(red: 0.11, green: 0.14, blue: 0.22))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.orange.opacity(0.32), lineWidth: 1)
+                        .stroke(st.color.opacity(0.35), lineWidth: 1)
                 )
         )
     }
 
-    private func submit(item: PendingActionItem, answer: String, dismiss: Bool) {
+    private func submit(
+        item: PendingActionItem,
+        answer: String,
+        dismiss: Bool,
+        actionMode: String?,
+        isFromHistory: Bool
+    ) {
         busyIds.insert(item.id)
         Task {
-            _ = await onResolve(item, answer, dismiss)
+            let ok = await onResolve(item, answer, dismiss, actionMode)
             await MainActor.run {
                 busyIds.remove(item.id)
                 customReplies.removeValue(forKey: item.id)
+                if ok && isFromHistory && !dismiss {
+                    selectedTab = .active
+                }
             }
         }
     }

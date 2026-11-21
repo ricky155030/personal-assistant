@@ -245,3 +245,130 @@ def test_pending_action_brain_self_contained_context(tmp_path):
     finally:
         main.app.dependency_overrides.pop(main.verify_token, None)
         settings.DATA_DIR = orig_data_dir
+
+
+def test_herdr_dispatch_hub_lifecycle_followup_and_archive(tmp_path):
+    """驗證 Herdr 督工抽屜全週期：執行中進度 -> 待決策解鎖 -> 完工待檢閱 -> 同卡多輪續派 -> 結案歸檔與歷史續派。"""
+    import subprocess
+    from config import settings
+
+    orig_data_dir = settings.DATA_DIR
+    settings.DATA_DIR = tmp_path
+    client = TestClient(main.app)
+    main.app.dependency_overrides[main.verify_token] = lambda: True
+    try:
+        # 1. 派工啟動 (working)
+        r1 = client.post("/api/actions/pending", json={
+            "agent": "w13:p1",
+            "title": "market-ticker · agy · w13:p1",
+            "question": "🔨 工人正在執行任務...",
+            "status": "working",
+            "task_prompt": "實作平行抓取報價與單元測試",
+            "elapsed_seconds": 35,
+            "tool_count": 4,
+            "tool_calls": ["read_file", "edit_file", "run_command"],
+            "live_preview": "正在執行 pytest...",
+            "terminal_tail": "4 passed in 0.82s",
+        })
+        assert r1.status_code == 200
+        body1 = r1.json()
+        assert body1["working_count"] == 1
+        assert body1["attention_count"] == 0
+        action_id = body1["action"]["id"]
+
+        # 2. 中途卡住請示 (waiting_decision)
+        r2 = client.post("/api/actions/pending", json={
+            "agent": "w13:p1",
+            "title": "market-ticker · agy · w13:p1",
+            "question": "【背景】報價模組已完成\n是否啟用快取？",
+            "options": ["選項 1：啟用", "選項 2：不啟用"],
+            "status": "waiting_decision",
+        })
+        assert r2.status_code == 200
+        body2 = r2.json()
+        assert body2["action"]["id"] == action_id
+        assert body2["action"]["task_prompt"] == "實作平行抓取報價與單元測試"
+        assert body2["attention_count"] == 1
+        assert body2["working_count"] == 0
+
+        # 3. 主人點擊選項解鎖 -> 卡片不消失，轉回 working 狀態
+        fake_proc = MagicMock(returncode=0, stdout="ok", stderr="")
+        with patch.object(subprocess, "run", return_value=fake_proc):
+            r_unlock = client.post(f"/api/actions/pending/{action_id}/resolve", json={
+                "answer": "選項 1：啟用",
+                "dismiss": False,
+            })
+        assert r_unlock.status_code == 200
+        b_unlock = r_unlock.json()
+        assert b_unlock["count"] == 1
+        assert b_unlock["actions"][0]["status"] == "working"
+        assert b_unlock["working_count"] == 1
+        assert b_unlock["attention_count"] == 0
+
+        # 4. 驗收通過完工 (completed)
+        summary_text = "✅ 完成項目\n- 完成平行抓取與快取機制\n🧪 驗證結果\n- pytest 6 passed"
+        r3 = client.post("/api/actions/pending", json={
+            "agent": "w13:p1",
+            "title": "market-ticker · agy · w13:p1",
+            "question": summary_text,
+            "summary": summary_text,
+            "status": "completed",
+            "elapsed_seconds": 80,
+            "tool_count": 7,
+        })
+        assert r3.status_code == 200
+        assert r3.json()["attention_count"] == 1
+
+        # 5. 主人直接在完工卡片輸入 Follow-up 續派第 2 輪
+        with patch.object(subprocess, "run", return_value=fake_proc) as mock_dispatch:
+            r_followup = client.post(f"/api/actions/pending/{action_id}/resolve", json={
+                "answer": "再幫我加上超時重試機制",
+                "dismiss": False,
+                "action": "followup",
+            })
+        assert r_followup.status_code == 200
+        b_fu = r_followup.json()
+        assert b_fu["dispatched_to"] == "herdr_followup"
+        card_r2 = b_fu["actions"][0]
+        assert card_r2["status"] == "working"
+        assert card_r2["round_no"] == 2
+        assert card_r2["task_prompt"] == "再幫我加上超時重試機制"
+        assert len(card_r2["rounds"]) == 1
+        assert card_r2["rounds"][0]["round_no"] == 1
+        assert "完成平行抓取" in card_r2["rounds"][0]["summary"]
+        assert "dispatch" in mock_dispatch.call_args[0][0]
+
+        # 6. 第 2 輪完工後點「結案歸檔」(dismiss=True) -> 移入 history 永久保存
+        client.post("/api/actions/pending", json={
+            "agent": "w13:p1",
+            "title": "market-ticker · agy · w13:p1",
+            "question": "✅ 完成項目\n- 新增超時重試\n🧪 驗證結果\n- pytest 8 passed",
+            "status": "completed",
+        })
+        r_arch = client.post(f"/api/actions/pending/{action_id}/resolve", json={
+            "answer": "",
+            "dismiss": True,
+        })
+        assert r_arch.status_code == 200
+        b_arch = r_arch.json()
+        assert b_arch["count"] == 0
+        assert len(b_arch["history"]) == 1
+        assert b_arch["history"][0]["id"] == action_id
+        assert b_arch["history"][0]["status"] == "archived"
+
+        # 7. 從歷史紀錄卡片直接點擊續派第 3 輪 -> 自動喚醒回目前派工清單
+        with patch.object(subprocess, "run", return_value=fake_proc):
+            r_revive = client.post(f"/api/actions/pending/{action_id}/resolve", json={
+                "answer": "幫我補上 Prometheus metrics",
+                "dismiss": False,
+                "action": "followup",
+            })
+        assert r_revive.status_code == 200
+        b_rev = r_revive.json()
+        assert b_rev["count"] == 1
+        assert len(b_rev["history"]) == 0
+        assert b_rev["actions"][0]["round_no"] == 3
+        assert len(b_rev["actions"][0]["rounds"]) == 2
+    finally:
+        main.app.dependency_overrides.pop(main.verify_token, None)
+        settings.DATA_DIR = orig_data_dir
