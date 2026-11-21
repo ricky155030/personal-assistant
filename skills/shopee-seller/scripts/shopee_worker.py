@@ -160,6 +160,9 @@ def run_worker(payload_file: str, task_id: str):
         upload_res = shopee_tool.upload_excel_to_shopee(excel_path, timeout_sec=50, expected_title=all_titles, expected_meta=all_meta)
         print(f"✅ 上傳結果: {json.dumps(upload_res, ensure_ascii=False)}")
 
+        if upload_res.get("status") == "failed":
+            raise RuntimeError(f"蝦皮批次匯入失敗（紀錄: {upload_res.get('record')}）")
+
         # 3. 剖析結果
         task_result["upload_res"] = upload_res
         published_products = upload_res.get("products") or ([upload_res.get("product")] if upload_res.get("product") else [])

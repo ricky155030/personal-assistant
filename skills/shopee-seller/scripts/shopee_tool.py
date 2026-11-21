@@ -215,7 +215,7 @@ def upload_image_to_public_url(image_path_or_url: str) -> str:
     """
     若傳入已經是 http/https URL 則直接回傳；
     若是本機檔案路徑，轉檔壓縮後上傳至臨時圖床取得直連 .jpg URL。
-    支援多圖床自動備援容錯：pomf2.lain.la -> uguu.se -> freeimage.host -> Litterbox。
+    支援多圖床自動備援容錯：Imgur (若有 IMGUR_CLIENT_ID) -> uguu.se -> tmpfiles.org -> pomf2.lain.la。
     """
     s = str(image_path_or_url).strip()
     if not s:
@@ -224,30 +224,32 @@ def upload_image_to_public_url(image_path_or_url: str) -> str:
         return s
 
     jpg_bytes = prepare_jpeg_bytes(s)
+    ua_headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 
-    # 1. 優先使用 pomf2.lain.la (高速穩定，回傳直接 .jpg 圖檔連結)
-    try:
-        r = requests.post(
-            "https://pomf2.lain.la/upload.php",
-            files={"files[]": ("product.jpg", io.BytesIO(jpg_bytes), "image/jpeg")},
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
-            timeout=15,
-        )
-        if r.status_code == 200:
-            res_json = r.json()
-            if res_json.get("success") and res_json.get("files"):
-                img_url = res_json["files"][0].get("url")
+    # 0. 若有設定 IMGUR_CLIENT_ID，優先使用 Imgur 官方匿名上傳（CDN 最穩定）
+    imgur_cid = (os.getenv("IMGUR_CLIENT_ID") or "").strip()
+    if imgur_cid:
+        try:
+            r = requests.post(
+                "https://api.imgur.com/3/image",
+                headers={"Authorization": f"Client-ID {imgur_cid}", **ua_headers},
+                files={"image": ("product.jpg", io.BytesIO(jpg_bytes), "image/jpeg")},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                res_json = r.json()
+                img_url = (res_json.get("data") or {}).get("link")
                 if img_url and str(img_url).startswith("https://"):
                     return str(img_url).strip()
-    except Exception as e:
-        sys.stderr.write(f"[警告] pomf2.lain.la 上傳失敗，嘗試備援圖床: {e}\n")
+        except Exception as e:
+            sys.stderr.write(f"[警告] Imgur 上傳失敗，嘗試備援圖床: {e}\n")
 
-    # 2. 備援圖床: uguu.se (Pomf 結構，回傳直接 .jpg 圖檔連結)
+    # 1. 優先使用 uguu.se (Pomf 結構，對蝦皮伺服器抓圖較友善，回傳直接 .jpg 圖檔連結)
     try:
         r = requests.post(
             "https://uguu.se/upload.php",
             files={"files[]": ("product.jpg", io.BytesIO(jpg_bytes), "image/jpeg")},
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            headers=ua_headers,
             timeout=15,
         )
         if r.status_code == 200:
@@ -259,12 +261,12 @@ def upload_image_to_public_url(image_path_or_url: str) -> str:
     except Exception as e:
         sys.stderr.write(f"[警告] uguu.se 上傳失敗，嘗試備援圖床: {e}\n")
 
-    # 3. 備援圖床: tmpfiles.org (穩定高速，自動解析直連圖檔連結)
+    # 2. 備援圖床: tmpfiles.org (自動解析直連圖檔連結)
     try:
         r = requests.post(
             "https://tmpfiles.org/api/v1/upload",
             files={"file": ("product.jpg", io.BytesIO(jpg_bytes), "image/jpeg")},
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            headers=ua_headers,
             timeout=15,
         )
         if r.status_code == 200:
@@ -276,7 +278,24 @@ def upload_image_to_public_url(image_path_or_url: str) -> str:
                 if m:
                     return m.group(1).strip()
     except Exception as e:
-        sys.stderr.write(f"[警告] tmpfiles.org 上傳失敗: {e}\n")
+        sys.stderr.write(f"[警告] tmpfiles.org 上傳失敗，嘗試備援圖床: {e}\n")
+
+    # 3. 最後備援: pomf2.lain.la（偶爾會被蝦皮下載端擋住，故放最後）
+    try:
+        r = requests.post(
+            "https://pomf2.lain.la/upload.php",
+            files={"files[]": ("product.jpg", io.BytesIO(jpg_bytes), "image/jpeg")},
+            headers=ua_headers,
+            timeout=15,
+        )
+        if r.status_code == 200:
+            res_json = r.json()
+            if res_json.get("success") and res_json.get("files"):
+                img_url = res_json["files"][0].get("url")
+                if img_url and str(img_url).startswith("https://"):
+                    return str(img_url).strip()
+    except Exception as e:
+        sys.stderr.write(f"[警告] pomf2.lain.la 上傳失敗: {e}\n")
 
     raise RuntimeError(f"所有圖床上傳皆失敗 ({image_path_or_url})")
 

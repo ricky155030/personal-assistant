@@ -245,3 +245,9 @@ def test_is_publish_succeeded_by_url():
     assert check(_Page("https://seller.shopee.tw/portal/product/list/unpublished/draft")) is True
     assert check(_Page("https://seller.shopee.tw/portal/product/unpublished/123")) is False
     assert check(_Page("https://seller.shopee.tw/portal/product/unpublished/123", toast=True)) is True
+
+
+def test_image_host_priority_prefers_imgur_and_uguu_over_pomf2():
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    assert "IMGUR_CLIENT_ID" in source
+    assert source.index("uguu.se/upload.php") < source.index("pomf2.lain.la/upload.php")
