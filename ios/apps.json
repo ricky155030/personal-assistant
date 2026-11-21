@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.2.1",
+          "buildVersion": "152",
+          "date": "2026-11-21T12:25:01Z",
+          "localizedDescription": "Show active working count badge on Herdr control center button",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.1/MacMiniAssistant.ipa",
+          "size": 4461704,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.2.0",
-          "buildVersion": "150",
-          "date": "2026-11-21T09:05:59Z",
-          "localizedDescription": "Herdr 派工督工中心：即時執行進度與終端實況、監工自動代答常規問題、結構化完工檢閱、同卡多輪原視窗續派與永久歷史紀錄分頁",
+          "buildVersion": "151",
+          "date": "2026-11-21T12:24:34Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.0/MacMiniAssistant.ipa",
-          "size": 4464558,
+          "size": 4461703,
           "minOSVersion": "17.0"
         },
         {
