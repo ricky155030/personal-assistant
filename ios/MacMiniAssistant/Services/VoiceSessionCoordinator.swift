@@ -588,9 +588,19 @@ public final class VoiceSessionCoordinator: ObservableObject {
         }
     }
 
+    /// 畫面已切回待命狀態時，自動清理殘留的串流收尾任務，避免藍色送出鍵被靜默鎖死
+    private func ensureReadyForNewTurn() -> Bool {
+        guard !isProcessingOrSpeaking else { return false }
+        if let staleTask = activeStreamTask {
+            staleTask.cancel()
+            activeStreamTask = nil
+        }
+        return true
+    }
+
     /// 點擊快速回覆膠囊 (Quick-Reply Chip) 一鍵送出選項
     public func sendQuickReply(_ option: String) {
-        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
+        guard ensureReadyForNewTurn() else { return }
         let trimmed = option.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         selectionHaptic.selectionChanged()
@@ -727,7 +737,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
     /// 直接送出鍵盤輸入框的訊息（或單獨送出附加圖片/檔案/定位）
     public func sendTextMessage() {
-        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
+        guard ensureReadyForNewTurn() else { return }
         let trimmed = textInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let imageCount = pendingImagesData.count + (pendingImageData != nil && pendingImagesData.isEmpty ? 1 : 0)
         let fileCount = pendingFiles.count
@@ -1636,7 +1646,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     }
 
     private func processTranscript(_ text: String) {
-        guard activeStreamTask == nil && !isProcessingOrSpeaking else { return }
+        guard ensureReadyForNewTurn() else { return }
 
         let attachedImg = pendingImageData
         let attachedMulti = pendingImagesData
@@ -1716,7 +1726,8 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 level: effectiveLevel,
                 imageBase64: imagesBase64.first,
                 imagesBase64: imagesBase64,
-                files: filesPayload.isEmpty ? nil : filesPayload
+                files: filesPayload.isEmpty ? nil : filesPayload,
+                enableTTS: speakThisTurn
             )
 
             do {

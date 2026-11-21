@@ -296,7 +296,8 @@ public final class MacMiniAPIClient {
         level: String? = nil,
         imageBase64: String? = nil,
         imagesBase64: [String]? = nil,
-        files: [[String: String]]? = nil
+        files: [[String: String]]? = nil,
+        enableTTS: Bool = true
     ) -> AsyncThrowingStream<SSEEvent, Error> {
         return AsyncThrowingStream { continuation in
             Task {
@@ -319,7 +320,8 @@ public final class MacMiniAPIClient {
                     "query": query,
                     "client": client,
                     "tts_voice": savedVoice,
-                    "tts_rate": savedRate
+                    "tts_rate": savedRate,
+                    "enable_tts": enableTTS
                 ]
                 if let lvl = level {
                     payload["level"] = lvl

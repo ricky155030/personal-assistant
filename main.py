@@ -183,6 +183,7 @@ class ChatRequest(BaseModel):
     level: Optional[str] = None
     tts_voice: Optional[str] = "zh-TW-HsiaoChenNeural"
     tts_rate: Optional[str] = "+0%"
+    enable_tts: bool = True
 
 class ChatResponse(BaseModel):
     reply: str
@@ -801,6 +802,7 @@ async def voice_chat_stream(
 
     loop = asyncio.get_running_loop()
     event_queue: asyncio.Queue = asyncio.Queue()
+    enable_tts = bool(getattr(payload, "enable_tts", True))
     tts_voice = payload.tts_voice or "zh-TW-HsiaoChenNeural"
     tts_rate = payload.tts_rate or "+0%"
     tts_queue: asyncio.Queue = asyncio.Queue()
@@ -831,7 +833,7 @@ async def voice_chat_stream(
             finally:
                 tts_queue.task_done()
 
-    tts_task = asyncio.create_task(tts_worker())
+    tts_task = asyncio.create_task(tts_worker()) if enable_tts else None
 
     if not user_query and not effective_media and not file_contexts:
         with _VOICE_CANCEL_LOCK:
@@ -879,7 +881,8 @@ async def voice_chat_stream(
                 )
                 activated = _TURN_QUEUE.wait_until_active_or_cancelled(active_turn_id, cancel_event)
                 if not activated:
-                    loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                    if enable_tts:
+                        loop.call_soon_threadsafe(tts_queue.put_nowait, None)
                     loop.call_soon_threadsafe(
                         event_queue.put_nowait,
                         {"type": "cancelled", "turn_id": active_turn_id},
@@ -940,14 +943,16 @@ async def voice_chat_stream(
                                     event_queue.put_nowait,
                                     {"type": "tts_sentence", "sentence": sent, "seq": seq}
                                 )
-                                loop.call_soon_threadsafe(
-                                    tts_queue.put_nowait,
-                                    (seq, sent)
-                                )
+                                if enable_tts:
+                                    loop.call_soon_threadsafe(
+                                        tts_queue.put_nowait,
+                                        (seq, sent)
+                                    )
 
             was_cancelled = cancel_event.is_set() or bool(turn_result.get("cancelled"))
             if was_cancelled:
-                loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                if enable_tts:
+                    loop.call_soon_threadsafe(tts_queue.put_nowait, None)
                 print(f"[voice_chat_stream] 🛑 本次語音請求已中途取消，略過後續 TTS 與 Telegram 推播: {user_query[:30]}")
                 return
 
@@ -967,10 +972,11 @@ async def voice_chat_stream(
                             event_queue.put_nowait,
                             {"type": "tts_sentence", "sentence": sent, "seq": seq}
                         )
-                        loop.call_soon_threadsafe(
-                            tts_queue.put_nowait,
-                            (seq, sent)
-                        )
+                        if enable_tts:
+                            loop.call_soon_threadsafe(
+                                tts_queue.put_nowait,
+                                (seq, sent)
+                            )
             if not client_disconnected.is_set():
                 for sent in extractor.flush():
                     seq = sentence_seq
@@ -979,19 +985,21 @@ async def voice_chat_stream(
                         event_queue.put_nowait,
                         {"type": "tts_sentence", "sentence": sent, "seq": seq}
                     )
-                    loop.call_soon_threadsafe(
-                        tts_queue.put_nowait,
-                        (seq, sent)
-                    )
+                    if enable_tts:
+                        loop.call_soon_threadsafe(
+                            tts_queue.put_nowait,
+                            (seq, sent)
+                        )
 
-            # 通知 tts_queue 已送完所有句子，並等待 TTS 合成排隊完成
-            loop.call_soon_threadsafe(tts_queue.put_nowait, None)
-            if not client_disconnected.is_set():
-                try:
-                    fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
-                    fut.result(timeout=15.0)
-                except Exception as e:
-                    print(f"[voice_chat_stream] TTS wait timeout: {e}")
+            # 通知 tts_queue 已送完所有句子，並等待 TTS 合成排隊完成（純文字模式 enable_tts=False 直接跳過不阻塞）
+            if enable_tts:
+                loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                if not client_disconnected.is_set():
+                    try:
+                        fut = asyncio.run_coroutine_threadsafe(tts_queue.join(), loop)
+                        fut.result(timeout=15.0)
+                    except Exception as e:
+                        print(f"[voice_chat_stream] TTS wait timeout: {e}")
 
             if cancel_event.is_set():
                 print(f"[voice_chat_stream] 🛑 TTS 期間收到取消訊號，略過 Telegram 推播")
