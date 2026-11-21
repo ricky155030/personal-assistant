@@ -2775,6 +2775,7 @@ struct GeminiMessageRow: View {
     @State private var isThoughtExpanded: Bool = false
     @State private var isToolsExpanded: Bool = false
     @State private var isReportExpandedOverride: Bool? = nil
+    @State private var isLongContentExpanded: Bool = false
     @State private var previewPhoto: PreviewPhotoItem? = nil
     @AppStorage("chatBaseFontSize") private var chatBaseFontSize: Double = 15.0
 
@@ -3116,11 +3117,42 @@ struct GeminiMessageRow: View {
                     }
                 }
 
-                // 助理回覆正文（背景回報預設摺疊，異常時預設展開，點擊標題列可切換）
+                // 助理回覆正文（背景回報預設摺疊，異常時預設展開；超過 20 行預設摺疊並提供一鍵展開）
                 if !message.isBackgroundReport || isBackgroundReportExpanded {
                     if !message.content.isEmpty {
-                        MarkdownMessageView(content: message.content)
+                        let contentLines = message.content.components(separatedBy: .newlines)
+                        let isCollapsibleLongText = message.status != .streaming && contentLines.count > 20
+                        let displayContent = (isCollapsibleLongText && !isLongContentExpanded)
+                            ? contentLines.prefix(20).joined(separator: "\n")
+                            : message.content
+
+                        MarkdownMessageView(content: displayContent)
                             .textSelection(.enabled)
+
+                        if isCollapsibleLongText {
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isLongContentExpanded.toggle()
+                                }
+                            }) {
+                                HStack(spacing: 6) {
+                                    Text(isLongContentExpanded ? "收合內容" : "展開全文（共 \(contentLines.count) 行）")
+                                        .font(.system(size: 12.5, weight: .semibold))
+                                    Image(systemName: isLongContentExpanded ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 10.5, weight: .bold))
+                                }
+                                .foregroundColor(.cyan)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.cyan.opacity(0.12))
+                                .overlay(
+                                    Capsule().stroke(Color.cyan.opacity(0.32), lineWidth: 0.9)
+                                )
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 2)
+                        }
                     }
                 }
 
@@ -4211,32 +4243,45 @@ private extension View {
 extension HandsFreeMainView {
     @MainActor
     func shareMessageAsScreenshot(_ message: ChatMessage) {
-        let card = MessageScreenshotCard(message: message, baseFontSize: chatBaseFontSize)
-        let renderer = ImageRenderer(content: card)
-        renderer.scale = UIScreen.main.scale
-        guard let image = renderer.uiImage else { return }
+        Task { @MainActor in
+            var widgetSnapshot: UIImage? = nil
+            if let widgetHtml = message.metadata?.widget_html?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !widgetHtml.isEmpty {
+                widgetSnapshot = await HTMLWidgetView.renderSnapshot(html: widgetHtml, width: 350)
+            }
 
-        let activityVC = UIActivityViewController(activityItems: [image], applicationActivities: nil)
-        guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-              let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
-            return
+            let card = MessageScreenshotCard(
+                message: message,
+                baseFontSize: chatBaseFontSize,
+                widgetSnapshot: widgetSnapshot
+            )
+            let renderer = ImageRenderer(content: card)
+            renderer.scale = UIScreen.main.scale
+            guard let image = renderer.uiImage else { return }
+
+            let activityVC = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+            guard let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+                  let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+                return
+            }
+            var topVC = root
+            while let presented = topVC.presentedViewController {
+                topVC = presented
+            }
+            if let popover = activityVC.popoverPresentationController {
+                popover.sourceView = topVC.view
+                popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
+                popover.permittedArrowDirections = []
+            }
+            topVC.present(activityVC, animated: true)
         }
-        var topVC = root
-        while let presented = topVC.presentedViewController {
-            topVC = presented
-        }
-        if let popover = activityVC.popoverPresentationController {
-            popover.sourceView = topVC.view
-            popover.sourceRect = CGRect(x: topVC.view.bounds.midX, y: topVC.view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
-        topVC.present(activityVC, animated: true)
     }
 }
 
 private struct MessageScreenshotCard: View {
     let message: ChatMessage
     let baseFontSize: Double
+    let widgetSnapshot: UIImage?
 
     private var formattedTime: String {
         let df = DateFormatter()
@@ -4295,11 +4340,20 @@ private struct MessageScreenshotCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
-            Text(LocalizedStringKey(message.content))
-                .font(.system(size: max(14.0, baseFontSize)))
-                .foregroundColor(.white.opacity(0.95))
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
+            if !message.content.isEmpty {
+                MarkdownMessageView(content: message.content)
+            }
+
+            if let widgetSnapshot {
+                Image(uiImage: widgetSnapshot)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+            }
         }
         .padding(20)
         .frame(width: 390, alignment: .leading)

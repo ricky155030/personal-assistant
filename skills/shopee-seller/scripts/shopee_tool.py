@@ -1357,6 +1357,15 @@ def handle_shopee_login(page, timeout: float = 15.0) -> bool:
     if not username or not password:
         return False
     try:
+        # 若頁面跳出「選擇語言」彈窗（#modal），先點選「繁體中文」解除遮罩
+        lang_btn = page.locator('#modal button, #modal div').filter(has_text="繁體中文").last
+        if page.locator("#modal").count() > 0 and lang_btn.count() > 0:
+            try:
+                lang_btn.click(timeout=3000)
+                time.sleep(0.5)
+            except Exception:
+                pass
+
         user_input = page.locator('input[name="loginKey"], input[placeholder*="Email"], input[type="text"]').first
         pwd_input = page.locator('input[name="password"], input[placeholder*="密碼"], input[type="password"]').first
         if user_input.count() > 0 and pwd_input.count() > 0:
