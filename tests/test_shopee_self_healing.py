@@ -1,18 +1,27 @@
 """Tests for Shopee seller self-healing publish button & field scan rules."""
 
-import importlib.util
+import ast
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SHOPEE_TOOL_PATH = REPO_ROOT / "skills" / "shopee-seller" / "scripts" / "shopee_tool.py"
 
 
-def _load_shopee_tool():
-    spec = importlib.util.spec_from_file_location("shopee_tool", SHOPEE_TOOL_PATH)
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    return module
+def _load_locate_publish_button():
+    """Load `_locate_publish_button` without triggering top-level skill dependencies."""
+    source = SHOPEE_TOOL_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(SHOPEE_TOOL_PATH))
+    func_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_locate_publish_button"
+    )
+    mod_ast = ast.Module(body=[func_node], type_ignores=[])
+    ast.fix_missing_locations(mod_ast)
+    ns = {"re": re}
+    exec(compile(mod_ast, str(SHOPEE_TOOL_PATH), "exec"), ns)
+    return ns["_locate_publish_button"]
 
 
 class _FakeLocator:
@@ -68,7 +77,7 @@ class _FakePage:
 
 
 def test_locate_publish_button_skips_hidden_outline_bind_buttons():
-    mod = _load_shopee_tool()
+    locate_publish_button = _load_locate_publish_button()
     page = _FakePage(
         [
             {
@@ -88,14 +97,14 @@ def test_locate_publish_button_skips_hidden_outline_bind_buttons():
             },
         ]
     )
-    btn = mod._locate_publish_button(page)
+    btn = locate_publish_button(page)
     assert btn is not None
     assert btn.count() == 1
     assert btn.inner_text() == "上架"
 
 
 def test_locate_publish_button_supports_save_and_publish_label():
-    mod = _load_shopee_tool()
+    locate_publish_button = _load_locate_publish_button()
     page = _FakePage(
         [
             {
@@ -110,7 +119,7 @@ def test_locate_publish_button_supports_save_and_publish_label():
             },
         ]
     )
-    btn = mod._locate_publish_button(page)
+    btn = locate_publish_button(page)
     assert btn is not None
     assert btn.inner_text() == "儲存並上架"
 
