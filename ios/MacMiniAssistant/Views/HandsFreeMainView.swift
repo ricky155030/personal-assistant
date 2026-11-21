@@ -1735,19 +1735,23 @@ struct HandsFreeMainView: View {
                         showBackgroundTasksSheet = true
                     }) {
                         HStack(spacing: 5) {
-                            Image(systemName: "bolt.fill")
+                            Image(systemName: "gearshape.2.fill")
                                 .font(.caption.weight(.semibold))
-                                .foregroundColor(activeTasks > 0 ? .cyan : .secondary)
+                                .foregroundColor(activeTasks > 0 ? .green : .secondary)
                             Text("背景任務")
                                 .font(.caption.weight(.semibold))
                                 .foregroundColor(.primary)
                             if activeTasks > 0 {
                                 Text("\(activeTasks)")
                                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 5)
-                                    .frame(minWidth: 16, minHeight: 16)
-                                    .background(Capsule().fill(Color.cyan))
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 6)
+                                    .frame(minWidth: 18, minHeight: 16)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.green.opacity(0.18))
+                                            .overlay(Capsule().stroke(Color.green.opacity(0.45), lineWidth: 0.8))
+                                    )
                                     .monospacedDigit()
                             }
                         }
