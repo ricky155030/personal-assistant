@@ -263,6 +263,53 @@ def detect_question_or_confirmation(raw_text: str, status: str = "") -> Optional
     return None
 
 
+_SHELL_CONFIRM_PATTERNS = [
+    r"\[[Yy]/[Nn]\]",
+    r"\([Yy]/[Nn]\)",
+    r"是否繼續",
+    r"按\s*Enter\s*繼續|Press\s+Enter",
+]
+
+
+def _detect_question_for_watch(
+    agent: str,
+    visible_text: str,
+    agent_info: Optional[Dict[str, Any]],
+    baseline_lines: int,
+    status: str,
+) -> Optional[str]:
+    """
+    日誌優先的監工提問偵測：
+    1. 優先檢查 baseline_lines 之後的 session log（pending_questions 與 latest_reply），
+       完全免疫終端機捲軸上移造成的舊畫面誤判。
+    2. 若日誌無提問，僅檢查終端機最後 8 行是否出現互動式 Shell [Y/n] 確認或 blocked 狀態。
+    3. 若無 session log 可讀，才退回完整畫面偵測。
+    """
+    if status == "working":
+        return None
+
+    turns = read_session_turns(agent, agent_info=agent_info, baseline_lines=baseline_lines)
+    if turns.get("log_path"):
+        pending_qs = turns.get("pending_questions") or []
+        if pending_qs:
+            return str(pending_qs[-1]).strip()
+        latest_reply = (turns.get("latest_reply") or "").strip()
+        if latest_reply:
+            q_from_log = detect_question_or_confirmation(latest_reply, status=status)
+            if q_from_log:
+                return q_from_log
+
+        tail_lines = clean_terminal_text(visible_text).splitlines()[-8:]
+        for idx, line in enumerate(tail_lines):
+            if any(re.search(p, line) for p in _SHELL_CONFIRM_PATTERNS):
+                return "\n".join(tail_lines[max(0, idx - 1):]).strip()
+        if status == "blocked":
+            return "\n".join(tail_lines).strip() or "Agent 目前處於 blocked 等待確認狀態。"
+        return None
+
+    return detect_question_or_confirmation(visible_text, status=status)
+
+
 def resolve_session_log_path(agent_info: Optional[Dict[str, Any]]) -> Tuple[str, Optional[Path]]:
     """解析不同類型 Agent (agy / omp) 的底層 JSONL 對話日誌路徑"""
     if not agent_info:
@@ -304,6 +351,63 @@ def count_session_log_lines(agent: str, agent_info: Optional[Dict[str, Any]] = N
         return 0
 
 
+_ASK_TOOL_NAMES = {
+    "ask_question",
+    "ask_user",
+    "askuserquestion",
+    "ask",
+    "question",
+}
+
+
+def _format_ask_tool_call(tool_name: str, raw_args: Any) -> Optional[str]:
+    """將 agy / omp 的 ask 類工具呼叫正規化為結構化提問字串"""
+    normalized = str(tool_name or "").split(":")[-1].split(".")[-1].strip().lower()
+    if normalized not in _ASK_TOOL_NAMES:
+        return None
+
+    args: Dict[str, Any] = {}
+    if isinstance(raw_args, dict):
+        args = raw_args
+    elif isinstance(raw_args, str) and raw_args.strip():
+        try:
+            parsed = json.loads(raw_args)
+            if isinstance(parsed, dict):
+                args = parsed
+        except Exception:
+            args = {"question": raw_args.strip()}
+
+    lines: List[str] = []
+    questions = args.get("questions")
+    if isinstance(questions, list) and questions:
+        for idx, q in enumerate(questions, 1):
+            if not isinstance(q, dict):
+                continue
+            q_text = str(q.get("question") or q.get("prompt") or "").strip()
+            if q_text:
+                lines.append(f"Q{idx}: {q_text}")
+            opts = q.get("options") or []
+            if isinstance(opts, list):
+                for o_idx, opt in enumerate(opts, 1):
+                    opt_txt = opt.get("label") if isinstance(opt, dict) else str(opt)
+                    if str(opt_txt).strip():
+                        lines.append(f"選項 {o_idx}: {str(opt_txt).strip()}")
+    else:
+        q_text = str(
+            args.get("question") or args.get("prompt") or args.get("message") or ""
+        ).strip()
+        if q_text:
+            lines.append(f"Q1: {q_text}")
+        opts = args.get("options") or []
+        if isinstance(opts, list):
+            for o_idx, opt in enumerate(opts, 1):
+                opt_txt = opt.get("label") if isinstance(opt, dict) else str(opt)
+                if str(opt_txt).strip():
+                    lines.append(f"選項 {o_idx}: {str(opt_txt).strip()}")
+
+    return "\n".join(lines).strip() or f"Agent 呼叫 {tool_name} 等待回覆確認"
+
+
 def _extract_omp_text_blocks(content: Any) -> str:
     """將 omp message.content（字串或區塊陣列）正規化為純文字"""
     if isinstance(content, str):
@@ -336,6 +440,7 @@ def read_session_turns(
         "user_inputs": [],
         "assistant_outputs": [],
         "tool_calls": [],
+        "pending_questions": [],
         "latest_reply": "",
     }
     if not log_path or not log_path.exists():
@@ -364,11 +469,16 @@ def read_session_turns(
             step_type = data.get("type")
             if step_type == "USER_INPUT" and data.get("content"):
                 result["user_inputs"].append(str(data["content"]).strip())
+                result["pending_questions"].clear()
             elif step_type == "PLANNER_RESPONSE":
                 for tc in data.get("tool_calls") or []:
                     if isinstance(tc, dict):
                         t_name = tc.get("name") or tc.get("function", {}).get("name") or "tool"
                         result["tool_calls"].append(str(t_name))
+                        t_args = tc.get("arguments") or tc.get("function", {}).get("arguments") or tc.get("args")
+                        ask_txt = _format_ask_tool_call(str(t_name), t_args)
+                        if ask_txt:
+                            result["pending_questions"].append(ask_txt)
                 if data.get("content"):
                     result["assistant_outputs"].append(str(data["content"]).strip())
             elif step_type == "GENERIC" and data.get("content"):
@@ -385,14 +495,24 @@ def read_session_turns(
                 txt = _extract_omp_text_blocks(msg.get("content"))
                 if txt:
                     result["user_inputs"].append(txt)
+                result["pending_questions"].clear()
             elif role == "assistant":
-                txt = _extract_omp_text_blocks(msg.get("content"))
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for blk in content:
+                        if isinstance(blk, dict) and blk.get("type") == "toolCall":
+                            t_name = str(blk.get("name") or "tool")
+                            ask_txt = _format_ask_tool_call(t_name, blk.get("arguments"))
+                            if ask_txt:
+                                result["pending_questions"].append(ask_txt)
+                txt = _extract_omp_text_blocks(content)
                 if txt:
                     result["assistant_outputs"].append(txt)
             elif role == "toolResult":
                 t_name = str(msg.get("toolName") or "tool")
                 is_err = bool(msg.get("isError"))
                 result["tool_calls"].append(f"{t_name}{' (error)' if is_err else ''}")
+                result["pending_questions"].clear()
 
     if result["assistant_outputs"]:
         result["latest_reply"] = result["assistant_outputs"][-1]
@@ -1345,7 +1465,13 @@ def watch_agent(
             time.sleep(interval)
             continue
 
-        question_text = detect_question_or_confirmation(visible_text, status=agent_status)
+        question_text = _detect_question_for_watch(
+            agent=agent,
+            visible_text=visible_text,
+            agent_info=agent_info,
+            baseline_lines=current_baseline,
+            status=agent_status,
+        )
 
         if question_text:
             if not waiting_input or question_text != last_question_content:

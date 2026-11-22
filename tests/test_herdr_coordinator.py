@@ -615,4 +615,77 @@ def test_detect_question_ignores_working_and_stale_scrollback():
     assert "選項 1" in short
 
 
+def test_read_session_turns_extracts_ask_tools_for_agy_and_omp(tmp_path):
+    from scripts.herdr_coordinator import read_session_turns, _detect_question_for_watch
+
+    agy_log = tmp_path / "agy_transcript.jsonl"
+    agy_log.write_text(
+        "\n".join([
+            json.dumps({"type": "PLANNER_RESPONSE", "content": "舊問句？"}),
+            json.dumps({
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{
+                    "name": "ask_question",
+                    "arguments": {"questions": [{"question": "要採用方案 A 還是 B？", "options": ["方案 A", "方案 B"]}]},
+                }],
+            }),
+        ]),
+        encoding="utf-8",
+    )
+    info_agy = {"agent": "agy", "agent_session": {"agent": "agy", "kind": "path", "value": str(agy_log)}}
+    with patch("scripts.herdr_coordinator.resolve_session_log_path", return_value=("agy", agy_log)):
+        turns_agy = read_session_turns("agy", agent_info=info_agy, baseline_lines=1)
+        assert len(turns_agy["pending_questions"]) == 1
+        assert "Q1: 要採用方案 A 還是 B？" in turns_agy["pending_questions"][0]
+        assert "選項 1: 方案 A" in turns_agy["pending_questions"][0]
+
+        # 終端機捲軸殘留舊文字時，應優先回傳日誌中的 ask_question 而非舊畫面
+        detected = _detect_question_for_watch(
+            "agy", "捲軸舊問題？\n一般輸出", info_agy, baseline_lines=1, status="idle"
+        )
+        assert detected is not None
+        assert "要採用方案 A 還是 B？" in detected
+
+    omp_log = tmp_path / "omp_session.jsonl"
+    omp_log.write_text(
+        "\n".join([
+            json.dumps({"type": "message", "message": {"role": "user", "content": "開始"}}),
+            json.dumps({
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "toolCall",
+                        "name": "ask",
+                        "arguments": {"question": "確認部署到 production 嗎？", "options": ["確認", "取消"]},
+                    }],
+                },
+            }),
+        ]),
+        encoding="utf-8",
+    )
+    info_omp = {"agent": "omp", "agent_session": {"agent": "omp", "kind": "path", "value": str(omp_log)}}
+    turns_omp = read_session_turns("omp-worker", agent_info=info_omp, baseline_lines=1)
+    assert len(turns_omp["pending_questions"]) == 1
+    assert "確認部署到 production 嗎？" in turns_omp["pending_questions"][0]
+
+    # 即使終端機捲軸停在舊問題上，只要日誌有路徑且無新提問，就不應誤報；但 [Y/n] 仍要抓到
+    omp_done_log = tmp_path / "omp_done.jsonl"
+    omp_done_log.write_text(
+        "\n".join([
+            json.dumps({"type": "message", "message": {"role": "user", "content": "舊問句？"}}),
+            json.dumps({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "已全部完成。"}]}}),
+        ]),
+        encoding="utf-8",
+    )
+    info_done = {"agent": "omp", "agent_session": {"agent": "omp", "kind": "path", "value": str(omp_done_log)}}
+    assert _detect_question_for_watch(
+        "omp-worker", "捲軸舊問題：請問要怎麼處理？\n正常輸出", info_done, baseline_lines=1, status="idle"
+    ) is None
+    assert _detect_question_for_watch(
+        "omp-worker", "Proceed with overwrite? [Y/n]", info_done, baseline_lines=1, status="idle"
+    ) is not None
+
+
+
 
