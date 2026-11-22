@@ -418,15 +418,15 @@ struct HandsFreeMainView: View {
                 }
             }
         }
-        .task {
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard scenePhase == .active else { continue }
                 let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
                 await MainActor.run {
                     self.pendingActions = payload.actions
                     self.herdrHistoryActions = payload.history
                 }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
             }
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
