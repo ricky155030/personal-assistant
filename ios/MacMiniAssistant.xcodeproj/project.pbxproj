@@ -12,6 +12,7 @@
 		1227A1C49F6E6D50A181C1E6 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		160A0F392D26BB2EEA3C2E75 /* AssistantModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E1F8A8C48ED70A14D4C589B /* AssistantModels.swift */; };
 		194D633A7D096FC9475C561D /* MarkdownMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */; };
+		1C5E8DE64AADA6D997628349 /* BackgroundTasksSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F9DFEEED8499003BE99EBF5 /* BackgroundTasksSheetView.swift */; };
 		2859F062EE454D94C27BE9D5 /* WidgetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE85C1F5CCBAD307EA0C5E22 /* WidgetViews.swift */; };
 		28FAFDA2EBEBAF446629FFF8 /* AssistantIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B062E93276233E7C7607CC9F /* AssistantIntents.swift */; };
 		29AC55C091BA4643B0712B4F /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8698A4936B34827490B2B14 /* ShareViewController.swift */; };
@@ -25,6 +26,7 @@
 		8BA7039DD0EE062E0AD5F7F2 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		AB28EDDD724D6502361ACA37 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		C7501CB9F65B6B49A53E0A59 /* QuickPromptDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0F163B919F7D4E639595A8 /* QuickPromptDrawerView.swift */; };
+		CFC3375595903FC9C090E8DE /* ArtifactsDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8AE0EB6A98507693A9D8BE /* ArtifactsDrawerView.swift */; };
 		D6E5AC665BF3AFF54F0077F5 /* AudioRecorderVAD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C5BC48D556979CF989B7E12 /* AudioRecorderVAD.swift */; };
 		E92D5C6322450C278CB1C903 /* NativeSpeechPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E3BF0D3B8802C1B5F3975F0 /* NativeSpeechPlayer.swift */; };
 		EBAB67584EECA76D8B68B39F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 4A41A7AA54B96AC2F085BFF2 /* Assets.xcassets */; };
@@ -68,12 +70,14 @@
 		0B2D748E148C7EFD04499D0B /* MacMiniAssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAssistantApp.swift; sourceTree = "<group>"; };
 		0C5BC48D556979CF989B7E12 /* AudioRecorderVAD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorderVAD.swift; sourceTree = "<group>"; };
 		0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownMessageView.swift; sourceTree = "<group>"; };
+		0F9DFEEED8499003BE99EBF5 /* BackgroundTasksSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTasksSheetView.swift; sourceTree = "<group>"; };
 		1E1F8A8C48ED70A14D4C589B /* AssistantModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantModels.swift; sourceTree = "<group>"; };
 		2DB522D8D90D32751E9D9DDB /* HandsFreeMainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HandsFreeMainView.swift; sourceTree = "<group>"; };
 		49E2934B8427DE9E5F82FA1E /* MacMiniAssistantWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAssistantWidget.swift; sourceTree = "<group>"; };
 		4A41A7AA54B96AC2F085BFF2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4CC36A28C8617C294FB5D57E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLWidgetView.swift; sourceTree = "<group>"; };
+		5B8AE0EB6A98507693A9D8BE /* ArtifactsDrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactsDrawerView.swift; sourceTree = "<group>"; };
 		5E3BF0D3B8802C1B5F3975F0 /* NativeSpeechPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechPlayer.swift; sourceTree = "<group>"; };
 		6C09085774DDCD3C95C4D9D3 /* MacMiniAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMiniAPIClient.swift; sourceTree = "<group>"; };
 		76787B20330917235ABB0C96 /* MacMiniAssistantWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantWidget.entitlements; sourceTree = "<group>"; };
@@ -125,7 +129,9 @@
 		7B0B04E4F72A0D35A7B7F287 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				5B8AE0EB6A98507693A9D8BE /* ArtifactsDrawerView.swift */,
 				FD6ABF15EB7951499ABA95A1 /* AssistantSettingsView.swift */,
+				0F9DFEEED8499003BE99EBF5 /* BackgroundTasksSheetView.swift */,
 				2DB522D8D90D32751E9D9DDB /* HandsFreeMainView.swift */,
 				51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */,
 				0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */,
@@ -305,10 +311,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				1227A1C49F6E6D50A181C1E6 /* AppGroupStore.swift in Sources */,
+				CFC3375595903FC9C090E8DE /* ArtifactsDrawerView.swift in Sources */,
 				28FAFDA2EBEBAF446629FFF8 /* AssistantIntents.swift in Sources */,
 				160A0F392D26BB2EEA3C2E75 /* AssistantModels.swift in Sources */,
 				5CF5EE3FBEB32167C82FD014 /* AssistantSettingsView.swift in Sources */,
 				D6E5AC665BF3AFF54F0077F5 /* AudioRecorderVAD.swift in Sources */,
+				1C5E8DE64AADA6D997628349 /* BackgroundTasksSheetView.swift in Sources */,
 				4D469D332427F6DE54FFA2E2 /* HTMLWidgetView.swift in Sources */,
 				F1495C95B0622D8A8F88876E /* HandsFreeMainView.swift in Sources */,
 				07C38680368D7C7D2E18978C /* MacMiniAPIClient.swift in Sources */,
@@ -530,7 +538,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.4;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -589,7 +597,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.4;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

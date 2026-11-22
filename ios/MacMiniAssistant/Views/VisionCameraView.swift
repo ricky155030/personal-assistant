@@ -1032,27 +1032,41 @@ struct VisionCameraPreviewView: UIViewRepresentable {
 struct VisionPresetManagerView: View {
     @Binding var presets: [VisionActionPreset]
     @Environment(\.dismiss) private var dismiss
+    @State private var editingPreset: VisionActionPreset?
 
     var body: some View {
         NavigationStack {
             List {
-                Section("動作按鈕清單（可拖曳排序或刪除）") {
+                Section("動作按鈕清單（點擊編輯、拖曳排序或滑動刪除）") {
                     ForEach(presets) { preset in
-                        HStack(spacing: 12) {
-                            Image(systemName: preset.icon)
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundColor(.cyan)
-                                .frame(width: 28)
+                        Button {
+                            editingPreset = preset
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: preset.icon)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.cyan)
+                                    .frame(width: 28)
 
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(preset.title)
-                                    .font(.system(size: 15, weight: .semibold))
-                                Text(preset.prompt)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(preset.title)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Text(preset.prompt)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(2)
+                                }
+
+                                Spacer(minLength: 4)
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.secondary.opacity(0.6))
                             }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
                     .onDelete { indexSet in
                         presets.remove(atOffsets: indexSet)
@@ -1082,24 +1096,48 @@ struct VisionPresetManagerView: View {
                     Button("完成") { dismiss() }
                 }
             }
+            .sheet(item: $editingPreset) { target in
+                AddVisionPresetSheet(editingPreset: target) { updated in
+                    if let idx = presets.firstIndex(where: { $0.id == updated.id }) {
+                        presets[idx] = updated
+                        VisionPresetStore.savePresets(presets)
+                    }
+                }
+            }
         }
     }
 }
 
-// MARK: - 新增自訂按鈕面板 (AddVisionPresetSheet)
+// MARK: - 新增／編輯自訂按鈕面板 (AddVisionPresetSheet)
 struct AddVisionPresetSheet: View {
+    var editingPreset: VisionActionPreset? = nil
     var onAdd: (VisionActionPreset) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    @State private var title: String = ""
-    @State private var icon: String = "sparkles"
-    @State private var prompt: String = ""
+    @State private var title: String
+    @State private var icon: String
+    @State private var prompt: String
 
-    private let availableIcons = [
+    private let baseIcons = [
         "sparkles", "bag.fill", "heart.fill", "doc.text",
         "pills.fill", "book.closed.fill", "fork.knife", "cart.fill",
         "tag.fill", "leaf.fill", "cross.case.fill", "camera.metering.matrix"
     ]
+
+    private var availableIcons: [String] {
+        if let editingIcon = editingPreset?.icon, !baseIcons.contains(editingIcon) {
+            return [editingIcon] + baseIcons
+        }
+        return baseIcons
+    }
+
+    init(editingPreset: VisionActionPreset? = nil, onAdd: @escaping (VisionActionPreset) -> Void) {
+        self.editingPreset = editingPreset
+        self.onAdd = onAdd
+        _title = State(initialValue: editingPreset?.title ?? "")
+        _icon = State(initialValue: editingPreset?.icon ?? "sparkles")
+        _prompt = State(initialValue: editingPreset?.prompt ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -1122,24 +1160,25 @@ struct AddVisionPresetSheet: View {
                         .frame(minHeight: 120)
                 }
             }
-            .navigationTitle("新增相機動作按鈕")
+            .navigationTitle(editingPreset == nil ? "新增相機動作按鈕" : "編輯相機動作按鈕")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("新增") {
+                    Button(editingPreset == nil ? "新增" : "儲存") {
                         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmedTitle.isEmpty, !trimmedPrompt.isEmpty else { return }
-                        let newPreset = VisionActionPreset(
+                        let savedPreset = VisionActionPreset(
+                            id: editingPreset?.id ?? UUID().uuidString,
                             title: trimmedTitle,
                             icon: icon,
                             prompt: trimmedPrompt,
-                            isBuiltIn: false
+                            isBuiltIn: editingPreset?.isBuiltIn ?? false
                         )
-                        onAdd(newPreset)
+                        onAdd(savedPreset)
                         dismiss()
                     }
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
