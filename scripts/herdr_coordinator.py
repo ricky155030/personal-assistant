@@ -228,14 +228,18 @@ def clean_terminal_text(raw_text: str) -> str:
 def detect_question_or_confirmation(raw_text: str, status: str = "") -> Optional[str]:
     """
     辨識 Agent 是否輸出提問、選項或等待確認：
-    - 若有命中 Q1: / 選項 1: / 請問 / 等待確認等模式，擷取提問區塊
+    - 若 Agent 處於 working（仍在執行工具），不誤判為等待輸入
+    - 僅檢查畫面最後 30 行，避免誤抓上方捲軸區的舊歷史對話
     - 若狀態為 blocked，亦視為需要互動確認
     """
+    if status == "working":
+        return None
+
     cleaned = clean_terminal_text(raw_text)
     if not cleaned and status != "blocked":
         return None
 
-    lines = cleaned.splitlines()
+    lines = cleaned.splitlines()[-30:]
     first_match_idx = -1
 
     for idx, line in enumerate(lines):
@@ -559,19 +563,37 @@ def _parse_question_options(question_text: str) -> List[str]:
     return options[:6]
 
 
+def _summarize_fallback_question(raw_clean: str) -> str:
+    """當無狀態 LLM 精煉超時或不可用時，從尾端萃取 1~2 句簡短核心問題（細節留待展開終端機實況檢視）。"""
+    lines = [ln.strip() for ln in raw_clean.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    if len(raw_clean) <= 140:
+        return raw_clean
+    tail = lines[-12:]
+    q_indices = [idx for idx, ln in enumerate(tail) if ("?" in ln or "？" in ln or re.search(r"^(?:Q\d+|請問|請選擇|是否)", ln))]
+    if q_indices:
+        q_idx = q_indices[-1]
+        picked = tail[max(0, q_idx - 1):q_idx + 1]
+    else:
+        picked = tail[-2:]
+    summary = "\n".join(picked).strip()
+    return (summary[:137] + "...") if len(summary) > 140 else summary
+
+
 def refine_question_for_action_queue(
     workspace_label: str,
     raw_question_context: str,
-    timeout_sec: float = 12.0,
+    timeout_sec: float = 25.0,
 ) -> Dict[str, Any]:
     """
     透過無狀態 `agy -p` 將終端機原始請示訊息精煉為極簡、易懂的繁體中文決策卡片內容。
-    失敗或超時時自動降級為原始文字與正則選項解析，確保通知永不卡死。
+    失敗或超時時自動降級為精簡尾端摘要與正則選項解析，確保卡片永遠簡潔不冗長。
     """
     raw_clean = (raw_question_context or "").strip()
     fallback_options = _parse_question_options(raw_clean)
     fallback = {
-        "formatted_question": raw_clean[:400],
+        "formatted_question": _summarize_fallback_question(raw_clean),
         "options": fallback_options,
     }
     if not raw_clean:

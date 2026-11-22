@@ -603,4 +603,16 @@ def test_notify_question_supervisor_auto_answer():
     assert mock_push.call_args.kwargs["status"] == "working"
 
 
+def test_detect_question_ignores_working_and_stale_scrollback():
+    stale_top = "\n".join([f"Q1: 舊問題 {i}？" for i in range(5)] + [f"普通輸出行 {i}" for i in range(35)])
+    assert detect_question_or_confirmation(stale_top, status="idle") is None
+    assert detect_question_or_confirmation("Q1: 新問題？", status="working") is None
+
+    from scripts.herdr_coordinator import _summarize_fallback_question
+    long_raw = "\n".join([f"步驟 {i} 說明..." for i in range(20)] + ["請問要採用選項 1 還是選項 2？"])
+    short = _summarize_fallback_question(long_raw)
+    assert len(short) <= 140
+    assert "選項 1" in short
+
+
 
