@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.3.3",
+          "buildVersion": "161",
+          "date": "2026-11-22T00:15:49Z",
+          "localizedDescription": "Fix Herdr polling loop capturing stale scenePhase",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.3/MacMiniAssistant.ipa",
+          "size": 4524454,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.3.2",
-          "buildVersion": "159",
-          "date": "2026-11-21T13:29:43Z",
-          "localizedDescription": "Polish background tasks drawer list, gear icon, and badge contrast",
+          "buildVersion": "160",
+          "date": "2026-11-22T00:15:21Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.2/MacMiniAssistant.ipa",
-          "size": 4523550,
+          "size": 4524454,
           "minOSVersion": "17.0"
         },
         {
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.1/MacMiniAssistant.ipa",
           "size": 4360159,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.1.0",
-          "buildVersion": "141",
-          "date": "2026-11-19T12:40:17Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.0/MacMiniAssistant.ipa",
-          "size": 4343911,
           "minOSVersion": "17.0"
         }
       ]
