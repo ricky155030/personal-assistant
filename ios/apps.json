@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.5.1",
+          "buildVersion": "170",
+          "date": "2026-11-24T11:22:27Z",
+          "localizedDescription": "移除訊息標題列與卡片外露選字按鈕（保留長按選單自由選字）",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.1/MacMiniAssistant.ipa",
+          "size": 4769355,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.5.0",
-          "buildVersion": "168",
-          "date": "2026-11-24T10:28:08Z",
-          "localizedDescription": "新增訊息自由選字複製與督工抽屜即時監看子代理",
+          "buildVersion": "169",
+          "date": "2026-11-24T11:22:04Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.0/MacMiniAssistant.ipa",
-          "size": 4777902,
+          "size": 4769356,
           "minOSVersion": "17.0"
         },
         {
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.0/MacMiniAssistant.ipa",
           "size": 4461703,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.1.4",
-          "buildVersion": "148",
-          "date": "2026-11-21T07:19:39Z",
-          "localizedDescription": "修復殘留串流鎖死藍色送出鍵與文字對話等待 TTS 阻塞 metadata 顯示",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.4/MacMiniAssistant.ipa",
-          "size": 4360168,
           "minOSVersion": "17.0"
         }
       ]
