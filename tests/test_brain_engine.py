@@ -477,3 +477,69 @@ def test_agy_worker_preserves_markdown_code_blocks():
     assert "### 測試標題" in result["clean_reply"]
     assert "**重點**" in result["clean_reply"]
     assert "```swift\nlet x = 1\n```" in result["clean_reply"]
+
+
+def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypatch):
+    import omp_singleton
+
+    models_yml = tmp_path / "models.yml"
+    models_yml.write_text(
+        """providers:
+  Gemini-GW-1:
+    auth: none
+    models:
+      - id: gemini-4-hydrogen
+        name: Gemini 4 Hydrogen (GW-1)
+      - id: gemini-4-neon
+        name: Gemini 4 Neon (GW-1)
+  gemini-gw-2:
+    auth: none
+    models:
+      - id: gemini-auto
+        name: Gemini Auto (GW-2)
+  other-provider:
+    auth: none
+    models:
+      - id: muse-spark-1.3
+        name: Muse Spark 1.3
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("OMP_CURATED_MODELS", raising=False)
+    monkeypatch.setenv("OMP_MODELS_YML", str(models_yml))
+
+    models = omp_singleton._load_curated_omp_models()
+    ids = [m["id"] for m in models]
+    labels = [m["label"] for m in models]
+    assert ids == [
+        "Gemini-GW-1/gemini-4-hydrogen",
+        "Gemini-GW-1/gemini-4-neon",
+        "gemini-gw-2/gemini-auto",
+    ]
+    assert labels == [
+        "Gemini 4 Hydrogen (GW-1)",
+        "Gemini 4 Neon (GW-1)",
+        "Gemini Auto (GW-2)",
+    ]
+    assert all("muse" not in mid.lower() for mid in ids)
+    assert all("muse" not in m["id"].lower() for m in omp_singleton.DEFAULT_OMP_MODELS)
+
+
+def test_omp_models_yml_fallback_parser():
+    import omp_singleton
+
+    sample = """providers:
+  Gemini-GW-1:
+    auth: none
+    models:
+      - id: gemini-4-hydrogen
+        name: Gemini 4 Hydrogen (GW-1)
+      - id: gemini-web
+        name: Gemini Web (GW-1)
+"""
+    parsed = omp_singleton._parse_omp_models_yml_fallback(sample)
+    assert "Gemini-GW-1" in parsed["providers"]
+    assert parsed["providers"]["Gemini-GW-1"]["models"] == [
+        {"id": "gemini-4-hydrogen", "name": "Gemini 4 Hydrogen (GW-1)"},
+        {"id": "gemini-web", "name": "Gemini Web (GW-1)"},
+    ]

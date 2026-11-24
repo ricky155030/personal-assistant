@@ -77,7 +77,10 @@ enum ModelBrand {
         if low.contains("claude") || low.contains("opus") || low.contains("sonnet") {
             return .claude
         }
-        if low.contains("muse") || (engineId == "omp" && !low.contains("claude")) {
+        if low.contains("gemini") {
+            return .gemini
+        }
+        if low.contains("muse") || engineId == "omp" {
             return .muse
         }
         return .gemini
@@ -1014,9 +1017,8 @@ struct HandsFreeMainView: View {
                 popoverSectionHeader("主腦引擎切換")
                 let engineList = coordinator.brainCatalog?.engines ?? [
                     BrainEngineOption(id: "agy", label: "Antigravity (agy)", supportsQuota: true, selectedModel: "hydrogen", models: []),
-                    BrainEngineOption(id: "omp", label: "Oh-My-Pi (omp)", supportsQuota: false, selectedModel: "muse-spark-1.3-contributor", models: [
-                        BrainModelOption(id: "muse-spark-1.3-contributor", label: "Muse Spark 1.3"),
-                        BrainModelOption(id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5")
+                    BrainEngineOption(id: "omp", label: "Oh-My-Pi (omp)", supportsQuota: false, selectedModel: "Gemini-GW-1/gemini-4-hydrogen", models: [
+                        BrainModelOption(id: "Gemini-GW-1/gemini-4-hydrogen", label: "Gemini 4 Hydrogen (GW-1)")
                     ])
                 ]
                 ForEach(engineList) { eng in

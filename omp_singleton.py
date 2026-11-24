@@ -52,30 +52,120 @@ def _load_agents_md_text() -> str:
         pass
     return ""
 DEFAULT_OMP_MODELS: List[dict] = [
-    {"id": "muse-spark-1.3-contributor", "label": "Muse Spark 1.3", "thinking_levels": ["low", "med", "high"]},
-    {"id": "muse-spark-1.3", "label": "Muse Spark 1.3 公版", "thinking_levels": ["low", "med", "high"]},
+    {"id": "Gemini-GW-1/gemini-4-hydrogen", "label": "Gemini 4 Hydrogen (GW-1)", "thinking_levels": ["low", "med", "high"]},
 ]
+
+
+def _parse_omp_models_yml_fallback(text: str) -> dict:
+    """Minimal fallback parser for ~/.omp/agent/models.yml when PyYAML is unavailable."""
+    providers: dict = {}
+    in_providers = False
+    cur_provider: Optional[str] = None
+    in_models = False
+    cur_model: Optional[dict] = None
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        if indent == 0:
+            in_providers = stripped == "providers:"
+            cur_provider = None
+            in_models = False
+            cur_model = None
+            continue
+        if not in_providers:
+            continue
+        if indent == 2 and stripped.endswith(":"):
+            cur_provider = stripped[:-1].strip()
+            providers[cur_provider] = {"models": []}
+            in_models = False
+            cur_model = None
+        elif cur_provider and indent == 4:
+            in_models = stripped == "models:"
+            cur_model = None
+        elif cur_provider and in_models:
+            if stripped.startswith("- "):
+                cur_model = {}
+                providers[cur_provider]["models"].append(cur_model)
+                rest = stripped[2:].strip()
+                if ":" in rest:
+                    k, v = rest.split(":", 1)
+                    cur_model[k.strip()] = v.strip().strip("\"'")
+            elif cur_model is not None and ":" in stripped and indent >= 8:
+                k, v = stripped.split(":", 1)
+                cur_model[k.strip()] = v.strip().strip("\"'")
+    return {"providers": providers}
+
+
+def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[dict]:
+    """Discover all models under `gemini-gw-*` providers from ~/.omp/agent/models.yml."""
+    env_path = os.getenv("OMP_MODELS_YML", "").strip()
+    path = models_yml_path or (Path(env_path) if env_path else (Path.home() / ".omp" / "agent" / "models.yml"))
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+        try:
+            import yaml  # type: ignore
+
+            data = yaml.safe_load(text) or {}
+        except ImportError:
+            data = _parse_omp_models_yml_fallback(text)
+    except Exception:
+        return []
+
+    providers = data.get("providers") if isinstance(data, dict) else None
+    if not isinstance(providers, dict):
+        return []
+
+    models: List[dict] = []
+    for provider_name, provider_cfg in providers.items():
+        pname = str(provider_name or "").strip()
+        if not pname.lower().startswith("gemini-gw-"):
+            continue
+        if not isinstance(provider_cfg, dict):
+            continue
+        for entry in provider_cfg.get("models") or []:
+            if not isinstance(entry, dict):
+                continue
+            mid = str(entry.get("id") or "").strip()
+            if not mid:
+                continue
+            label = str(entry.get("name") or "").strip() or f"{mid} ({pname})"
+            models.append(
+                {
+                    "id": f"{pname}/{mid}",
+                    "label": label,
+                    "thinking_levels": ["low", "med", "high"],
+                }
+            )
+    return models
 
 
 def _load_curated_omp_models() -> List[dict]:
     raw = os.getenv("OMP_CURATED_MODELS", "").strip()
-    if not raw:
-        return [dict(m) for m in DEFAULT_OMP_MODELS]
-    models: List[dict] = []
-    for entry in raw.split(","):
-        item = entry.strip()
-        if not item:
-            continue
-        if "|" in item:
-            mid, label = item.split("|", 1)
-            models.append({
-                "id": mid.strip(),
-                "label": label.strip() or mid.strip(),
-                "thinking_levels": ["low", "med", "high"],
-            })
-        else:
-            models.append({"id": item, "label": item, "thinking_levels": ["low", "med", "high"]})
-    return models or [dict(m) for m in DEFAULT_OMP_MODELS]
+    if raw:
+        models: List[dict] = []
+        for entry in raw.split(","):
+            item = entry.strip()
+            if not item:
+                continue
+            if "|" in item:
+                mid, label = item.split("|", 1)
+                models.append({
+                    "id": mid.strip(),
+                    "label": label.strip() or mid.strip(),
+                    "thinking_levels": ["low", "med", "high"],
+                })
+            else:
+                models.append({"id": item, "label": item, "thinking_levels": ["low", "med", "high"]})
+        if models:
+            return models
+    discovered = _load_models_from_omp_yml()
+    if discovered:
+        return discovered
+    return [dict(m) for m in DEFAULT_OMP_MODELS]
 class OmpResidentWorker:
     """常駐 omp acp 進程（與 agy 同協定）：開機啟動、長連線問答、毫秒級取消。"""
 
