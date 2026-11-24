@@ -3096,18 +3096,8 @@ struct GeminiMessageRow: View {
                         .font(.caption2)
                         .foregroundColor(Color(white: 0.48))
 
-                    // 自由選字 & 語音朗讀 / 停止按鈕
+                    // 語音朗讀 / 停止按鈕（自由選字已收斂至長按選單，維持標題列乾淨單行）
                     if !message.content.isEmpty {
-                        if let onTapSelectText {
-                            Button(action: onTapSelectText) {
-                                Image(systemName: "selection.pin.in.out")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                                    .padding(6)
-                            }
-                            .accessibilityLabel("選取文字")
-                        }
-
                         Button(action: onTapSpeak) {
                             Image(systemName: isCurrentlySpeaking ? "stop.circle.fill" : "speaker.wave.2")
                                 .font(.system(size: 15))
@@ -4698,23 +4688,6 @@ private struct PendingActionsSheetView: View {
                     .background(Capsule().fill(st.color.opacity(0.15)))
 
                 Spacer(minLength: 4)
-
-                Button(action: {
-                    let bodyText = (item.isCompleted || isHistoryTab) && !item.summary.isEmpty ? item.summary : item.question
-                    let fullCardText = [
-                        item.taskPrompt.isEmpty ? nil : "【交辦任務】\n\(item.taskPrompt)",
-                        bodyText.isEmpty ? nil : "【內容 / 結果】\n\(bodyText)",
-                        item.terminalTail.isEmpty ? nil : "【終端機實況】\n\(item.terminalTail)"
-                    ].compactMap { $0 }.joined(separator: "\n\n")
-                    selectableTextItem = SelectableTextItem(title: item.title, text: fullCardText)
-                }) {
-                    Image(systemName: "selection.pin.in.out")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.65))
-                        .padding(4)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("選取派工卡片文字")
 
                 Button(action: {
                     submit(item: item, answer: "", dismiss: true, actionMode: nil, isFromHistory: isHistoryTab)
