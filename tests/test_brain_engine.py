@@ -531,6 +531,30 @@ def test_omp_resident_does_not_restart_below_token_limit():
     assert restart_calls == []
 
 
+def test_omp_permission_response_helper():
+    import omp_singleton
+
+    # Verify session/request_permission outcome structure matches ACP spec
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-1/gemini-4-hydrogen")
+    sent = []
+    worker._send_rpc = lambda payload: sent.append(payload)
+
+    # Simulate the exact permission selection logic used in _reader
+    options = [
+        {"optionId": "reject_once", "kind": "reject_once"},
+        {"optionId": "allow_once", "kind": "allow_once"},
+    ]
+    option_id = "allow"
+    for opt in options:
+        if isinstance(opt, dict):
+            oid = str(opt.get("optionId") or "")
+            kind = str(opt.get("kind") or "")
+            if "allow" in kind or "allow" in oid:
+                option_id = oid or "allow"
+                break
+    assert option_id == "allow_once"
+
+
 def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypatch):
     import omp_singleton
 

@@ -365,8 +365,23 @@ class OmpResidentWorker:
                     except Exception:
                         continue
                     if "method" in msg and "id" in msg and "result" not in msg and "error" not in msg:
+                        method = msg.get("method", "")
+                        req_id = msg.get("id")
+                        if method == "session/request_permission":
+                            options = (msg.get("params") or {}).get("options") or []
+                            option_id = "allow"
+                            for opt in options:
+                                if isinstance(opt, dict):
+                                    oid = str(opt.get("optionId") or "")
+                                    kind = str(opt.get("kind") or "")
+                                    if "allow" in kind or "allow" in oid:
+                                        option_id = oid or "allow"
+                                        break
+                            result_payload = {"outcome": {"outcome": "selected", "optionId": option_id}}
+                        else:
+                            result_payload = {}
                         try:
-                            self._send_rpc({"jsonrpc": "2.0", "id": msg.get("id"), "result": {}})
+                            self._send_rpc({"jsonrpc": "2.0", "id": req_id, "result": result_payload})
                         except Exception:
                             pass
                         continue
