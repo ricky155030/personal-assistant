@@ -612,6 +612,24 @@ public final class MacMiniAPIClient {
         }
     }
 
+    public func fetchVoiceVocabulary() async -> [String]? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/voice/vocabulary") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            let decoded = try JSONDecoder().decode(VoiceVocabularyResponse.self, from: data)
+            return decoded.vocabulary.isEmpty ? nil : decoded.vocabulary
+        } catch {
+            return nil
+        }
+    }
+
     public func selectBrainEngine(engine: String, model: String? = nil) async -> BrainCatalogResponse? {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(cleanBase)/api/brain/select") else { return nil }

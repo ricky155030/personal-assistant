@@ -951,3 +951,8 @@ public struct ArtifactsResponse: Codable, Sendable {
     public let artifacts: [ArtifactItem]
     public let total: Int?
 }
+
+public struct VoiceVocabularyResponse: Codable, Sendable {
+    public let status: String
+    public let vocabulary: [String]
+}

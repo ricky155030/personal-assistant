@@ -17,15 +17,34 @@ public final class AudioRecorderVAD: NSObject {
     private let recognizerLock = NSLock()
     private var isRecognitionRequestActive: Bool = false
 
-    // 專屬中英技術與生活熱詞注入
-    private let contextualVocabulary: [String] = [
+    // 專屬中英技術與生活熱詞注入（支援從後端 /api/voice/vocabulary 動態更新並快取於 UserDefaults）
+    private static let vocabularyDefaultsKey = "macmini_voice_contextual_vocabulary"
+    public static let defaultVocabulary: [String] = [
         "等一下", "Gemini", "Mac mini", "HomePod", "Apple Watch", "Tailscale",
-        "FastAPI", "SwiftUI", "Python", "main.py", "agent.py", "agy",
+        "FastAPI", "SwiftUI", "Python", "main.py", "agent.py", "agy", "omp", "Herdr",
         "SideStore", "Coupang", "酷澎", "Home Assistant", "Telegram",
         "Whisper", "GitHub", "Google Calendar", "Google Sheets",
         "Xcode", "API", "Token", "Subagent", "TaskManager", "Chrome",
+        "FinLab", "TAIFEX", "TX", "MTX", "TMF", "00631L", "0050",
+        "VIX", "MDD", "CAGR", "Sharpe", "P/C Ratio", "Put/Call Ratio",
+        "Buy Call", "Buy Put", "Sell Call", "Sell Put", "Overfit",
         "冷氣", "新風機", "待辦事項", "待買清單"
     ]
+    private var contextualVocabulary: [String] = {
+        if let saved = UserDefaults.standard.stringArray(forKey: AudioRecorderVAD.vocabularyDefaultsKey), !saved.isEmpty {
+            return saved
+        }
+        return AudioRecorderVAD.defaultVocabulary
+    }()
+
+    public func updateContextualVocabulary(_ words: [String]) {
+        let cleaned = words.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return }
+        recognizerLock.lock()
+        self.contextualVocabulary = cleaned
+        recognizerLock.unlock()
+        UserDefaults.standard.set(cleaned, forKey: AudioRecorderVAD.vocabularyDefaultsKey)
+    }
 
     // 觸發語音打斷的專屬關鍵詞（包含「等一下」才打斷助理說話）
     private let bargeInKeywords: [String] = ["等一下", "等下"]
@@ -257,9 +276,8 @@ public final class AudioRecorderVAD: NSObject {
         if #available(iOS 16.0, *) {
             request.addsPunctuation = true
         }
-        request.contextualStrings = contextualVocabulary
-
         recognizerLock.lock()
+        request.contextualStrings = contextualVocabulary
         self.recognitionRequest = request
         self.isRecognitionRequestActive = true
         recognizerLock.unlock()

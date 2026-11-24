@@ -219,6 +219,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
         Task {
             await self.syncRemoteHistory()
             await self.refreshBrainOptions()
+            await self.refreshVoiceVocabulary()
         }
     }
 
@@ -240,6 +241,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
             return eng.label
         }
         return selectedEngineModelId.isEmpty ? "OMP" : selectedEngineModelId
+    }
+
+    public func refreshVoiceVocabulary() async {
+        if let words = await apiClient.fetchVoiceVocabulary() {
+            self.vad.updateContextualVocabulary(words)
+        }
     }
 
     public func refreshBrainOptions() async {
@@ -349,6 +356,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 self.checkServerHealth()
                 Task {
                     await self.syncRemoteHistory()
+                    await self.refreshVoiceVocabulary()
                 }
                 if self.voiceInputMode != .none, case .listening = self.state {
                     try? AVAudioSession.sharedInstance().setActive(true)

@@ -1818,6 +1818,94 @@ def compact_context(_authorized: bool = Depends(verify_token)):
     }
 
 
+from pathlib import Path
+
+VOICE_VOCABULARY_PATH = Path(__file__).resolve().parent / "data" / "voice_vocabulary.json"
+DEFAULT_VOICE_VOCABULARY: List[str] = [
+    "等一下", "Gemini", "Mac mini", "HomePod", "Apple Watch", "Tailscale",
+    "FastAPI", "SwiftUI", "Python", "main.py", "agent.py", "agy", "omp", "Herdr",
+    "SideStore", "Coupang", "酷澎", "Home Assistant", "Telegram",
+    "Whisper", "GitHub", "Google Calendar", "Google Sheets",
+    "Xcode", "API", "Token", "Subagent", "TaskManager", "Chrome",
+    "FinLab", "TAIFEX", "TX", "MTX", "TMF", "00631L", "0050",
+    "VIX", "MDD", "CAGR", "Sharpe", "P/C Ratio", "Put/Call Ratio",
+    "Buy Call", "Buy Put", "Sell Call", "Sell Put", "Overfit",
+    "冷氣", "新風機", "待辦事項", "待買清單",
+]
+
+
+def _dedupe_words(words: List[str]) -> List[str]:
+    seen = set()
+    cleaned: List[str] = []
+    for w in words:
+        s = str(w).strip()
+        if s and s not in seen:
+            seen.add(s)
+            cleaned.append(s)
+    return cleaned
+
+
+def _load_voice_vocabulary() -> dict:
+    if VOICE_VOCABULARY_PATH.exists():
+        try:
+            with open(VOICE_VOCABULARY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get("vocabulary"), list):
+                    vocab = _dedupe_words(data["vocabulary"])
+                    if vocab:
+                        return {
+                            "vocabulary": vocab,
+                            "updated_at": data.get("updated_at", ""),
+                        }
+        except Exception as exc:
+            print(f"[VoiceVocab] ⚠️ Failed to load voice_vocabulary.json: {exc}")
+    return {"vocabulary": list(DEFAULT_VOICE_VOCABULARY), "updated_at": ""}
+
+
+def _save_voice_vocabulary(words: List[str]) -> dict:
+    vocab = _dedupe_words(words)
+    payload = {
+        "vocabulary": vocab,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    VOICE_VOCABULARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(VOICE_VOCABULARY_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return payload
+
+
+class VoiceVocabularyUpdateRequest(BaseModel):
+    vocabulary: Optional[List[str]] = None
+    add: Optional[List[str]] = None
+    remove: Optional[List[str]] = None
+
+
+@app.get("/api/voice/vocabulary")
+def get_voice_vocabulary(_authorized: bool = Depends(verify_token)):
+    """取得動態語音辨識熱詞詞庫（供 iOS App 啟動時同步注入 SFSpeechRecognizer.contextualStrings）"""
+    data = _load_voice_vocabulary()
+    return {"status": "ok", **data}
+
+
+@app.post("/api/voice/vocabulary")
+def update_voice_vocabulary(
+    payload: VoiceVocabularyUpdateRequest,
+    _authorized: bool = Depends(verify_token),
+):
+    """更新動態語音辨識熱詞詞庫（支援整份覆寫或增量增刪）"""
+    if payload.vocabulary is not None:
+        words = payload.vocabulary
+    else:
+        words = _load_voice_vocabulary()["vocabulary"]
+        if payload.add:
+            words = words + payload.add
+        if payload.remove:
+            rm_set = {str(w).strip() for w in payload.remove if str(w).strip()}
+            words = [w for w in words if w not in rm_set]
+    saved = _save_voice_vocabulary(words)
+    return {"status": "ok", **saved}
+
+
 @app.post("/api/app/state")
 def update_app_state(req: AppStateRequest, _authorized: bool = Depends(verify_token)):
     """回報 iOS App 前景/背景狀態；回到前景讀取時自動撤回未讀的唯一重要通知。"""
