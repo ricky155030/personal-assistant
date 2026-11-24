@@ -495,6 +495,8 @@ def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypat
   gemini-gw-2:
     auth: none
     models:
+      - id: gemini-4-neon
+        name: Gemini 4 Neon (GW-2)
       - id: gemini-auto
         name: Gemini Auto (GW-2)
   other-provider:
@@ -514,12 +516,12 @@ def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypat
     assert ids == [
         "Gemini-GW-1/gemini-4-hydrogen",
         "Gemini-GW-1/gemini-4-neon",
-        "gemini-gw-2/gemini-auto",
+        "gemini-gw-2/gemini-4-neon",
     ]
     assert labels == [
         "Gemini 4 Hydrogen (GW-1)",
         "Gemini 4 Neon (GW-1)",
-        "Gemini Auto (GW-2)",
+        "Gemini 4 Neon (GW-2)",
     ]
     assert all("muse" not in mid.lower() for mid in ids)
     assert all("muse" not in m["id"].lower() for m in omp_singleton.DEFAULT_OMP_MODELS)

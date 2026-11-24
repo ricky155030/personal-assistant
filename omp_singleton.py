@@ -53,7 +53,10 @@ def _load_agents_md_text() -> str:
     return ""
 DEFAULT_OMP_MODELS: List[dict] = [
     {"id": "Gemini-GW-1/gemini-4-hydrogen", "label": "Gemini 4 Hydrogen (GW-1)", "thinking_levels": ["low", "med", "high"]},
+    {"id": "Gemini-GW-1/gemini-4-neon", "label": "Gemini 4 Neon (GW-1)", "thinking_levels": ["low", "med", "high"]},
 ]
+
+OMP_ALLOWED_MODEL_IDS = frozenset({"gemini-4-hydrogen", "gemini-4-neon"})
 
 
 def _parse_omp_models_yml_fallback(text: str) -> dict:
@@ -130,7 +133,7 @@ def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[di
             if not isinstance(entry, dict):
                 continue
             mid = str(entry.get("id") or "").strip()
-            if not mid:
+            if not mid or mid.lower() not in OMP_ALLOWED_MODEL_IDS:
                 continue
             label = str(entry.get("name") or "").strip() or f"{mid} ({pname})"
             models.append(
