@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.6.0",
+          "buildVersion": "176",
+          "date": "2026-11-24T23:47:17Z",
+          "localizedDescription": "新增 New Session 重開對話按鈕、Gemini GW 5h/7d 配額整合，並簡化 AGY 配額卡片為對稱雙欄",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.6.0/MacMiniAssistant.ipa",
+          "size": 4893624,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.5.1",
-          "buildVersion": "170",
-          "date": "2026-11-24T11:22:27Z",
-          "localizedDescription": "移除訊息標題列與卡片外露選字按鈕（保留長按選單自由選字）",
+          "buildVersion": "175",
+          "date": "2026-11-24T23:37:47Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.1/MacMiniAssistant.ipa",
-          "size": 4769355,
+          "size": 4893630,
           "minOSVersion": "17.0"
         },
         {
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.1/MacMiniAssistant.ipa",
           "size": 4527698,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.2.0",
-          "buildVersion": "151",
-          "date": "2026-11-21T12:24:34Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.0/MacMiniAssistant.ipa",
-          "size": 4461703,
           "minOSVersion": "17.0"
         }
       ]
