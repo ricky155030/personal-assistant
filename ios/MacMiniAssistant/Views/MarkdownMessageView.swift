@@ -534,6 +534,7 @@ private struct MarkdownTableView: View {
                         .background(rIdx % 2 == 1 ? Color.white.opacity(0.025) : Color.clear)
                     }
                 }
+                .textSelection(.enabled)
             }
 
             if isCollapsible && !isExpanded {

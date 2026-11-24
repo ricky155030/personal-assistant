@@ -193,6 +193,7 @@ struct HandsFreeMainView: View {
     @State private var activeSubagents: [ActiveSubagentItem] = []
     @State private var herdrHistoryActions: [PendingActionItem] = []
     @State private var showPendingActionsSheet: Bool = false
+    @State private var selectableTextItem: SelectableTextItem? = nil
     @State private var availableAppUpdate: MacMiniAPIClient.AppUpdateInfo? = nil
     @State private var isUpdateBannerDismissed: Bool = false
     @Environment(\.openURL) private var openURL
@@ -346,6 +347,11 @@ struct HandsFreeMainView: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $selectableTextItem) { item in
+            SelectableTextSheetView(title: item.title, text: item.text)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .fullScreenCover(isPresented: $showVisionCamera) {
             VisionCameraView(coordinator: coordinator)
@@ -1167,6 +1173,13 @@ struct HandsFreeMainView: View {
                                 onTapQuickReply: { chosen in
                                     haptic.impactOccurred()
                                     coordinator.sendQuickReply(chosen)
+                                },
+                                onTapSelectText: {
+                                    haptic.impactOccurred()
+                                    selectableTextItem = SelectableTextItem(
+                                        title: msg.role == .user ? "選取提問文字" : "選取回覆文字",
+                                        text: msg.content
+                                    )
                                 }
                             )
                             .id(msg.id)
@@ -1176,6 +1189,16 @@ struct HandsFreeMainView: View {
                                         UIPasteboard.general.string = msg.content
                                     } label: {
                                         Label("複製文字", systemImage: "doc.on.doc")
+                                    }
+
+                                    Button {
+                                        haptic.impactOccurred()
+                                        selectableTextItem = SelectableTextItem(
+                                            title: msg.role == .user ? "選取提問文字" : "選取回覆文字",
+                                            text: msg.content
+                                        )
+                                    } label: {
+                                        Label("選取文字", systemImage: "selection.pin.in.out")
                                     }
 
                                     Button {
@@ -2852,6 +2875,7 @@ struct GeminiMessageRow: View {
     let isCurrentlySpeaking: Bool
     let onTapSpeak: () -> Void
     var onTapQuickReply: ((String) -> Void)? = nil
+    var onTapSelectText: (() -> Void)? = nil
 
     @State private var isThoughtExpanded: Bool = false
     @State private var isToolsExpanded: Bool = false
@@ -3072,8 +3096,18 @@ struct GeminiMessageRow: View {
                         .font(.caption2)
                         .foregroundColor(Color(white: 0.48))
 
-                    // 語音朗讀 / 停止按鈕
+                    // 自由選字 & 語音朗讀 / 停止按鈕
                     if !message.content.isEmpty {
+                        if let onTapSelectText {
+                            Button(action: onTapSelectText) {
+                                Image(systemName: "selection.pin.in.out")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                                    .padding(6)
+                            }
+                            .accessibilityLabel("選取文字")
+                        }
+
                         Button(action: onTapSpeak) {
                             Image(systemName: isCurrentlySpeaking ? "stop.circle.fill" : "speaker.wave.2")
                                 .font(.system(size: 15))
@@ -3131,6 +3165,7 @@ struct GeminiMessageRow: View {
                                         Text(tool)
                                             .font(.system(size: 12))
                                             .foregroundColor(Color(white: 0.72))
+                                            .textSelection(.enabled)
                                     }
                                 }
                             }
@@ -3183,6 +3218,7 @@ struct GeminiMessageRow: View {
                             Text(message.thoughtProcess.trimmingCharacters(in: .whitespacesAndNewlines))
                                 .font(.system(size: 13))
                                 .foregroundColor(Color(white: 0.68))
+                                .textSelection(.enabled)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3762,6 +3798,7 @@ struct TaskLogViewerSheet: View {
     @State private var errorsOnly = false
     @State private var wrapLines = true
     @State private var tailCount = 200
+    @State private var selectableTextItem: SelectableTextItem? = nil
 
     private var displayedLines: [String] {
         let all = (logResp?.content ?? "").components(separatedBy: "\n")
@@ -3832,6 +3869,17 @@ struct TaskLogViewerSheet: View {
                             .toggleStyle(.button)
                             .font(.caption)
                             .tint(.cyan)
+                        Button {
+                            selectableTextItem = SelectableTextItem(
+                                title: task.name,
+                                text: displayedLines.joined(separator: "\n")
+                            )
+                        } label: {
+                            Label("選取文字", systemImage: "selection.pin.in.out")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.cyan)
+                        }
+                        .disabled(displayedLines.isEmpty)
                         Spacer()
                         if logResp?.truncated == true && tailCount < 600 {
                             Button("載入更多") {
@@ -3900,6 +3948,11 @@ struct TaskLogViewerSheet: View {
                     Button("關閉") { dismiss() }
                 }
             }
+            .sheet(item: $selectableTextItem) { item in
+                SelectableTextSheetView(title: item.title, text: item.text)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .task {
                 isLoading = true
                 logResp = await coordinator.apiClient.fetchTaskLog(taskId: task.task_id, tail: tailCount)
@@ -3923,6 +3976,7 @@ private struct HistorySearchSheetView: View {
     @State private var isSearchingRemote: Bool = false
     @State private var searchTask: Task<Void, Never>? = nil
     @State private var expandedHitIds: Set<String> = []
+    @State private var selectableTextItem: SelectableTextItem? = nil
 
     private var localMatches: [ChatMessage] {
         let terms = searchText
@@ -4060,12 +4114,14 @@ private struct HistorySearchSheetView: View {
                                             Text(highlightedText("問：\(hit.query)"))
                                                 .font(.system(size: 13.5))
                                                 .lineLimit(isExpanded ? nil : 2)
+                                                .textSelection(.enabled)
                                         }
                                         if !hit.reply.isEmpty {
                                             Text(highlightedText("答：\(hit.reply)"))
                                                 .font(.system(size: 13))
                                                 .foregroundColor(Color(white: 0.85))
                                                 .lineLimit(isExpanded ? nil : 3)
+                                                .textSelection(.enabled)
                                         }
 
                                         HStack(spacing: 12) {
@@ -4083,6 +4139,16 @@ private struct HistorySearchSheetView: View {
                                                 .font(.caption.weight(.semibold))
                                                 .foregroundColor(.cyan)
                                             }
+
+                                            Button("選取文字") {
+                                                let combined = [
+                                                    hit.query.isEmpty ? nil : "【提問】\n\(hit.query)",
+                                                    hit.reply.isEmpty ? nil : "【回覆】\n\(hit.reply)"
+                                                ].compactMap { $0 }.joined(separator: "\n\n")
+                                                selectableTextItem = SelectableTextItem(title: "選取搜尋紀錄文字", text: combined)
+                                            }
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundColor(.cyan)
 
                                             Button("引用追問") {
                                                 let snippet = hit.reply.isEmpty ? hit.query : hit.reply
@@ -4115,6 +4181,19 @@ private struct HistorySearchSheetView: View {
                                                 .font(.system(size: 13.5))
                                                 .foregroundColor(.primary)
                                                 .lineLimit(3)
+                                                .textSelection(.enabled)
+                                        }
+                                    }
+                                    .contextMenu {
+                                        Button {
+                                            selectableTextItem = SelectableTextItem(title: "選取對話文字", text: msg.content)
+                                        } label: {
+                                            Label("選取文字", systemImage: "selection.pin.in.out")
+                                        }
+                                        Button {
+                                            UIPasteboard.general.string = msg.content
+                                        } label: {
+                                            Label("複製全文", systemImage: "doc.on.doc")
                                         }
                                     }
                                 }
@@ -4142,6 +4221,11 @@ private struct HistorySearchSheetView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("關閉") { dismiss() }
                 }
+            }
+            .sheet(item: $selectableTextItem) { item in
+                SelectableTextSheetView(title: item.title, text: item.text)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
         }
         .preferredColorScheme(.dark)
@@ -4304,6 +4388,7 @@ private struct MessageScreenshotCard: View {
 
             if !message.content.isEmpty {
                 MarkdownMessageView(content: message.content)
+                    .textSelection(.enabled)
             }
 
             if let widgetSnapshot {
@@ -4357,6 +4442,7 @@ private struct PendingActionsSheetView: View {
     @State private var expandedTerminals: Set<String> = []
     @State private var expandedRounds: Set<String> = []
     @State private var selectedSubagentForLog: ActiveSubagentItem? = nil
+    @State private var selectableTextItem: SelectableTextItem? = nil
     @State private var isRefreshing: Bool = false
 
     var body: some View {
@@ -4462,6 +4548,11 @@ private struct PendingActionsSheetView: View {
             }
             .sheet(item: $selectedSubagentForLog) { sub in
                 SubagentLogViewerSheet(subagent: sub)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .sheet(item: $selectableTextItem) { item in
+                SelectableTextSheetView(title: item.title, text: item.text)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
@@ -4609,6 +4700,23 @@ private struct PendingActionsSheetView: View {
                 Spacer(minLength: 4)
 
                 Button(action: {
+                    let bodyText = (item.isCompleted || isHistoryTab) && !item.summary.isEmpty ? item.summary : item.question
+                    let fullCardText = [
+                        item.taskPrompt.isEmpty ? nil : "【交辦任務】\n\(item.taskPrompt)",
+                        bodyText.isEmpty ? nil : "【內容 / 結果】\n\(bodyText)",
+                        item.terminalTail.isEmpty ? nil : "【終端機實況】\n\(item.terminalTail)"
+                    ].compactMap { $0 }.joined(separator: "\n\n")
+                    selectableTextItem = SelectableTextItem(title: item.title, text: fullCardText)
+                }) {
+                    Image(systemName: "selection.pin.in.out")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.65))
+                        .padding(4)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("選取派工卡片文字")
+
+                Button(action: {
                     submit(item: item, answer: "", dismiss: true, actionMode: nil, isFromHistory: isHistoryTab)
                 }) {
                     Text(isHistoryTab ? "刪除" : (item.isCompleted ? "✅ 結案歸檔" : "歸檔"))
@@ -4652,10 +4760,12 @@ private struct PendingActionsSheetView: View {
                                     Text("第 \(r.roundNo) 輪 · \(r.taskPrompt)")
                                         .font(.system(size: 12, weight: .semibold))
                                         .foregroundColor(.white.opacity(0.88))
+                                        .textSelection(.enabled)
                                     if !r.summary.isEmpty {
                                         Text(r.summary)
                                             .font(.system(size: 11.5))
                                             .foregroundColor(.white.opacity(0.68))
+                                            .textSelection(.enabled)
                                     }
                                 }
                                 .padding(8)
@@ -4680,6 +4790,7 @@ private struct PendingActionsSheetView: View {
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.82))
                         .lineLimit(3)
+                        .textSelection(.enabled)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
@@ -4699,12 +4810,14 @@ private struct PendingActionsSheetView: View {
                             .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                             .foregroundColor(.green.opacity(0.9))
                             .lineLimit(2)
+                            .textSelection(.enabled)
                     }
                     if !item.livePreview.isEmpty && item.isWorking {
                         Text("💬 \(item.livePreview)")
                             .font(.system(size: 12))
                             .foregroundColor(.white.opacity(0.75))
                             .lineLimit(2)
+                            .textSelection(.enabled)
                     }
                 }
             }
@@ -4716,6 +4829,7 @@ private struct PendingActionsSheetView: View {
                     .font(.system(size: 13.5))
                     .foregroundColor(.white.opacity(0.92))
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             }
 
             // 6. 可展開的即時終端機畫面預覽
@@ -4744,6 +4858,7 @@ private struct PendingActionsSheetView: View {
                             .foregroundColor(Color(red: 0.65, green: 0.95, blue: 0.72))
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
                             .background(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                                     .fill(Color.black.opacity(0.6))
@@ -4865,6 +4980,7 @@ private struct SubagentLogViewerSheet: View {
     @State private var isLoading: Bool = true
     @State private var wrapLines: Bool = true
     @State private var tailCount: Int = 60
+    @State private var selectableTextItem: SelectableTextItem? = nil
 
     private var currentRole: String {
         detail?.role ?? subagent.role
@@ -4939,6 +5055,17 @@ private struct SubagentLogViewerSheet: View {
                             .toggleStyle(.button)
                             .font(.caption)
                             .tint(.cyan)
+                        Button {
+                            selectableTextItem = SelectableTextItem(
+                                title: currentRole,
+                                text: displayedLogs.joined(separator: "\n")
+                            )
+                        } label: {
+                            Label("選取文字", systemImage: "selection.pin.in.out")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.cyan)
+                        }
+                        .disabled(displayedLogs.isEmpty)
                         Spacer()
                         if tailCount < 150 {
                             Button("載入更多") {
@@ -4993,6 +5120,11 @@ private struct SubagentLogViewerSheet: View {
                     Button("完成") { dismiss() }
                         .bold()
                 }
+            }
+            .sheet(item: $selectableTextItem) { item in
+                SelectableTextSheetView(title: item.title, text: item.text)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .task {
                 await reload()

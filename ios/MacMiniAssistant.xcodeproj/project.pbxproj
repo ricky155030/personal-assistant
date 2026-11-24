@@ -24,6 +24,7 @@
 		722749E618BC2FA5FF592C90 /* MacMiniAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2D748E148C7EFD04499D0B /* MacMiniAssistantApp.swift */; };
 		75CDDBAD30056EA47783F285 /* MacMiniAssistantWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D6B8E552E830C18B0A686BFF /* MacMiniAssistantWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8BA7039DD0EE062E0AD5F7F2 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
+		8DBEA4964E43F9E7AEAB0C38 /* SelectableTextSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A659DD8ECA785AF21D6A2369 /* SelectableTextSheetView.swift */; };
 		AB28EDDD724D6502361ACA37 /* AppGroupStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C186D121BCBAC23402331AF0 /* AppGroupStore.swift */; };
 		C7501CB9F65B6B49A53E0A59 /* QuickPromptDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0F163B919F7D4E639595A8 /* QuickPromptDrawerView.swift */; };
 		CFC3375595903FC9C090E8DE /* ArtifactsDrawerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8AE0EB6A98507693A9D8BE /* ArtifactsDrawerView.swift */; };
@@ -83,6 +84,7 @@
 		76787B20330917235ABB0C96 /* MacMiniAssistantWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantWidget.entitlements; sourceTree = "<group>"; };
 		7A0F163B919F7D4E639595A8 /* QuickPromptDrawerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickPromptDrawerView.swift; sourceTree = "<group>"; };
 		815F160EDEE010517FB3EB21 /* VoiceSessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSessionCoordinator.swift; sourceTree = "<group>"; };
+		A659DD8ECA785AF21D6A2369 /* SelectableTextSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextSheetView.swift; sourceTree = "<group>"; };
 		B062E93276233E7C7607CC9F /* AssistantIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantIntents.swift; sourceTree = "<group>"; };
 		B7007DAC8D78AFC8839F1A92 /* MacMiniAssistantShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacMiniAssistantShare.entitlements; sourceTree = "<group>"; };
 		B9589953B700A71598816FBB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -136,6 +138,7 @@
 				51B17E31D4FDD0B4A5D9001D /* HTMLWidgetView.swift */,
 				0ED4DF6FB81F645CDD3C6C6D /* MarkdownMessageView.swift */,
 				7A0F163B919F7D4E639595A8 /* QuickPromptDrawerView.swift */,
+				A659DD8ECA785AF21D6A2369 /* SelectableTextSheetView.swift */,
 				D45BAFD0281C67DBF99F3F49 /* VisionCameraView.swift */,
 			);
 			path = Views;
@@ -324,6 +327,7 @@
 				194D633A7D096FC9475C561D /* MarkdownMessageView.swift in Sources */,
 				E92D5C6322450C278CB1C903 /* NativeSpeechPlayer.swift in Sources */,
 				C7501CB9F65B6B49A53E0A59 /* QuickPromptDrawerView.swift in Sources */,
+				8DBEA4964E43F9E7AEAB0C38 /* SelectableTextSheetView.swift in Sources */,
 				2AA208B1BFE4D49D99E44DE3 /* VisionCameraView.swift in Sources */,
 				006F91BFA485309F3F52CB28 /* VoiceSessionCoordinator.swift in Sources */,
 			);
@@ -538,7 +542,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.3.4;
+				MARKETING_VERSION = 1.4.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -597,7 +601,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.3.4;
+				MARKETING_VERSION = 1.4.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
