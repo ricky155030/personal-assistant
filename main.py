@@ -2039,6 +2039,30 @@ def list_herdr_agents(_authorized: bool = Depends(verify_token)):
         return {"agents": [], "error": str(ex)}
 
 
+@app.get("/api/subagents/active")
+def list_active_subagents_api(_authorized: bool = Depends(verify_token)):
+    """掃描並回傳目前正在工作中的 agy 子代理清單（已結束者自動排除）。"""
+    from subagent_monitor import list_active_subagents
+
+    subagents = list_active_subagents()
+    return {"subagents": subagents, "count": len(subagents)}
+
+
+@app.get("/api/subagents/{conv_id}/logs")
+def get_subagent_logs_api(
+    conv_id: str,
+    tail: int = 40,
+    _authorized: bool = Depends(verify_token),
+):
+    """取得指定 agy 子代理的最新終端機／工具執行 Log 與狀態。"""
+    from subagent_monitor import get_subagent_logs
+
+    data = get_subagent_logs(conv_id=conv_id, tail=tail)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Subagent transcript not found")
+    return data
+
+
 @app.get("/api/actions/pending")
 def list_pending_actions(_authorized: bool = Depends(verify_token)):
     """取得目前 Herdr 派工督工抽屜（進行中 / 待決策 / 完工待檢閱）與歷史歸檔紀錄。"""

@@ -956,3 +956,80 @@ public struct VoiceVocabularyResponse: Codable, Sendable {
     public let status: String
     public let vocabulary: [String]
 }
+
+public struct ActiveSubagentItem: Codable, Identifiable, Equatable, Sendable {
+    public var id: String { conversationId }
+    public let conversationId: String
+    public let role: String
+    public let typeName: String
+    public let status: String
+    public let startedAt: String
+    public let updatedAt: String
+    public let elapsedSeconds: Int
+    public let toolCount: Int
+    public let currentTool: String
+    public let currentStep: String
+    public let logs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case conversationId = "conversation_id"
+        case role
+        case typeName = "type_name"
+        case status
+        case startedAt = "started_at"
+        case updatedAt = "updated_at"
+        case elapsedSeconds = "elapsed_seconds"
+        case toolCount = "tool_count"
+        case currentTool = "current_tool"
+        case currentStep = "current_step"
+        case logs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.conversationId = (try? c.decode(String.self, forKey: .conversationId)) ?? UUID().uuidString
+        self.role = (try? c.decodeIfPresent(String.self, forKey: .role)) ?? "Subagent"
+        self.typeName = (try? c.decodeIfPresent(String.self, forKey: .typeName)) ?? "self"
+        self.status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "working"
+        self.startedAt = (try? c.decodeIfPresent(String.self, forKey: .startedAt)) ?? ""
+        self.updatedAt = (try? c.decodeIfPresent(String.self, forKey: .updatedAt)) ?? ""
+        self.elapsedSeconds = (try? c.decodeIfPresent(Int.self, forKey: .elapsedSeconds)) ?? 0
+        self.toolCount = (try? c.decodeIfPresent(Int.self, forKey: .toolCount)) ?? 0
+        self.currentTool = (try? c.decodeIfPresent(String.self, forKey: .currentTool)) ?? ""
+        self.currentStep = (try? c.decodeIfPresent(String.self, forKey: .currentStep)) ?? ""
+        self.logs = (try? c.decodeIfPresent([String].self, forKey: .logs)) ?? []
+    }
+}
+
+public struct ActiveSubagentsResponse: Codable, Sendable {
+    public let subagents: [ActiveSubagentItem]
+    public let count: Int
+}
+
+public struct SubagentLogsResponse: Codable, Sendable {
+    public let conversationId: String
+    public let role: String
+    public let typeName: String
+    public let status: String
+    public let elapsedSeconds: Int
+    public let toolCount: Int
+    public let currentTool: String
+    public let currentStep: String
+    public let logs: [String]
+    public let logText: String
+    public let totalEvents: Int
+
+    enum CodingKeys: String, CodingKey {
+        case conversationId = "conversation_id"
+        case role
+        case typeName = "type_name"
+        case status
+        case elapsedSeconds = "elapsed_seconds"
+        case toolCount = "tool_count"
+        case currentTool = "current_tool"
+        case currentStep = "current_step"
+        case logs
+        case logText = "log_text"
+        case totalEvents = "total_events"
+    }
+}

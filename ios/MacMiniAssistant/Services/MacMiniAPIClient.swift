@@ -764,6 +764,46 @@ public final class MacMiniAPIClient {
         return payload.actions
     }
 
+    /// 取得目前正在工作中的 agy 子代理清單（已結束者不回傳）
+    public func fetchActiveSubagents() async -> [ActiveSubagentItem] {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/subagents/active") else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return []
+            }
+            let decoded = try JSONDecoder().decode(ActiveSubagentsResponse.self, from: data)
+            return decoded.subagents
+        } catch {
+            return []
+        }
+    }
+
+    /// 取得指定 agy 子代理的最新終端機／工具執行 Log
+    public func fetchSubagentLogs(conversationId: String, tail: Int = 40) async -> SubagentLogsResponse? {
+        let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let encodedId = conversationId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? conversationId
+        guard let url = URL(string: "\(cleanBase)/api/subagents/\(encodedId)/logs?tail=\(tail)") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5.0
+        request.setValue(apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(SubagentLogsResponse.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
     /// 回覆決策、原視窗續派修改（action: "followup"）或結案歸檔（dismiss: true）
     public func resolvePendingAction(
         id: String,

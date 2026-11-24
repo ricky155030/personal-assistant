@@ -190,6 +190,7 @@ struct HandsFreeMainView: View {
     @State private var mentionQuery: String = ""
     @State private var isLoadingHerdrAgents: Bool = false
     @State private var pendingActions: [PendingActionItem] = []
+    @State private var activeSubagents: [ActiveSubagentItem] = []
     @State private var herdrHistoryActions: [PendingActionItem] = []
     @State private var showPendingActionsSheet: Bool = false
     @State private var availableAppUpdate: MacMiniAPIClient.AppUpdateInfo? = nil
@@ -292,11 +293,15 @@ struct HandsFreeMainView: View {
             PendingActionsSheetView(
                 actions: $pendingActions,
                 history: $herdrHistoryActions,
+                subagents: $activeSubagents,
                 onRefresh: {
-                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let payloadTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let subagentsTask = MacMiniAPIClient.shared.fetchActiveSubagents()
+                    let (payload, subs) = await (payloadTask, subagentsTask)
                     await MainActor.run {
                         self.pendingActions = payload.actions
                         self.herdrHistoryActions = payload.history
+                        self.activeSubagents = subs
                     }
                 },
                 onResolve: { item, answer, dismiss, actionMode in
@@ -409,11 +414,13 @@ struct HandsFreeMainView: View {
             Task {
                 await MacMiniAPIClient.shared.reportAppState(active: scenePhase == .active)
                 async let pendingTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                async let subagentsTask = MacMiniAPIClient.shared.fetchActiveSubagents()
                 async let updateTask = MacMiniAPIClient.shared.checkForAppUpdate()
-                let (payload, update) = await (pendingTask, updateTask)
+                let (payload, subs, update) = await (pendingTask, subagentsTask, updateTask)
                 await MainActor.run {
                     self.pendingActions = payload.actions
                     self.herdrHistoryActions = payload.history
+                    self.activeSubagents = subs
                     self.availableAppUpdate = update
                 }
             }
@@ -421,10 +428,13 @@ struct HandsFreeMainView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
-                let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                async let payloadTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                async let subagentsTask = MacMiniAPIClient.shared.fetchActiveSubagents()
+                let (payload, subs) = await (payloadTask, subagentsTask)
                 await MainActor.run {
                     self.pendingActions = payload.actions
                     self.herdrHistoryActions = payload.history
+                    self.activeSubagents = subs
                 }
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
             }
@@ -437,10 +447,13 @@ struct HandsFreeMainView: View {
             case .active:
                 Task {
                     await MacMiniAPIClient.shared.reportAppState(active: true)
-                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let payloadTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let subagentsTask = MacMiniAPIClient.shared.fetchActiveSubagents()
+                    let (payload, subs) = await (payloadTask, subagentsTask)
                     await MainActor.run {
                         self.pendingActions = payload.actions
                         self.herdrHistoryActions = payload.history
+                        self.activeSubagents = subs
                     }
                 }
             case .background:
@@ -796,23 +809,26 @@ struct HandsFreeMainView: View {
                 isInputFocused = false
                 showPendingActionsSheet = true
                 Task {
-                    let payload = await MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let payloadTask = MacMiniAPIClient.shared.fetchPendingActionsPayload()
+                    async let subagentsTask = MacMiniAPIClient.shared.fetchActiveSubagents()
+                    let (payload, subs) = await (payloadTask, subagentsTask)
                     await MainActor.run {
                         self.pendingActions = payload.actions
                         self.herdrHistoryActions = payload.history
+                        self.activeSubagents = subs
                     }
                 }
             }) {
                 let waitingDecisionCount = pendingActions.filter { $0.isWaitingDecision }.count
                 let completedReviewCount = pendingActions.filter { $0.isCompleted }.count
-                let workingCount = pendingActions.filter { $0.isWorking }.count
+                let workingCount = pendingActions.filter { $0.isWorking }.count + activeSubagents.count
                 let activeBadgeCount = waitingDecisionCount + completedReviewCount + workingCount
                 let iconTint: Color = waitingDecisionCount > 0
                     ? .orange
                     : (completedReviewCount > 0 ? .cyan : (workingCount > 0 ? .green : .white.opacity(0.72)))
 
                 ZStack(alignment: .topTrailing) {
-                    Image(systemName: pendingActions.isEmpty ? "tray" : "tray.full.fill")
+                    Image(systemName: (pendingActions.isEmpty && activeSubagents.isEmpty) ? "tray" : "tray.full.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(iconTint)
                         .frame(width: 40, height: 40)
@@ -4325,6 +4341,7 @@ private struct MessageScreenshotCard: View {
 private struct PendingActionsSheetView: View {
     @Binding var actions: [PendingActionItem]
     @Binding var history: [PendingActionItem]
+    @Binding var subagents: [ActiveSubagentItem]
     let onRefresh: () async -> Void
     let onResolve: (PendingActionItem, String, Bool, String?) async -> Bool
 
@@ -4339,6 +4356,7 @@ private struct PendingActionsSheetView: View {
     @State private var busyIds: Set<String> = []
     @State private var expandedTerminals: Set<String> = []
     @State private var expandedRounds: Set<String> = []
+    @State private var selectedSubagentForLog: ActiveSubagentItem? = nil
     @State private var isRefreshing: Bool = false
 
     var body: some View {
@@ -4348,7 +4366,7 @@ private struct PendingActionsSheetView: View {
 
                 VStack(spacing: 0) {
                     Picker("檢視分頁", selection: $selectedTab) {
-                        Text("📌 目前派工 (\(actions.count))").tag(HubTab.active)
+                        Text("📌 目前派工 (\(actions.count + subagents.count))").tag(HubTab.active)
                         Text("🕘 歷史紀錄 (\(history.count))").tag(HubTab.history)
                     }
                     .pickerStyle(.segmented)
@@ -4357,8 +4375,9 @@ private struct PendingActionsSheetView: View {
                     .padding(.bottom, 6)
 
                     let currentList = selectedTab == .active ? actions : history
+                    let hasActiveItems = selectedTab == .active ? (!actions.isEmpty || !subagents.isEmpty) : !history.isEmpty
 
-                    if currentList.isEmpty {
+                    if !hasActiveItems {
                         Spacer()
                         VStack(spacing: 12) {
                             Image(systemName: selectedTab == .active ? "checkmark.seal.fill" : "clock.arrow.circlepath")
@@ -4369,7 +4388,7 @@ private struct PendingActionsSheetView: View {
                                 .foregroundColor(.white)
                             Text(
                                 selectedTab == .active
-                                    ? "當主大腦派工給 Herdr 工人時，這裡會即時顯示執行進度、待拍板問題與完工檢閱卡片。"
+                                    ? "當主大腦派工給 Herdr 工人或子代理時，這裡會即時顯示執行進度、待拍板問題與完工檢閱卡片。"
                                     : "在目前派工卡片點擊「結案歸檔」後，所有派工與驗收紀錄都會永久保存在這裡，隨時可喚醒續派。"
                             )
                             .font(.subheadline)
@@ -4381,6 +4400,28 @@ private struct PendingActionsSheetView: View {
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 12) {
+                                if selectedTab == .active && !subagents.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        HStack(spacing: 6) {
+                                            Circle()
+                                                .fill(Color.green)
+                                                .frame(width: 7, height: 7)
+                                            Text("運行中子代理（\(subagents.count)）")
+                                                .font(.system(size: 12.5, weight: .bold))
+                                                .foregroundColor(.green.opacity(0.95))
+                                            Spacer()
+                                            Text("點擊查看即時 Log")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.white.opacity(0.48))
+                                        }
+                                        .padding(.horizontal, 2)
+
+                                        ForEach(subagents) { sub in
+                                            subagentCard(for: sub)
+                                        }
+                                    }
+                                }
+
                                 ForEach(currentList) { item in
                                     actionCard(for: item, isHistoryTab: selectedTab == .history)
                                 }
@@ -4419,8 +4460,83 @@ private struct PendingActionsSheetView: View {
                     await onRefresh()
                 }
             }
+            .sheet(item: $selectedSubagentForLog) { sub in
+                SubagentLogViewerSheet(subagent: sub)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func subagentCard(for sub: ActiveSubagentItem) -> some View {
+        let elapsedStr = formatElapsed(sub.elapsedSeconds)
+        let statusText = elapsedStr.isEmpty ? "工作中" : "工作中 · \(elapsedStr)"
+
+        return Button {
+            selectedSubagentForLog = sub
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    Text(sub.role)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(statusText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.green)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2.5)
+                        .background(Capsule().fill(Color.green.opacity(0.16)))
+                    Spacer(minLength: 4)
+                    if sub.toolCount > 0 {
+                        Text("\(sub.toolCount) tools")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(.cyan.opacity(0.9))
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.45))
+                }
+
+                if !sub.currentStep.isEmpty {
+                    Text("🔧 \(sub.currentStep)")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(.cyan.opacity(0.92))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+
+                if let lastLog = sub.logs.last, !lastLog.isEmpty {
+                    Text(lastLog)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(Color(red: 0.65, green: 0.95, blue: 0.72).opacity(0.9))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.black.opacity(0.45))
+                        )
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(red: 0.09, green: 0.14, blue: 0.20))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.green.opacity(0.38), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func formatElapsed(_ seconds: Int) -> String {
@@ -4736,6 +4852,169 @@ private struct PendingActionsSheetView: View {
                     selectedTab = .active
                 }
             }
+        }
+    }
+}
+
+/// 運行中子代理即時終端機與工具執行 Log 檢視面板（支援 2.5 秒自動輪詢與手動刷新）。
+private struct SubagentLogViewerSheet: View {
+    let subagent: ActiveSubagentItem
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var detail: SubagentLogsResponse? = nil
+    @State private var isLoading: Bool = true
+    @State private var wrapLines: Bool = true
+    @State private var tailCount: Int = 60
+
+    private var currentRole: String {
+        detail?.role ?? subagent.role
+    }
+
+    private var currentStatus: String {
+        detail?.status ?? subagent.status
+    }
+
+    private var isWorking: Bool {
+        currentStatus == "working"
+    }
+
+    private var displayedLogs: [String] {
+        detail?.logs ?? subagent.logs
+    }
+
+    private func lineColor(_ line: String) -> Color {
+        let low = line.lowercased()
+        if line.contains("⚠️") || low.contains("error") || low.contains("fail") || low.contains("traceback") {
+            return Color(red: 1.0, green: 0.50, blue: 0.45)
+        }
+        if line.contains("✅") {
+            return Color(red: 0.45, green: 0.92, blue: 0.58)
+        }
+        if line.contains("🔧") {
+            return .cyan
+        }
+        return Color(white: 0.86)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.05, green: 0.06, blue: 0.09).ignoresSafeArea()
+
+                VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(currentRole)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundColor(.white)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(isWorking ? "WORKING" : "FINISHED")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundColor(isWorking ? .green : .cyan)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background((isWorking ? Color.green : Color.cyan).opacity(0.16))
+                                .cornerRadius(6)
+                        }
+                        let elapsed = detail?.elapsedSeconds ?? subagent.elapsedSeconds
+                        let tools = detail?.toolCount ?? subagent.toolCount
+                        Text("ID: \(subagent.conversationId.prefix(8))…  ·  已運行 \(elapsed)s  ·  工具 \(tools) 次")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+
+                        let step = detail?.currentStep ?? subagent.currentStep
+                        if !step.isEmpty {
+                            Text("🔧 \(step)")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundColor(.cyan.opacity(0.92))
+                                .lineLimit(2)
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.06)))
+
+                    HStack(spacing: 10) {
+                        Toggle("自動換行", isOn: $wrapLines)
+                            .toggleStyle(.button)
+                            .font(.caption)
+                            .tint(.cyan)
+                        Spacer()
+                        if tailCount < 150 {
+                            Button("載入更多") {
+                                tailCount = 150
+                                Task { await reload() }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.cyan)
+                        }
+                    }
+
+                    if isLoading && displayedLogs.isEmpty {
+                        Spacer()
+                        ProgressView("載入子代理即時 Log...")
+                            .tint(.cyan)
+                        Spacer()
+                    } else if displayedLogs.isEmpty {
+                        Spacer()
+                        Text("目前尚無工具或終端機輸出紀錄")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    } else {
+                        ScrollView(wrapLines ? [.vertical] : [.vertical, .horizontal]) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(displayedLogs.enumerated()), id: \.offset) { _, line in
+                                    Text(line)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundColor(lineColor(line))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .padding(12)
+                        }
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.black.opacity(0.65)))
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle("子代理即時 Log")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        Task { await reload() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .bold()
+                }
+            }
+            .task {
+                await reload()
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    await reload()
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func reload() async {
+        let fetched = await MacMiniAPIClient.shared.fetchSubagentLogs(
+            conversationId: subagent.conversationId,
+            tail: tailCount
+        )
+        await MainActor.run {
+            if let fetched {
+                self.detail = fetched
+            }
+            self.isLoading = false
         }
     }
 }
