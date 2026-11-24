@@ -13,6 +13,15 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.5.0",
+          "buildVersion": "168",
+          "date": "2026-11-24T10:28:08Z",
+          "localizedDescription": "新增訊息自由選字複製與督工抽屜即時監看子代理",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.0/MacMiniAssistant.ipa",
+          "size": 4777902,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.4.0",
           "buildVersion": "165",
           "date": "2026-11-24T00:46:40Z",
@@ -91,15 +100,6 @@
           "localizedDescription": "修復殘留串流鎖死藍色送出鍵與文字對話等待 TTS 阻塞 metadata 顯示",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.4/MacMiniAssistant.ipa",
           "size": 4360168,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.1.3",
-          "buildVersion": "147",
-          "date": "2026-11-21T07:19:17Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.1.3/MacMiniAssistant.ipa",
-          "size": 4360169,
           "minOSVersion": "17.0"
         }
       ]
