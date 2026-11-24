@@ -176,6 +176,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
     @Published public var quotaSnapshot: QuotaSnapshot? = nil
     @Published public var isRefreshingQuota: Bool = false
     @Published public var isCompactingContext: Bool = false
+    @Published public var isRestartingBrain: Bool = false
     @Published public var compactStatusMessage: String? = nil
 
     public let vad = AudioRecorderVAD()
@@ -598,6 +599,25 @@ public final class VoiceSessionCoordinator: ObservableObject {
         Task {
             defer { self.isCompactingContext = false }
             let (ok, msg) = await apiClient.compactContext()
+            self.compactStatusMessage = (ok ? "✅ " : "⚠️ ") + msg
+            if ok {
+                self.notifyHaptic.notificationOccurred(.success)
+            }
+            if let snap = await apiClient.fetchQuotaStatus(forceRefresh: true) {
+                self.quotaSnapshot = snap
+            }
+        }
+    }
+
+    /// 強制重開目前主腦全新 Session（清除舊上下文）
+    public func restartBrainSession() {
+        guard !isRestartingBrain && !isCompactingContext else { return }
+        isRestartingBrain = true
+        compactStatusMessage = "正在重開大腦全新 Session..."
+        rigidHaptic.impactOccurred()
+        Task {
+            defer { self.isRestartingBrain = false }
+            let (ok, msg) = await apiClient.restartBrainSession()
             self.compactStatusMessage = (ok ? "✅ " : "⚠️ ") + msg
             if ok {
                 self.notifyHaptic.notificationOccurred(.success)

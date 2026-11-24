@@ -268,6 +268,30 @@ public final class MacMiniAPIClient {
         }
     }
 
+    /// 強制重置目前主腦並開啟全新 Session (POST /api/brain/restart)
+    public func restartBrainSession() async -> (Bool, String) {
+        let cleanBase = self.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(cleanBase)/api/brain/restart") else {
+            return (false, "無效網址")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 35.0
+        request.setValue(self.apiKey, forHTTPHeaderField: "X-Agent-Key")
+        do {
+            let (data, resp) = try await session.data(for: request)
+            guard let httpResp = resp as? HTTPURLResponse, httpResp.statusCode == 200,
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (root["status"] as? String) == "ok" else {
+                return (false, "重開大腦失敗")
+            }
+            let eng = (root["engine"] as? String) ?? "brain"
+            return (true, "已開啟全新 \(eng) Session")
+        } catch {
+            return (false, "重開大腦逾時或連線異常")
+        }
+    }
+
     /// 取得單句 Edge-TTS 語音分片音訊（自動重試 2 次）
     public func fetchTTSAudioChunk(text: String, voice: String? = nil, rate: String? = nil) async throws -> Data {
         let cleanBase = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))

@@ -555,6 +555,20 @@ def test_omp_permission_response_helper():
     assert option_id == "allow_once"
 
 
+def test_brain_router_restart_delegates_force_new_session(tmp_path):
+    from brain_engine import BrainRouter
+
+    router = BrainRouter(prefs_path=tmp_path / "prefs.json", history_path=tmp_path / "hist.jsonl")
+    eng = _DummyEngine("omp", True, [{"id": "Gemini-GW-1/gemini-4-hydrogen", "label": "H"}])
+    restart_calls = []
+    eng.restart = lambda force_new_session=True: restart_calls.append(force_new_session)
+    router.register_engine(eng)
+    router.select_engine("omp")
+
+    router.restart(force_new_session=True)
+    assert restart_calls == [True]
+
+
 def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypatch):
     import omp_singleton
 

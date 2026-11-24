@@ -3770,45 +3770,74 @@ struct QuotaDetailSheetView: View {
                 .background(Color.white.opacity(0.1))
                 .padding(.vertical, 2)
 
-            HStack(spacing: 10) {
-                Button(action: {
-                    coordinator.compactBrainContext()
-                }) {
-                    HStack(spacing: 6) {
-                        if coordinator.isCompactingContext {
-                            ProgressView()
-                                .scaleEffect(0.75)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 12, weight: .bold))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Button(action: {
+                        coordinator.compactBrainContext()
+                    }) {
+                        HStack(spacing: 6) {
+                            if coordinator.isCompactingContext {
+                                ProgressView()
+                                    .scaleEffect(0.75)
+                            } else {
+                                Image(systemName: "wand.and.stars")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text(coordinator.isCompactingContext ? "正在壓縮..." : "壓縮記憶")
+                                .font(.system(size: 13, weight: .semibold))
                         }
-                        Text(coordinator.isCompactingContext ? "正在無損壓縮記憶..." : "壓縮記憶 (/compact)")
-                            .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(Color.purple.opacity(0.28))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.purple.opacity(0.55), lineWidth: 1)
+                                )
+                        )
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule()
-                            .fill(Color.purple.opacity(0.28))
-                            .overlay(
-                                Capsule()
-                                    .stroke(Color.purple.opacity(0.55), lineWidth: 1)
-                            )
-                    )
-                }
-                .disabled(coordinator.isCompactingContext || coordinator.isProcessingOrSpeaking)
+                    .disabled(coordinator.isCompactingContext || coordinator.isRestartingBrain || coordinator.isProcessingOrSpeaking)
 
-                Spacer()
+                    Button(action: {
+                        coordinator.restartBrainSession()
+                    }) {
+                        HStack(spacing: 6) {
+                            if coordinator.isRestartingBrain {
+                                ProgressView()
+                                    .scaleEffect(0.75)
+                            } else {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text(coordinator.isRestartingBrain ? "重開中..." : "開新對話")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(Color.orange.opacity(0.24))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color.orange.opacity(0.55), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .disabled(coordinator.isRestartingBrain || coordinator.isCompactingContext || coordinator.isProcessingOrSpeaking)
+
+                    Spacer()
+                }
 
                 if let statusMsg = coordinator.compactStatusMessage {
                     Text(statusMsg)
                         .font(.caption2)
                         .foregroundColor(.cyan)
                         .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
                 } else {
-                    Text("不中斷對話釋放空間")
+                    Text("壓縮記憶保留摘要；開新對話會徹底重置目前大腦 Session")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

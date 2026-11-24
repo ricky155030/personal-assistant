@@ -1818,6 +1818,18 @@ def compact_context(_authorized: bool = Depends(verify_token)):
     }
 
 
+@app.post("/api/brain/restart")
+def restart_brain_session(_authorized: bool = Depends(verify_token)):
+    """強制重置目前主腦引擎並開啟全新 Session（清除舊對話上下文）"""
+    brain_router.restart(force_new_session=True)
+    stat = brain_router.get_status()
+    return {
+        "status": "ok",
+        "engine": brain_router.active_engine_id,
+        "context": stat,
+    }
+
+
 from pathlib import Path
 
 VOICE_VOCABULARY_PATH = Path(__file__).resolve().parent / "data" / "voice_vocabulary.json"
