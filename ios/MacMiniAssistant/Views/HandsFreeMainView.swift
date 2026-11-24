@@ -769,7 +769,8 @@ struct HandsFreeMainView: View {
 
                             if coordinator.currentEngineSupportsQuota {
                                 let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
-                                let quotaText = coordinator.quotaSnapshot != nil ? String(format: "%.0f%%", quota.pct) : "--%"
+                                let hasValidOmpUsage = coordinator.selectedEngineId != "omp" || activeOmpGateway?.hasUsage == true
+                                let quotaText = (coordinator.quotaSnapshot != nil && hasValidOmpUsage) ? String(format: "%.0f%%", quota.pct) : "--%"
                                 Text("·")
                                     .font(.system(size: 10.5, weight: .medium))
                                     .foregroundColor(Color(white: 0.45))
@@ -1017,7 +1018,7 @@ struct HandsFreeMainView: View {
                 popoverSectionHeader("主腦引擎切換")
                 let engineList = coordinator.brainCatalog?.engines ?? [
                     BrainEngineOption(id: "agy", label: "Antigravity (agy)", supportsQuota: true, selectedModel: "hydrogen", models: []),
-                    BrainEngineOption(id: "omp", label: "Oh-My-Pi (omp)", supportsQuota: false, selectedModel: "Gemini-GW-1/gemini-4-hydrogen", models: [
+                    BrainEngineOption(id: "omp", label: "Oh-My-Pi (omp)", supportsQuota: true, selectedModel: "Gemini-GW-1/gemini-4-hydrogen", models: [
                         BrainModelOption(id: "Gemini-GW-1/gemini-4-hydrogen", label: "Gemini 4 Hydrogen (GW-1)")
                     ])
                 ]
@@ -1106,9 +1107,26 @@ struct HandsFreeMainView: View {
         .preferredColorScheme(.dark)
     }
 
+    private var activeOmpGateway: GatewayQuotaItem? {
+        guard let gateways = coordinator.quotaSnapshot?.gateways, !gateways.isEmpty else { return nil }
+        let providerId = coordinator.selectedEngineModelId.split(separator: "/").first.map(String.init) ?? ""
+        if !providerId.isEmpty,
+           let matched = gateways.first(where: { $0.id.caseInsensitiveCompare(providerId) == .orderedSame }) {
+            return matched
+        }
+        return gateways.first(where: { $0.hasUsage }) ?? gateways.first
+    }
+
     private func dynamicQuotaInfo(for family: ModelFamily) -> (pct: Double, resetIn: String, tint: Color, icon: String) {
         guard let snap = coordinator.quotaSnapshot else {
             return (100.0, "--", .green, "bolt.fill")
+        }
+        if coordinator.selectedEngineId == "omp" {
+            if let gw = activeOmpGateway, gw.hasUsage, let pct = gw.rolling5hRemainingPct ?? gw.weeklyRemainingPct {
+                let tint: Color = pct >= 50 ? .cyan : (pct >= 20 ? .orange : .red)
+                return (pct, gw.rolling5hRefreshesIn, tint, "server.rack")
+            }
+            return (100.0, "--", .secondary, "server.rack")
         }
         switch family {
         case .hydrogen:
@@ -3468,6 +3486,10 @@ struct QuotaDetailSheetView: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
+                        if coordinator.selectedEngineId == "omp" {
+                            ompGatewaysSection
+                        }
+
                         // 1. 7 天週配額 (Weekly 7d)
                         quotaRowCard(
                             icon: "calendar.badge.clock",
@@ -3503,6 +3525,10 @@ struct QuotaDetailSheetView: View {
                             subtitle: "距離重置：\(snap.thirdPartyRefreshesIn)",
                             color: .purple
                         )
+
+                        if coordinator.selectedEngineId != "omp" && !snap.gateways.isEmpty {
+                            ompGatewaysSection
+                        }
 
                         // 5. Prompt / Flow Credits 配額卡片
                         creditsCard
@@ -3543,6 +3569,105 @@ struct QuotaDetailSheetView: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private var ompGatewaysSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("OMP Gateway 配額 (5h / 7d)", systemImage: "server.rack")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Text("\(snap.gateways.count) 節點")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            if snap.gateways.isEmpty {
+                Text("尚未偵測到 gemini-gw-* 節點設定")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(12)
+            } else {
+                ForEach(snap.gateways) { gw in
+                    gatewayQuotaCard(gw)
+                }
+            }
+        }
+    }
+
+    private func gatewayQuotaCard(_ gw: GatewayQuotaItem) -> some View {
+        let statusLabel: String = {
+            if !gw.online { return "離線" }
+            if !gw.hasUsage { return "未開用量頁" }
+            return gw.plan ?? "在線"
+        }()
+        let statusColor: Color = !gw.online ? .red : (gw.hasUsage ? .green : .orange)
+        let pct5h = gw.rolling5hRemainingPct
+        let pct7d = gw.weeklyRemainingPct
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(gw.label)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(statusLabel)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(statusColor.opacity(0.18))
+                    .foregroundColor(statusColor)
+                    .cornerRadius(6)
+            }
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("5 小時")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(pct5h != nil ? String(format: "%.0f%%", pct5h!) : "--%")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundColor(pct5h != nil ? (pct5h! >= 50 ? .cyan : (pct5h! >= 20 ? .orange : .red)) : .secondary)
+                    }
+                    ProgressView(value: min(max((pct5h ?? 0) / 100.0, 0.0), 1.0))
+                        .tint(pct5h != nil ? .cyan : .gray)
+                    Text("重設：\(gw.rolling5hRefreshesIn)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("7 天週期")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(pct7d != nil ? String(format: "%.0f%%", pct7d!) : "--%")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundColor(pct7d != nil ? (pct7d! >= 50 ? .green : (pct7d! >= 20 ? .orange : .red)) : .secondary)
+                    }
+                    ProgressView(value: min(max((pct7d ?? 0) / 100.0, 0.0), 1.0))
+                        .tint(pct7d != nil ? .green : .gray)
+                    Text("重設：\(gw.weeklyRefreshesIn)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.05))
+        .cornerRadius(14)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var creditsCard: some View {

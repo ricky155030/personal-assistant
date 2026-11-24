@@ -2,9 +2,11 @@ import json
 import os
 import subprocess
 import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 QUOTA_HOOK_PATH = Path.home() / ".gemini" / "antigravity-cli" / "hooks" / "fetch-local-quota.mjs"
 CACHE_PATH = Path.home() / ".gemini" / "tmp" / "real_quota_cache.json"
@@ -22,6 +24,35 @@ def _format_taipei_time(iso_str: Optional[str]) -> str:
         return dt.strftime("%m-%d %H:%M")
     except Exception:
         return ""
+
+
+def _format_minutes_duration(minutes: Optional[int]) -> str:
+    """將剩餘分鐘數格式化為可讀中文時間（例如 `3 小時 12 分`）。"""
+    if minutes is None:
+        return "--"
+    try:
+        mins = max(0, int(minutes))
+    except (TypeError, ValueError):
+        return "--"
+    if mins >= 1440:
+        days, rem = divmod(mins, 1440)
+        hours = rem // 60
+        return f"{days} 天 {hours} 小時" if hours > 0 else f"{days} 天"
+    if mins >= 60:
+        hours, rem = divmod(mins, 60)
+        return f"{hours} 小時 {rem} 分" if rem > 0 else f"{hours} 小時"
+    return f"{mins} 分"
+
+
+def _used_to_remaining_pct(used_pct: Any) -> Optional[float]:
+    """將 gateway `/v1/status` 回傳的已使用百分比轉換為剩餘百分比。"""
+    if used_pct is None:
+        return None
+    try:
+        val = float(used_pct)
+    except (TypeError, ValueError):
+        return None
+    return round(max(0.0, min(100.0, 100.0 - val)), 1)
 
 class QuotaService:
     """管理與查詢 Gemini 及 3P 模型的 5小時 / 7天 (Weekly) 額度配額"""
@@ -197,8 +228,77 @@ class QuotaService:
                     "reset_time_taipei": _format_taipei_time(p3_w_reset),
                     "refreshes_in": p3_w_in
                 }
-            }
+            },
+            "gateways": self.fetch_gateway_quotas(),
         }
+
+    def fetch_gateway_quotas(
+        self,
+        endpoints: Optional[List[Dict[str, str]]] = None,
+        timeout: float = 2.0,
+    ) -> List[Dict[str, Any]]:
+        """並發查詢所有 gemini-gw-* gateway 的 `/v1/status`，回傳 5 小時與 7 天剩餘配額。"""
+        if endpoints is None:
+            try:
+                from omp_singleton import get_gemini_gw_endpoints
+                endpoints = get_gemini_gw_endpoints()
+            except Exception:
+                endpoints = []
+        if not endpoints:
+            return []
+
+        def _query_one(ep: Dict[str, str]) -> Dict[str, Any]:
+            gid = ep.get("id", "")
+            label = ep.get("label", gid)
+            status_url = ep.get("status_url", "")
+            base_item: Dict[str, Any] = {
+                "id": gid,
+                "label": label,
+                "online": False,
+                "cdp_connected": False,
+                "has_usage": False,
+                "plan": None,
+                "rolling_5h_remaining_pct": None,
+                "rolling_5h_reset_minutes": None,
+                "rolling_5h_refreshes_in": "--",
+                "weekly_remaining_pct": None,
+                "weekly_reset_minutes": None,
+                "weekly_refreshes_in": "--",
+                "fetched_at": None,
+            }
+            if not status_url:
+                return base_item
+            try:
+                req = urllib.request.Request(status_url, method="GET")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(payload, dict):
+                    return base_item
+                base_item["online"] = bool(payload.get("ok", True))
+                base_item["cdp_connected"] = bool(payload.get("cdpConnected", False))
+                usage = payload.get("usage")
+                if isinstance(usage, dict):
+                    r5h = _used_to_remaining_pct(usage.get("currentPercent"))
+                    rw = _used_to_remaining_pct(usage.get("weeklyPercent"))
+                    r5h_min = usage.get("currentResetMinutes")
+                    rw_min = usage.get("weeklyResetMinutes")
+                    base_item.update({
+                        "has_usage": (r5h is not None or rw is not None),
+                        "plan": usage.get("plan"),
+                        "rolling_5h_remaining_pct": r5h,
+                        "rolling_5h_reset_minutes": r5h_min,
+                        "rolling_5h_refreshes_in": _format_minutes_duration(r5h_min),
+                        "weekly_remaining_pct": rw,
+                        "weekly_reset_minutes": rw_min,
+                        "weekly_refreshes_in": _format_minutes_duration(rw_min),
+                        "fetched_at": usage.get("fetchedAt"),
+                    })
+            except Exception:
+                pass
+            return base_item
+
+        with ThreadPoolExecutor(max_workers=min(4, len(endpoints))) as pool:
+            return list(pool.map(_query_one, endpoints))
 
     def format_telegram_message(self, context_status: Optional[Dict[str, Any]] = None) -> str:
         """生成 Telegram 專用富文本 HTML 訊息"""

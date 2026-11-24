@@ -108,6 +108,22 @@ public final class MacMiniAPIClient {
             let context = root["context"] as? [String: Any] ?? [:]
 
             let activeNames = (bgTasks["active_names"] as? [String]) ?? []
+            let rawGateways = (quota["gateways"] as? [[String: Any]]) ?? []
+            let parsedGateways: [GatewayQuotaItem] = rawGateways.compactMap { item in
+                guard let gid = item["id"] as? String, !gid.isEmpty else { return nil }
+                return GatewayQuotaItem(
+                    id: gid,
+                    label: (item["label"] as? String) ?? gid,
+                    online: (item["online"] as? Bool) ?? false,
+                    cdpConnected: (item["cdp_connected"] as? Bool) ?? false,
+                    hasUsage: (item["has_usage"] as? Bool) ?? false,
+                    plan: item["plan"] as? String,
+                    rolling5hRemainingPct: (item["rolling_5h_remaining_pct"] as? NSNumber)?.doubleValue,
+                    rolling5hRefreshesIn: (item["rolling_5h_refreshes_in"] as? String) ?? "--",
+                    weeklyRemainingPct: (item["weekly_remaining_pct"] as? NSNumber)?.doubleValue,
+                    weeklyRefreshesIn: (item["weekly_refreshes_in"] as? String) ?? "--"
+                )
+            }
 
             return QuotaSnapshot(
                 weeklyRemainingPct: (weekly["remaining_pct"] as? NSNumber)?.doubleValue ?? 100.0,
@@ -132,7 +148,8 @@ public final class MacMiniAPIClient {
                 thirdPartyRemainingPct: (p3Weekly["remaining_pct"] as? NSNumber)?.doubleValue ?? 100.0,
                 thirdPartyRefreshesIn: (p3Weekly["refreshes_in"] as? String) ?? "--",
                 activeTaskCount: (bgTasks["running_count"] as? NSNumber)?.intValue ?? activeNames.count,
-                activeTaskNames: activeNames
+                activeTaskNames: activeNames,
+                gateways: parsedGateways
             )
         } catch {
             return nil

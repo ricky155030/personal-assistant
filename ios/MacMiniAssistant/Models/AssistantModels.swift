@@ -397,6 +397,43 @@ public enum SSEEvent {
     case error(message: String)
 }
 
+public struct GatewayQuotaItem: Codable, Equatable, Identifiable {
+    public let id: String
+    public let label: String
+    public let online: Bool
+    public let cdpConnected: Bool
+    public let hasUsage: Bool
+    public let plan: String?
+    public let rolling5hRemainingPct: Double?
+    public let rolling5hRefreshesIn: String
+    public let weeklyRemainingPct: Double?
+    public let weeklyRefreshesIn: String
+
+    public init(
+        id: String,
+        label: String,
+        online: Bool = false,
+        cdpConnected: Bool = false,
+        hasUsage: Bool = false,
+        plan: String? = nil,
+        rolling5hRemainingPct: Double? = nil,
+        rolling5hRefreshesIn: String = "--",
+        weeklyRemainingPct: Double? = nil,
+        weeklyRefreshesIn: String = "--"
+    ) {
+        self.id = id
+        self.label = label
+        self.online = online
+        self.cdpConnected = cdpConnected
+        self.hasUsage = hasUsage
+        self.plan = plan
+        self.rolling5hRemainingPct = rolling5hRemainingPct
+        self.rolling5hRefreshesIn = rolling5hRefreshesIn
+        self.weeklyRemainingPct = weeklyRemainingPct
+        self.weeklyRefreshesIn = weeklyRefreshesIn
+    }
+}
+
 public struct QuotaSnapshot: Equatable {
     public var weeklyRemainingPct: Double
     public var weeklyRefreshesIn: String
@@ -429,6 +466,7 @@ public struct QuotaSnapshot: Equatable {
     // 背景子代理 / 常駐任務
     public var activeTaskCount: Int
     public var activeTaskNames: [String]
+    public var gateways: [GatewayQuotaItem]
 
     public init(
         weeklyRemainingPct: Double = 100.0,
@@ -453,7 +491,8 @@ public struct QuotaSnapshot: Equatable {
         thirdPartyRemainingPct: Double = 100.0,
         thirdPartyRefreshesIn: String = "--",
         activeTaskCount: Int = 0,
-        activeTaskNames: [String] = []
+        activeTaskNames: [String] = [],
+        gateways: [GatewayQuotaItem] = []
     ) {
         self.weeklyRemainingPct = weeklyRemainingPct
         self.weeklyRefreshesIn = weeklyRefreshesIn
@@ -478,6 +517,7 @@ public struct QuotaSnapshot: Equatable {
         self.thirdPartyRefreshesIn = thirdPartyRefreshesIn
         self.activeTaskCount = activeTaskCount
         self.activeTaskNames = activeTaskNames
+        self.gateways = gateways
     }
 }
 

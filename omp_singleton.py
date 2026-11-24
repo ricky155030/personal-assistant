@@ -85,7 +85,13 @@ def _parse_omp_models_yml_fallback(text: str) -> dict:
             in_models = False
             cur_model = None
         elif cur_provider and indent == 4:
-            in_models = stripped == "models:"
+            if stripped == "models:":
+                in_models = True
+            else:
+                in_models = False
+                if ":" in stripped:
+                    k, v = stripped.split(":", 1)
+                    providers[cur_provider][k.strip()] = v.strip().strip("\"'")
             cur_model = None
         elif cur_provider and in_models:
             if stripped.startswith("- "):
@@ -101,12 +107,12 @@ def _parse_omp_models_yml_fallback(text: str) -> dict:
     return {"providers": providers}
 
 
-def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[dict]:
-    """Discover all models under `gemini-gw-*` providers from ~/.omp/agent/models.yml."""
+def _read_omp_models_yml_providers(models_yml_path: Optional[Path] = None) -> dict:
+    """Read `providers` mapping from ~/.omp/agent/models.yml (or OMP_MODELS_YML)."""
     env_path = os.getenv("OMP_MODELS_YML", "").strip()
     path = models_yml_path or (Path(env_path) if env_path else (Path.home() / ".omp" / "agent" / "models.yml"))
     if not path.exists():
-        return []
+        return {}
     try:
         text = path.read_text(encoding="utf-8")
         try:
@@ -116,10 +122,15 @@ def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[di
         except ImportError:
             data = _parse_omp_models_yml_fallback(text)
     except Exception:
-        return []
-
+        return {}
     providers = data.get("providers") if isinstance(data, dict) else None
-    if not isinstance(providers, dict):
+    return providers if isinstance(providers, dict) else {}
+
+
+def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[dict]:
+    """Discover allowed models under `gemini-gw-*` providers from ~/.omp/agent/models.yml."""
+    providers = _read_omp_models_yml_providers(models_yml_path)
+    if not providers:
         return []
 
     models: List[dict] = []
@@ -144,6 +155,30 @@ def _load_models_from_omp_yml(models_yml_path: Optional[Path] = None) -> List[di
                 }
             )
     return models
+
+
+def get_gemini_gw_endpoints(models_yml_path: Optional[Path] = None) -> List[dict]:
+    """Return status endpoints for all configured `gemini-gw-*` providers."""
+    providers = _read_omp_models_yml_providers(models_yml_path)
+    endpoints: List[dict] = []
+    for provider_name, provider_cfg in sorted(providers.items(), key=lambda kv: str(kv[0]).lower()):
+        pname = str(provider_name or "").strip()
+        if not pname.lower().startswith("gemini-gw-") or not isinstance(provider_cfg, dict):
+            continue
+        base_url = str(provider_cfg.get("baseUrl") or "").strip().rstrip("/")
+        if not base_url:
+            continue
+        if base_url.endswith("/v1"):
+            status_url = f"{base_url}/status"
+        else:
+            status_url = f"{base_url}/v1/status"
+        short_label = pname[7:] if pname.lower().startswith("gemini-") else pname
+        endpoints.append({
+            "id": pname,
+            "label": short_label,
+            "status_url": status_url,
+        })
+    return endpoints
 
 
 def _load_curated_omp_models() -> List[dict]:
@@ -749,7 +784,7 @@ class OmpBrainEngine(BaseBrainEngine):
 
     engine_id = "omp"
     display_name = "Oh-My-Pi (omp)"
-    supports_quota = False
+    supports_quota = True
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -876,7 +911,7 @@ class OmpBrainEngine(BaseBrainEngine):
             "ratio": ratio,
             "percent": round(ratio * 100, 1),
             "usage": dict(self._last_usage),
-            "supports_quota": False,
+            "supports_quota": self.supports_quota,
         }
 
     def get_available_models(self) -> List[dict]:

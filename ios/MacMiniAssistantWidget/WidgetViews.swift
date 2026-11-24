@@ -67,35 +67,58 @@ private struct SmallWidgetView: View {
 
             Spacer()
 
-            // Gemini 額度進度
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text("Gemini 額度")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.6))
-                    Spacer()
-                    Text("\(Int(entry.quotaFlashPercent))%")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.cyan)
-                }
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.white.opacity(0.12))
-                            .frame(height: 5)
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [.cyan, .blue],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                            .frame(width: max(0, min(geo.size.width * CGFloat(entry.quotaFlashPercent / 100.0), geo.size.width)), height: 5)
+            if entry.activeEngineId == "omp", let gw = entry.gatewayQuotas.first(where: { $0.hasUsage }) ?? entry.gatewayQuotas.first {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("\(gw.label) 5h")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.6))
+                        Spacer()
+                        Text(gw.rolling5hRemainingPct != nil ? "\(Int(gw.rolling5hRemainingPct!))%" : "--%")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.cyan)
+                    }
+                    HStack {
+                        Text("7d 週配額")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.6))
+                        Spacer()
+                        Text(gw.weeklyRemainingPct != nil ? "\(Int(gw.weeklyRemainingPct!))%" : "--%")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.green)
                     }
                 }
-                .frame(height: 5)
+            } else {
+                // Gemini 額度進度
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("Gemini 額度")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.6))
+                        Spacer()
+                        Text("\(Int(entry.quotaFlashPercent))%")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.cyan)
+                    }
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.white.opacity(0.12))
+                                .frame(height: 5)
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [.cyan, .blue],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: max(0, min(geo.size.width * CGFloat(entry.quotaFlashPercent / 100.0), geo.size.width)), height: 5)
+                        }
+                    }
+                    .frame(height: 5)
+                }
             }
 
             // 快捷語音提示標籤
@@ -144,36 +167,58 @@ private struct MediumWidgetView: View {
 
                 Spacer()
 
-                // Flash 額度條
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Flash 額度")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.6))
-                        Spacer()
-                        Text("\(Int(entry.quotaFlashPercent))%")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.cyan)
+                if entry.activeEngineId == "omp" && !entry.gatewayQuotas.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(entry.gatewayQuotas.prefix(4)) { gw in
+                            HStack(spacing: 4) {
+                                Text(gw.label)
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.75))
+                                    .lineLimit(1)
+                                Spacer()
+                                let p5 = gw.rolling5hRemainingPct != nil ? "\(Int(gw.rolling5hRemainingPct!))%" : "--"
+                                let p7 = gw.weeklyRemainingPct != nil ? "\(Int(gw.weeklyRemainingPct!))%" : "--"
+                                Text("5h:\(p5)")
+                                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(gw.online ? .cyan : .red)
+                                Text("7d:\(p7)")
+                                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                    .foregroundColor(gw.online ? .green : .red)
+                            }
+                        }
                     }
-                    ProgressView(value: min(max(entry.quotaFlashPercent / 100.0, 0), 1.0))
-                        .tint(.cyan)
-                        .scaleEffect(x: 1, y: 0.6, anchor: .center)
-                }
+                } else {
+                    // Flash 額度條
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("Flash 額度")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                            Text("\(Int(entry.quotaFlashPercent))%")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.cyan)
+                        }
+                        ProgressView(value: min(max(entry.quotaFlashPercent / 100.0, 0), 1.0))
+                            .tint(.cyan)
+                            .scaleEffect(x: 1, y: 0.6, anchor: .center)
+                    }
 
-                // Pro 額度條
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Pro 額度")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.6))
-                        Spacer()
-                        Text("\(Int(entry.quotaProPercent))%")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.purple)
+                    // Pro 額度條
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("Pro 額度")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.6))
+                            Spacer()
+                            Text("\(Int(entry.quotaProPercent))%")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.purple)
+                        }
+                        ProgressView(value: min(max(entry.quotaProPercent / 100.0, 0), 1.0))
+                            .tint(.purple)
+                            .scaleEffect(x: 1, y: 0.6, anchor: .center)
                     }
-                    ProgressView(value: min(max(entry.quotaProPercent / 100.0, 0), 1.0))
-                        .tint(.purple)
-                        .scaleEffect(x: 1, y: 0.6, anchor: .center)
                 }
             }
 

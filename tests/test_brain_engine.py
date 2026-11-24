@@ -92,7 +92,7 @@ def test_omp_curated_models_override(monkeypatch):
         {"id": "gpt-5.4", "label": "GPT 5.4", "thinking_levels": ["low", "med", "high"]},
         {"id": "claude-sonnet", "label": "Sonnet", "thinking_levels": ["low", "med", "high"]},
     ]
-    assert eng.supports_quota is False
+    assert eng.supports_quota is True
 
 
 def test_clean_query_for_history_strips_multiline_handoff():

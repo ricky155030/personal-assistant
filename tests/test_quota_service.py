@@ -91,3 +91,87 @@ def test_format_telegram_message():
         assert "Gemini 4 Argon" in msg
         assert "Prompt Credits" in msg
         assert "Flow Credits" in msg
+
+
+def test_fetch_gateway_quotas_parses_usage_and_offline(monkeypatch):
+    import io
+    import json
+    from unittest.mock import MagicMock
+    from quota_service import QuotaService, _format_minutes_duration, _used_to_remaining_pct
+
+    assert _used_to_remaining_pct(25) == 75.0
+    assert _used_to_remaining_pct(120) == 0.0
+    assert _used_to_remaining_pct(None) is None
+    assert _format_minutes_duration(195) == "3 小時 15 分"
+    assert _format_minutes_duration(1500) == "1 天 1 小時"
+
+    endpoints = [
+        {"id": "Gemini-GW-1", "label": "GW-1", "status_url": "http://127.0.0.1:8787/v1/status"},
+        {"id": "Gemini-GW-2", "label": "GW-2", "status_url": "http://127.0.0.1:8788/v1/status"},
+    ]
+
+    def fake_urlopen(req, timeout=2.0):
+        if "8787" in req.full_url:
+            body = json.dumps({
+                "ok": True,
+                "cdpConnected": True,
+                "usage": {
+                    "plan": "Google AI Pro",
+                    "currentPercent": 20,
+                    "currentResetMinutes": 135,
+                    "weeklyPercent": 45,
+                    "weeklyResetMinutes": 2880,
+                    "fetchedAt": "2026-11-24T14:00:00Z",
+                },
+            }).encode("utf-8")
+            cm = MagicMock()
+            cm.__enter__.return_value = io.BytesIO(body)
+            return cm
+        raise ConnectionRefusedError("offline")
+
+    qs = QuotaService()
+    with patch("quota_service.urllib.request.urlopen", side_effect=fake_urlopen):
+        result = qs.fetch_gateway_quotas(endpoints=endpoints)
+
+    assert len(result) == 2
+    gw1, gw2 = result
+    assert gw1["id"] == "Gemini-GW-1"
+    assert gw1["label"] == "GW-1"
+    assert gw1["online"] is True
+    assert gw1["has_usage"] is True
+    assert gw1["rolling_5h_remaining_pct"] == 80.0
+    assert gw1["rolling_5h_refreshes_in"] == "2 小時 15 分"
+    assert gw1["weekly_remaining_pct"] == 55.0
+    assert gw1["weekly_refreshes_in"] == "2 天"
+
+    assert gw2["id"] == "Gemini-GW-2"
+    assert gw2["online"] is False
+    assert gw2["has_usage"] is False
+    assert gw2["rolling_5h_remaining_pct"] is None
+
+
+def test_get_gemini_gw_endpoints_from_models_yml(tmp_path, monkeypatch):
+    import brain_engine  # noqa: F401
+    import omp_singleton
+
+    yml = tmp_path / "models.yml"
+    yml.write_text(
+        """providers:
+  Gemini-GW-2:
+    baseUrl: http://127.0.0.1:8788/v1
+    models:
+      - id: gemini-4-hydrogen
+  Gemini-GW-1:
+    baseUrl: http://127.0.0.1:8787/v1
+    models:
+      - id: gemini-4-hydrogen
+  other:
+    baseUrl: http://127.0.0.1:9999/v1
+""",
+        encoding="utf-8",
+    )
+    eps = omp_singleton.get_gemini_gw_endpoints(yml)
+    assert eps == [
+        {"id": "Gemini-GW-1", "label": "GW-1", "status_url": "http://127.0.0.1:8787/v1/status"},
+        {"id": "Gemini-GW-2", "label": "GW-2", "status_url": "http://127.0.0.1:8788/v1/status"},
+    ]

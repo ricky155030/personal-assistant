@@ -9,6 +9,8 @@ public struct AssistantWidgetEntry: TimelineEntry {
     public let statusMessage: String
     public let quotaFlashPercent: Double
     public let quotaProPercent: Double
+    public let activeEngineId: String
+    public let gatewayQuotas: [AppGroupStore.GatewayQuotaWidgetItem]
 
     public static var preview: AssistantWidgetEntry {
         AssistantWidgetEntry(
@@ -17,7 +19,9 @@ public struct AssistantWidgetEntry: TimelineEntry {
             latencyMs: 14,
             statusMessage: "Mac mini (14ms)",
             quotaFlashPercent: 88.0,
-            quotaProPercent: 95.0
+            quotaProPercent: 95.0,
+            activeEngineId: "agy",
+            gatewayQuotas: []
         )
     }
 }
@@ -48,7 +52,9 @@ public struct AssistantTimelineProvider: TimelineProvider {
             latencyMs: store.latencyMs,
             statusMessage: store.statusMessage,
             quotaFlashPercent: store.quotaFlashPercent > 0 ? store.quotaFlashPercent : 100.0,
-            quotaProPercent: store.quotaProPercent > 0 ? store.quotaProPercent : 100.0
+            quotaProPercent: store.quotaProPercent > 0 ? store.quotaProPercent : 100.0,
+            activeEngineId: store.activeEngineId,
+            gatewayQuotas: store.gatewayQuotas
         )
     }
 }

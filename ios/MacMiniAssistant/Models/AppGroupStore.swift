@@ -44,6 +44,33 @@ public final class AppGroupStore {
         static let baseURL = "macmini_server_url"
         static let apiKey = "macmini_api_key"
         static let sharePrompts = "shared_share_prompts"
+        static let activeEngineId = "shared_active_engine_id"
+        static let gatewayQuotas = "shared_gateway_quotas"
+    }
+
+    public struct GatewayQuotaWidgetItem: Codable, Equatable, Identifiable {
+        public let id: String
+        public let label: String
+        public let online: Bool
+        public let hasUsage: Bool
+        public let rolling5hRemainingPct: Double?
+        public let weeklyRemainingPct: Double?
+
+        public init(
+            id: String,
+            label: String,
+            online: Bool,
+            hasUsage: Bool,
+            rolling5hRemainingPct: Double?,
+            weeklyRemainingPct: Double?
+        ) {
+            self.id = id
+            self.label = label
+            self.online = online
+            self.hasUsage = hasUsage
+            self.rolling5hRemainingPct = rolling5hRemainingPct
+            self.weeklyRemainingPct = weeklyRemainingPct
+        }
     }
 
     public var serverURL: String {
@@ -102,18 +129,42 @@ public final class AppGroupStore {
         set { defaults.set(newValue, forKey: Keys.lastUpdatedTime) }
     }
 
+    public var activeEngineId: String {
+        get { defaults.string(forKey: Keys.activeEngineId) ?? "agy" }
+        set { defaults.set(newValue, forKey: Keys.activeEngineId) }
+    }
+
+    public var gatewayQuotas: [GatewayQuotaWidgetItem] {
+        get {
+            guard let data = defaults.data(forKey: Keys.gatewayQuotas),
+                  let decoded = try? JSONDecoder().decode([GatewayQuotaWidgetItem].self, from: data) else {
+                return []
+            }
+            return decoded
+        }
+        set {
+            if let encoded = try? JSONEncoder().encode(newValue) {
+                defaults.set(encoded, forKey: Keys.gatewayQuotas)
+            }
+        }
+    }
+
     public func updateSnapshot(
         isReachable: Bool,
         latency: Int,
         message: String,
         flashPercent: Double? = nil,
-        proPercent: Double? = nil
+        proPercent: Double? = nil,
+        activeEngineId: String? = nil,
+        gatewayQuotas: [GatewayQuotaWidgetItem]? = nil
     ) {
         self.isServerReachable = isReachable
         self.latencyMs = latency
         self.statusMessage = message
         if let f = flashPercent { self.quotaFlashPercent = f }
         if let p = proPercent { self.quotaProPercent = p }
+        if let e = activeEngineId { self.activeEngineId = e }
+        if let g = gatewayQuotas { self.gatewayQuotas = g }
         self.lastUpdatedTime = Date()
     }
 }

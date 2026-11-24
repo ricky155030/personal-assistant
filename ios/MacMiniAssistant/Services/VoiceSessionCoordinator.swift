@@ -565,12 +565,24 @@ public final class VoiceSessionCoordinator: ObservableObject {
             defer { self.isRefreshingQuota = false }
             if let snap = await apiClient.fetchQuotaStatus(forceRefresh: force) {
                 self.quotaSnapshot = snap
+                let widgetGateways = snap.gateways.map {
+                    AppGroupStore.GatewayQuotaWidgetItem(
+                        id: $0.id,
+                        label: $0.label,
+                        online: $0.online,
+                        hasUsage: $0.hasUsage,
+                        rolling5hRemainingPct: $0.rolling5hRemainingPct,
+                        weeklyRemainingPct: $0.weeklyRemainingPct
+                    )
+                }
                 AppGroupStore.shared.updateSnapshot(
                     isReachable: self.isServerReachable,
                     latency: 0,
                     message: self.serverStatusText,
                     flashPercent: snap.rolling5hRemainingPct,
-                    proPercent: snap.weeklyRemainingPct
+                    proPercent: snap.weeklyRemainingPct,
+                    activeEngineId: self.selectedEngineId,
+                    gatewayQuotas: widgetGateways
                 )
                 WidgetCenter.shared.reloadAllTimelines()
             }
