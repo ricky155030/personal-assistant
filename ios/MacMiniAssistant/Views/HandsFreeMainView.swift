@@ -1142,9 +1142,9 @@ struct HandsFreeMainView: View {
             let tint: Color = pct >= 50 ? .green : (pct >= 20 ? .orange : .red)
             return (pct, snap.weeklyRefreshesIn, tint, "bolt.fill")
         case .argon:
-            let pct = snap.argonRemainingPct
+            let pct = snap.weeklyRemainingPct
             let tint: Color = pct >= 50 ? Color(red: 0.45, green: 0.65, blue: 1.0) : (pct >= 20 ? .orange : .red)
-            return (pct, snap.argonRefreshesIn, tint, "atom")
+            return (pct, snap.weeklyRefreshesIn, tint, "atom")
         case .claude, .opus:
             let pct = snap.thirdPartyRemainingPct
             let tint: Color = pct >= 50 ? .purple : (pct >= 20 ? .orange : .red)
@@ -3490,50 +3490,17 @@ struct QuotaDetailSheetView: View {
                             ompGatewaysSection
                         }
 
-                        // 1. 7 天週配額 (Weekly 7d)
-                        quotaRowCard(
-                            icon: "calendar.badge.clock",
-                            title: "AGY 7 天週配額 (Weekly)",
-                            percent: snap.weeklyRemainingPct,
-                            subtitle: "距離重置：\(snap.weeklyRefreshesIn)" + (snap.weeklyResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.weeklyResetTimeTaipei)）"),
-                            color: snap.weeklyRemainingPct >= 50 ? .green : (snap.weeklyRemainingPct >= 20 ? .orange : .red)
-                        )
-
-                        // 2. 5 小時區間配額 (Rolling 5h)
-                        quotaRowCard(
-                            icon: "bolt.circle.fill",
-                            title: "5 小時滾動配額 (Rolling 5h)",
-                            percent: snap.rolling5hRemainingPct,
-                            subtitle: "距離重置：\(snap.rolling5hRefreshesIn)" + (snap.rolling5hResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.rolling5hResetTimeTaipei)）"),
-                            color: .cyan
-                        )
-
-                        // 3. Gemini 4 Argon (Pro 深度推理)
-                        quotaRowCard(
-                            icon: "atom",
-                            title: "Gemini 4 Argon (Pro 深度推理)",
-                            percent: snap.argonRemainingPct,
-                            subtitle: "距離重置：\(snap.argonRefreshesIn)" + (snap.argonResetTimeTaipei.isEmpty ? "" : "（台北 \(snap.argonResetTimeTaipei)）"),
-                            color: snap.argonRemainingPct >= 50 ? Color(red: 0.45, green: 0.65, blue: 1.0) : (snap.argonRemainingPct >= 20 ? .orange : .red)
-                        )
-
-                        // 4. 第三方模型 (Claude / GPT 3P)
-                        quotaRowCard(
-                            icon: "sparkles",
-                            title: "Claude / GPT (第三方 3P)",
-                            percent: snap.thirdPartyRemainingPct,
-                            subtitle: "距離重置：\(snap.thirdPartyRefreshesIn)",
-                            color: .purple
-                        )
+                        // 1. AGY 標準 5 小時 / 7 天對稱雙欄配額卡片 (已合併 Argon，移除獨立 Claude/Argon)
+                        agySymmetricQuotaCard
 
                         if coordinator.selectedEngineId != "omp" && !snap.gateways.isEmpty {
                             ompGatewaysSection
                         }
 
-                        // 5. Prompt / Flow Credits 配額卡片
+                        // 2. Prompt / Flow Credits 配額卡片
                         creditsCard
 
-                        // 6. ACP 統一大腦 Context 記憶容量
+                        // 3. ACP 統一大腦 Context 記憶容量
                         contextMemoryCard
                     }
                     .padding(16)
@@ -3668,6 +3635,109 @@ struct QuotaDetailSheetView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
+    }
+
+    private var agySymmetricQuotaCard: some View {
+        let pct5h = snap.rolling5hRemainingPct
+        let color5h: Color = pct5h >= 50 ? .cyan : (pct5h >= 20 ? .orange : .red)
+        let pct7d = snap.weeklyRemainingPct
+        let color7d: Color = pct7d >= 50 ? .green : (pct7d >= 20 ? .orange : .red)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("AGY 訂閱配額", systemImage: "sparkles")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer()
+                Text(snap.planTier)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.2))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(6)
+            }
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            HStack(spacing: 12) {
+                symmetricQuotaColumn(
+                    icon: "bolt.circle.fill",
+                    title: "5 小時配額",
+                    percent: pct5h,
+                    resetText: snap.rolling5hRefreshesIn,
+                    taipeiTime: snap.rolling5hResetTimeTaipei,
+                    color: color5h
+                )
+
+                Divider()
+                    .frame(height: 62)
+                    .background(Color.white.opacity(0.08))
+
+                symmetricQuotaColumn(
+                    icon: "calendar.badge.clock",
+                    title: "7 天週配額",
+                    percent: pct7d,
+                    resetText: snap.weeklyRefreshesIn,
+                    taipeiTime: snap.weeklyResetTimeTaipei,
+                    color: color7d
+                )
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func symmetricQuotaColumn(
+        icon: String,
+        title: String,
+        percent: Double,
+        resetText: String,
+        taipeiTime: String,
+        color: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(white: 0.78))
+                Spacer()
+                Text(String(format: "%.1f%%", percent))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(color)
+                    .monospacedDigit()
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                        .frame(height: 7)
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(6, geo.size.width * CGFloat(min(1.0, max(0.0, percent / 100.0)))), height: 7)
+                }
+            }
+            .frame(height: 7)
+
+            Text("重設：\(resetText)" + (taipeiTime.isEmpty ? "" : " (\(taipeiTime))"))
+                .font(.system(size: 10.5))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var creditsCard: some View {
