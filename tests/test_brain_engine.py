@@ -479,6 +479,58 @@ def test_agy_worker_preserves_markdown_code_blocks():
     assert "```swift\nlet x = 1\n```" in result["clean_reply"]
 
 
+def test_omp_resident_does_not_restart_below_token_limit():
+    import omp_singleton
+    from config import settings
+
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-1/gemini-4-hydrogen")
+    worker._is_ready = True
+    worker.session_id = "sess-persist-1"
+    worker._agents_injected = True
+    worker._next_rpc_id = lambda: 12
+    worker._save_session_state = lambda: None
+    worker._build_prompt_blocks = lambda q, media=None: [{"type": "text", "text": q}]
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+    restart_calls = []
+    worker.restart = lambda **kwargs: restart_calls.append(kwargs)
+
+    def fake_send_rpc(payload):
+        req_id = payload["id"]
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": "sess-persist-1", "update": {"sessionUpdate": "usage_update", "used": 15000}},
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": "sess-persist-1", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}}},
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"stopReason": "end_turn", "usage": {"inputTokens": 14000, "outputTokens": 1000}},
+        })
+
+    worker._send_rpc = fake_send_rpc
+
+    gen = worker.send_query_stream("hello")
+    try:
+        while True:
+            next(gen)
+    except StopIteration:
+        pass
+
+    assert worker.last_tokens == 15000
+    assert settings.CONTEXT_WINDOW_LIMIT * settings.CONTEXT_RESTART_THRESHOLD > 15000
+    assert restart_calls == []
+
+
 def test_omp_discovers_gemini_gw_providers_and_excludes_muse(tmp_path, monkeypatch):
     import omp_singleton
 
