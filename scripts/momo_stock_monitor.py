@@ -175,7 +175,7 @@ class MomoStockMonitor:
                         target_page = page
                         break
                 if not target_page:
-                    target_page = context.new_page()
+                    target_page = self.client.create_background_page(browser)
 
                 try:
                     target_page.goto(url, timeout=30000, wait_until="domcontentloaded")
