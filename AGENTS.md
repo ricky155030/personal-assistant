@@ -92,10 +92,11 @@
        - **永久常駐守護任務**（如全屋巡檢、酷澎盯價、FB 社團、Zigbee 守護）：一律設 `--ttl 0`（永久不限時）搭配 `--heartbeat-timeout <分鐘數>`（如 `30`），且腳本每輪巡檢必須吐出一行 Log；中控監督者 (`task_supervisor.py`) 依 Log 最後更新時間判定健康度，超時即終止並通知主人。
        - **短期/單次任務**（如 CI 追蹤、編譯打包、一次性定時提醒）：`python3 task_manager.py spawn-cmd --name "<任務名稱>" --cmd "<CLI指令>" --notify telegram --ttl <分鐘數>`（預設會自動推播 Telegram 並同步 `data/history.jsonl` 與閒置主大腦記憶；TTL 到期時會自動終止並通知）。
      - **秒級交差釋放**：啟動後，**應立即結束當前 turn** 並向主人回覆確認（例如：「👌 監控已在背景啟動（任務 ID: task_xxx）！有任何異動將自動推播通知給您。」），絕不留在當前對話中迴圈等待，確保主大腦立刻空出。
-   - **深度耗時任務派出 Subagent (`invoke_subagent`)**：
-     - 若任務涉及深度跨站調研、多文件批量處理或繁複代碼重構，主 agent 應優先透過 `invoke_subagent` 委派給專屬子代理在背景推進，主大腦秒級回報派發狀態，讓主人的日常生活隨問隨答永不卡頓。
-   - **跨專案 Herdr 派工、自動驗收與 Follow-up 查閱規範**：
-     - 當任務需要於其他專案目錄執行（需讀取該專案 `AGENTS.md` / 環境），或指定交給其他本機 Agent（支援 `agy` 與 `omp`）時，統一透過 `scripts/herdr_coordinator.py dispatch` 派發並登記 TaskManager 背景監控。
+   - **深度／開發／耗時任務嚴禁使用 Harness 內建 `invoke_subagent`，一律改用 Herdr 開設獨立任務**：
+     - **禁用原因**：在常駐語音／對話模式 (`agy_singleton`) 下，Harness 原生 `invoke_subagent` 初始化會阻塞當前回合十餘秒（延遲語音交還與 Metadata 顯示），且主人一旦在語音中說「等一下」觸發 Barge-in 強制取消，會連坐強制終止所有子代理。
+     - **Herdr 短效開關任務原則（開完即關）**：凡涉及深度調研、程式碼開發、編譯打包或耗時回測，無論在本專案或其他專案，一律改透過 `Herdr`（`scripts/herdr_coordinator.py dispatch` 或對應專案閒置工人）**開設獨立的任務視窗（Pane）在背景執行，並在驗收結案後自動關閉該暫時視窗**，確保主大腦零卡頓、完全免疫語音打斷，且於 iOS App 督工抽屜全程可視可控。
+   - **跨專案與本機 Herdr 派工、自動驗收與 Follow-up 查閱規範**：
+     - 需要於專案目錄執行或指定交給本機 Agent（支援 `agy` 與 `omp`）時，統一透過 `scripts/herdr_coordinator.py dispatch` 派發並登記 TaskManager 背景監控。
      - 派工全生命週期（執行中即時進度、中途卡住請示、完工結構化報告「✅ 完成項目 + 🧪 驗證結果」、原視窗多輪續派與結案歷史歸檔）統一收斂呈現於 iOS App 右上角 **Herdr 派工督工抽屜（Action Queue UI）**，不在主聊天室洗版；結案時僅透過 `/api/internal/memory-sync` 靜默同步至閒置主大腦記憶並發送背景未讀通知。
      - 現場監工（`watch_agent`）於工人提問時先透過無狀態 `agy -p` 判斷是否為常規無害工程確認（如跑測試、檢查 lint），能代答則自動 `relay` 解鎖；僅在監工也無法決定（涉及產品偏好、架構抉擇或外部副作用）時才放入待決策佇列請示主人。
      - 預設啟用無狀態 `agy -p` 驗收迴圈與失敗自動重試（`--max-retries 3`，可用 `--no-review` 關閉），支援同批次併發追蹤（`--batch-id` / `--batch-total`），並於發送前檢查目標 `agent_status` 是否忙碌。
