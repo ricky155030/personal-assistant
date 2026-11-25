@@ -687,5 +687,29 @@ def test_read_session_turns_extracts_ask_tools_for_agy_and_omp(tmp_path):
     ) is not None
 
 
+def test_record_task_to_history_and_memory_logs_chat_bubble_by_default():
+    from scripts.herdr_coordinator import record_task_to_history_and_memory
+
+    with patch("memory_manager.memory_manager.log_interaction") as mock_log, \
+         patch("urllib.request.urlopen") as mock_urlopen:
+        mock_resp = MagicMock()
+        mock_resp.__enter__.return_value = mock_resp
+        mock_urlopen.return_value = mock_resp
+
+        record_task_to_history_and_memory(
+            agent="w16:p1",
+            display_title="gemini-ai-gateway · Release v0.1.0",
+            task_prompt="發布 v0.1.0",
+            summary="✅ 完成項目\n- 已建立 v0.1.0 Release",
+            log_path="/tmp/session.jsonl",
+        )
+
+    mock_log.assert_called_once()
+    args, kwargs = mock_log.call_args
+    assert args[0] == ""
+    assert "📋 **gemini-ai-gateway · Release v0.1.0** 任務完成" in args[1]
+    assert "✅ 完成項目" in args[1]
+    assert kwargs["actions"] == ["herdr_coordinator (w16:p1)", "session_log: /tmp/session.jsonl"]
+
 
 

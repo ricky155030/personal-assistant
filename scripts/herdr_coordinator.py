@@ -1015,9 +1015,9 @@ def record_task_to_history_and_memory(
     summary: str,
     log_path: str = "",
     sync_idle_memory: bool = True,
-    log_to_chat_history: bool = False,
+    log_to_chat_history: bool = True,
 ) -> None:
-    """將 Herdr 任務成果於主大腦閒置時靜默同步摘要（預設專注於督工抽屜，不在主聊天室 history.jsonl 貼長泡泡）"""
+    """將 Herdr 任務成果寫入主聊天室氣泡 (history.jsonl)，並於主大腦閒置時靜默同步記憶摘要。"""
     if log_to_chat_history:
         try:
             from memory_manager import memory_manager
@@ -1025,8 +1025,8 @@ def record_task_to_history_and_memory(
             if log_path:
                 actions.append(f"session_log: {log_path}")
             memory_manager.log_interaction(
-                f"[Herdr 派工 · {display_title}] {task_prompt[:300]}",
-                summary,
+                "",
+                f"📋 **{display_title}** 任務完成\n\n{summary}",
                 actions=actions,
             )
         except Exception as e:
@@ -1053,7 +1053,6 @@ def record_task_to_history_and_memory(
             resp.read()
     except Exception as e:
         print(f"[HerdrCoordinator] ℹ️ 主大腦靜默記憶同步略過: {e}", file=sys.stderr)
-
 
 def update_batch_progress(
     batch_id: str,
