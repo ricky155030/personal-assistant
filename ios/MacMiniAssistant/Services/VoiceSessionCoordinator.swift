@@ -294,6 +294,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 guard !self.isSyncingHistory, (isRemoteTracking || self.messages.last?.status != .streaming) else { continue }
                 switch self.state {
                 case .transcribing, .thinkingAndStreaming, .speaking:
+                    if isRemoteTracking && self.activeStreamTask == nil {
+                        await self.syncRemoteHistory()
+                    }
                     continue
                 default:
                     await self.syncRemoteHistory()
@@ -1878,16 +1881,67 @@ public final class VoiceSessionCoordinator: ObservableObject {
         let desc = error.localizedDescription
         if desc.contains("401") {
             self.errorMessage = "身份驗證失敗 (401)：請至右上角 ⚙️ 設定頁填寫正確的 API Key"
-        } else {
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].status = .error
+            }
+            if speakThisTurn {
+                self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
+            } else {
+                self.handleQueueFinished()
+            }
+            return
+        }
+
+        // 若因 90s/網路切換/系統超時斷線，先確認後端是否仍在背景執行或已完成寫入歷史，無縫接續進度不誤判失敗
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let (_, activeTurn) = await self.apiClient.fetchHistoryWithActiveTurn(
+                limit: 10,
+                since: self.lastSyncedHistoryTimestamp
+            )
+            if let active = activeTurn {
+                self.activeStreamTask = nil
+                self.stopThinkingPulseTask()
+                self.speakingMessageId = nil
+                self.currentStreamingText = ""
+                self.activeRemoteTurnId = active.turn_id
+                self.activeRemoteAssistantMessageId = assistantMessageId
+                self.currentToolStatus = active.tools.last
+                self.errorMessage = nil
+                if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                    if !active.reply.isEmpty {
+                        self.messages[idx].content = active.reply
+                    }
+                    if !active.thought.isEmpty {
+                        self.messages[idx].thoughtProcess = active.thought
+                    }
+                    if !active.tools.isEmpty {
+                        self.messages[idx].toolHistory = active.tools
+                    }
+                    self.messages[idx].status = .streaming
+                }
+                self.state = .idle
+                await self.syncRemoteHistory()
+                return
+            }
+
+            await self.syncRemoteHistory()
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }),
+               self.messages[idx].status == .completed {
+                self.errorMessage = nil
+                self.handleQueueFinished()
+                return
+            }
+
             self.errorMessage = "串流中斷: \(desc)"
-        }
-        if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
-            self.messages[idx].status = .error
-        }
-        if speakThisTurn {
-            self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
-        } else {
-            self.handleQueueFinished()
+            if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].status = .error
+            }
+            if speakThisTurn {
+                self.speechPlayer.handleStreamInterruption(currentText: self.currentStreamingText)
+            } else {
+                self.handleQueueFinished()
+            }
         }
     }
 

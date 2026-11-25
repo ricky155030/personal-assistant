@@ -1043,7 +1043,9 @@ async def voice_chat_stream(
                     brain_router.cancel_active_turns(level=level)
                     break
 
-                if ev_type == "thought":
+                if ev_type in ("heartbeat", "tool_done"):
+                    _TURN_QUEUE.update_active(active_turn_id)
+                elif ev_type == "thought":
                     _TURN_QUEUE.update_active(active_turn_id, thought_delta=ev_data)
                     loop.call_soon_threadsafe(
                         event_queue.put_nowait,

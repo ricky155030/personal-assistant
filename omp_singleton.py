@@ -21,6 +21,9 @@ from widget_html_utils import extract_rich_blocks
 
 _clean_query_for_history = clean_query_for_history
 
+OMP_STREAM_IDLE_TIMEOUT_SEC = max(30.0, float(os.getenv("OMP_STREAM_IDLE_TIMEOUT_SEC", "300")))
+OMP_STREAM_MAX_TOTAL_SEC = max(OMP_STREAM_IDLE_TIMEOUT_SEC, float(os.getenv("OMP_STREAM_MAX_TOTAL_SEC", "1800")))
+
 
 def _finalize_reply_and_metadata(raw_reply: str, metadata: dict) -> str:
     """抽離 <widget_html> 與 <image_urls> 區塊並寫入 metadata，避免原始標籤污染 history.jsonl。"""
@@ -881,6 +884,7 @@ class OmpResidentWorker:
                 }
             )
         start_t = time.perf_counter()
+        last_activity_t = start_t
         last_heartbeat_t = start_t
         first_token_t: Optional[float] = None
         reply_parts: List[str] = []
@@ -888,11 +892,15 @@ class OmpResidentWorker:
         turn_usage: dict = {}
         turn_cost_usd = 0.0
         was_cancelled = False
+        timed_out = False
+        timeout_reason = ""
+        timed_out_by_idle = False
         tool_calls_count = 0
         tool_labels_by_id: dict[str, str] = {}
+        idle_limit = float(OMP_STREAM_IDLE_TIMEOUT_SEC)
+        max_total_limit = float(OMP_STREAM_MAX_TOTAL_SEC)
         try:
-            deadline = time.time() + 600.0
-            while time.time() < deadline:
+            while True:
                 if self._cancel_requested:
                     was_cancelled = True
                     break
@@ -902,14 +910,39 @@ class OmpResidentWorker:
                     if self.proc is None or self.proc.poll() is not None:
                         break
                     now_hb = time.perf_counter()
+                    idle_elapsed = now_hb - last_activity_t
+                    total_elapsed = now_hb - start_t
+                    if idle_elapsed >= idle_limit or total_elapsed >= max_total_limit:
+                        timed_out = True
+                        timed_out_by_idle = idle_elapsed >= idle_limit
+                        timeout_reason = (
+                            f"無活動達 {idle_elapsed:.0f}s"
+                            if timed_out_by_idle
+                            else f"總執行時長達 {total_elapsed:.0f}s"
+                        )
+                        print(
+                            f"[OmpResident] ⚠️ 串流逾時 ({timeout_reason}, idle_limit={idle_limit:.0f}s, max_total={max_total_limit:.0f}s)，主動中止本輪..."
+                        )
+                        try:
+                            self._send_rpc(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "method": "session/cancel",
+                                    "params": {"sessionId": self.session_id},
+                                }
+                            )
+                        except Exception:
+                            pass
+                        break
                     if now_hb - last_heartbeat_t >= 15.0:
                         last_heartbeat_t = now_hb
                         yield ("heartbeat", "")
                     continue
                 if msg is None:
                     break
-                last_heartbeat_t = time.perf_counter()
                 if msg.get("id") == req_id and ("result" in msg or "error" in msg):
+                    last_activity_t = time.perf_counter()
+                    last_heartbeat_t = last_activity_t
                     if "error" in msg:
                         raise RuntimeError(f"OMP ACP prompt 錯誤: {msg['error']}")
                     result = msg.get("result", {}) or {}
@@ -936,6 +969,8 @@ class OmpResidentWorker:
                     params = msg.get("params", {}) or {}
                     if params.get("sessionId") != self.session_id:
                         continue
+                    last_activity_t = time.perf_counter()
+                    last_heartbeat_t = last_activity_t
                     update = params.get("update", {}) or {}
                     kind = str(update.get("sessionUpdate") or "")
                     if kind == "agent_message_chunk":
@@ -1043,8 +1078,33 @@ class OmpResidentWorker:
             "estimated_cost_usd": turn_cost_usd,
             "engine": "omp-resident",
         }
+        if timed_out:
+            timeout_note = f"助理處理逾時（{timeout_reason}），請再試一次。"
+            prefix_note = f"\n\n{timeout_note}" if reply_parts else timeout_note
+            reply_parts.append(prefix_note)
+            yield ("text", prefix_note)
+            if timed_out_by_idle:
+                self.restart(force_new_session=False)
         clean_reply = _finalize_reply_and_metadata("".join(reply_parts).strip(), metadata)
-        quick_replies = _quick_replies_for(clean_reply, user_query=query, was_cancelled=was_cancelled)
+        quick_replies = _quick_replies_for(
+            clean_reply,
+            user_query=query,
+            was_cancelled=was_cancelled or timed_out,
+        )
+        if timed_out:
+            return {
+                "status": "TIMEOUT",
+                "error": "stream_timeout",
+                "clean_reply": clean_reply,
+                "thought": full_thought,
+                "actions": [f"engine:omp-resident ({self.model})"],
+                "total_latency": total_latency,
+                "time_to_first_token": ttft,
+                "thinking_level": level_norm,
+                "model": self.model,
+                "metadata": metadata,
+                "quick_replies": quick_replies,
+            }
         if was_cancelled and not clean_reply:
             return {
                 "status": "CANCELLED",

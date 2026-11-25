@@ -993,3 +993,95 @@ def test_omp_brain_engine_compact_session_updates_tokens_and_handles_busy():
     status = engine.get_status()
     assert status["current_tokens"] == 21500
     assert status["usage"]["context_tokens"] == 21500
+
+
+def test_omp_resident_extends_timeout_on_active_events_and_cancels_on_idle_timeout(monkeypatch):
+    import threading
+    import time
+    import omp_singleton
+
+    monkeypatch.setattr(omp_singleton, "OMP_STREAM_IDLE_TIMEOUT_SEC", 0.25)
+    monkeypatch.setattr(omp_singleton, "OMP_STREAM_MAX_TOTAL_SEC", 2.0)
+
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-2/gemini-4-hydrogen")
+    worker._is_ready = True
+    worker.session_id = "sess-sliding-timeout"
+    worker._save_session_state = lambda: None
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+
+    # 1. 總時長 (> 0.25s) 超過單段閒置門檻，但期間有持續 tool_call 更新續命 -> 應正常完成
+    def active_send_rpc(payload):
+        req_id = payload["id"]
+
+        def producer():
+            for i in range(4):
+                time.sleep(0.1)
+                worker.stdout_queue.put({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "sess-sliding-timeout",
+                        "update": {
+                            "sessionUpdate": "tool_call",
+                            "toolCallId": f"tc-{i}",
+                            "title": f"step-{i}",
+                            "status": "pending",
+                        },
+                    },
+                })
+            time.sleep(0.05)
+            worker.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "sess-sliding-timeout",
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": "活躍長任務完成"},
+                    },
+                },
+            })
+            worker.stdout_queue.put({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+
+        threading.Thread(target=producer, daemon=True).start()
+
+    worker._send_rpc = active_send_rpc
+    events = []
+    result = None
+    gen = worker.send_query_stream("long active task", level="hydrogen:medium")
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration as stop:
+        result = stop.value
+
+    assert result["status"] == "OK"
+    assert result["clean_reply"] == "活躍長任務完成"
+
+    # 2. 完全無活動超過 idle_limit -> 主動送 session/cancel 並回傳 TIMEOUT，不再回空字串 OK
+    sent_rpcs = []
+    restarted = []
+    worker.restart = lambda force_new_session=False: restarted.append(force_new_session)
+
+    def hang_send_rpc(payload):
+        sent_rpcs.append(payload)
+
+    worker._send_rpc = hang_send_rpc
+    timeout_events = []
+    timeout_res = None
+    gen2 = worker.send_query_stream("hung task", level="hydrogen:medium")
+    try:
+        while True:
+            timeout_events.append(next(gen2))
+    except StopIteration as stop:
+        timeout_res = stop.value
+
+    assert timeout_res["status"] == "TIMEOUT"
+    assert any(p.get("method") == "session/cancel" for p in sent_rpcs)
+    assert "逾時" in timeout_res["clean_reply"]
+    assert restarted == [False]

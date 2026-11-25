@@ -28,6 +28,7 @@ public final class MacMiniAPIClient {
     }
 
     private let session: URLSession
+    private let sseSession: URLSession
 
     public init() {
         let config = URLSessionConfiguration.default
@@ -36,6 +37,13 @@ public final class MacMiniAPIClient {
         config.waitsForConnectivity = true
         config.httpShouldUsePipelining = false
         self.session = URLSession(configuration: config)
+
+        let sseConfig = URLSessionConfiguration.default
+        sseConfig.timeoutIntervalForRequest = 90.0
+        sseConfig.timeoutIntervalForResource = 3600.0
+        sseConfig.waitsForConnectivity = true
+        sseConfig.httpShouldUsePipelining = false
+        self.sseSession = URLSession(configuration: sseConfig)
 
         // 啟動時同步既有設定至 AppGroupStore，供 Share Extension 直接取用
         if let url = defaults.string(forKey: serverURLKey), !url.isEmpty {
@@ -402,7 +410,7 @@ public final class MacMiniAPIClient {
                             try? await Task.sleep(nanoseconds: UInt64(250_000_000 * attempt))
                         }
                         do {
-                            let (bytes, resp) = try await self.session.bytes(for: request)
+                            let (bytes, resp) = try await self.sseSession.bytes(for: request)
                             if let httpResp = resp as? HTTPURLResponse, httpResp.statusCode == 200 {
                                 asyncBytes = bytes
                                 streamConnectError = nil

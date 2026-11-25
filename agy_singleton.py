@@ -1029,6 +1029,7 @@ class AgyWorker:
             full_thought_parts = []
             turn_result = {}
             last_data_time = time.perf_counter()
+            last_heartbeat_t = last_data_time
             active_tools = 0
             total_tool_calls = 0
             was_cancelled = False
@@ -1040,10 +1041,11 @@ class AgyWorker:
                     except queue.Empty:
                         if self._cancel_requested:
                             was_cancelled = True
-                        time_since_last_data = time.perf_counter() - last_data_time
-                        total_time = time.perf_counter() - start_t
-                        is_idle_timeout = time_since_last_data > 120.0
-                        is_total_timeout = total_time > 600.0 and time_since_last_data > 30.0
+                        now_hb = time.perf_counter()
+                        time_since_last_data = now_hb - last_data_time
+                        total_time = now_hb - start_t
+                        is_idle_timeout = time_since_last_data > 300.0
+                        is_total_timeout = total_time > 1800.0 and time_since_last_data > 30.0
                         if is_idle_timeout or is_total_timeout:
                             if full_reply_parts and active_tools == 0:
                                 print(f"[AgyWorker:{self.name.upper()}] ℹ️ 已有文字回覆且無進行中工具，正常結束本次 turn")
@@ -1052,12 +1054,16 @@ class AgyWorker:
                             self._restart_unlocked(force_new_session=False)
                             yield ("text", "助理處理逾時，已自動重啟重連，請再試一次。")
                             return {"status": "TIMEOUT", "error": "stream_timeout"}
+                        if now_hb - last_heartbeat_t >= 15.0:
+                            last_heartbeat_t = now_hb
+                            yield ("heartbeat", "")
                         continue
 
                     if msg is None:
                         break
 
                     last_data_time = time.perf_counter()
+                    last_heartbeat_t = last_data_time
 
                     # 1. 處理 ACP session/update 串流通知
                     if msg.get("method") == "session/update":

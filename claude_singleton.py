@@ -546,7 +546,7 @@ class ClaudeWorker:
                 except queue.Empty:
                     time_since_last_data = time.perf_counter() - last_data_time
                     total_time = time.perf_counter() - start_t
-                    if time_since_last_data > 120.0 or (total_time > 600.0 and time_since_last_data > 30.0):
+                    if time_since_last_data > 300.0 or (total_time > 1800.0 and time_since_last_data > 30.0):
                         print(f"[ClaudeWorker:{self.name.upper()}] ⚠️ 超時，自動重啟...")
                         self._restart_unlocked()
                         yield ("text", "助理處理逾時，已自動重啟重連，請再試一次。")
