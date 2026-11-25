@@ -3487,14 +3487,14 @@ struct QuotaDetailSheetView: View {
                 ScrollView {
                     VStack(spacing: 14) {
                         if coordinator.selectedEngineId == "omp" {
-                            ompGatewaysSection
+                            ompGatewaysCard
                         }
 
-                        // 1. AGY 標準 5 小時 / 7 天對稱雙欄配額卡片 (已合併 Argon，移除獨立 Claude/Argon)
+                        // 1. AGY 標準 5 小時 / 7 天對稱雙欄配額卡片
                         agySymmetricQuotaCard
 
                         if coordinator.selectedEngineId != "omp" && !snap.gateways.isEmpty {
-                            ompGatewaysSection
+                            ompGatewaysCard
                         }
 
                         // 2. Prompt / Flow Credits 配額卡片
@@ -3539,35 +3539,54 @@ struct QuotaDetailSheetView: View {
     }
 
     @ViewBuilder
-    private var ompGatewaysSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var ompGatewaysCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("OMP Gateway 配額 (5h / 7d)", systemImage: "server.rack")
+                Label("OMP Gateway 配額", systemImage: "server.rack")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                 Spacer()
                 Text("\(snap.gateways.count) 節點")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.blue.opacity(0.2))
+                    .foregroundColor(.cyan)
+                    .cornerRadius(6)
             }
+
+            Divider()
+                .background(Color.white.opacity(0.08))
 
             if snap.gateways.isEmpty {
                 Text("尚未偵測到 gemini-gw-* 節點設定")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.05))
-                    .cornerRadius(12)
             } else {
-                ForEach(snap.gateways) { gw in
-                    gatewayQuotaCard(gw)
+                VStack(spacing: 12) {
+                    ForEach(Array(snap.gateways.enumerated()), id: \.element.id) { idx, gw in
+                        if idx > 0 {
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                        }
+                        gatewayQuotaRow(gw)
+                    }
                 }
             }
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
-    private func gatewayQuotaCard(_ gw: GatewayQuotaItem) -> some View {
+    private func gatewayQuotaRow(_ gw: GatewayQuotaItem) -> some View {
         let statusLabel: String = {
             if !gw.online { return "離線" }
             if !gw.hasUsage { return "未開用量頁" }
@@ -3576,11 +3595,13 @@ struct QuotaDetailSheetView: View {
         let statusColor: Color = !gw.online ? .red : (gw.hasUsage ? .green : .orange)
         let pct5h = gw.rolling5hRemainingPct
         let pct7d = gw.weeklyRemainingPct
+        let color5h: Color = pct5h != nil ? (pct5h! >= 50 ? .cyan : (pct5h! >= 20 ? .orange : .red)) : .secondary
+        let color7d: Color = pct7d != nil ? (pct7d! >= 50 ? .green : (pct7d! >= 20 ? .orange : .red)) : .secondary
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(gw.label)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13.5, weight: .bold))
                     .foregroundColor(.white)
                 Spacer()
                 Text(statusLabel)
@@ -3593,48 +3614,29 @@ struct QuotaDetailSheetView: View {
             }
 
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("5 小時")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(pct5h != nil ? String(format: "%.0f%%", pct5h!) : "--%")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundColor(pct5h != nil ? (pct5h! >= 50 ? .cyan : (pct5h! >= 20 ? .orange : .red)) : .secondary)
-                    }
-                    ProgressView(value: min(max((pct5h ?? 0) / 100.0, 0.0), 1.0))
-                        .tint(pct5h != nil ? .cyan : .gray)
-                    Text("重設：\(gw.rolling5hRefreshesIn)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
+                symmetricOptionalQuotaColumn(
+                    icon: "bolt.circle.fill",
+                    title: "5 小時配額",
+                    percent: pct5h,
+                    resetText: gw.rolling5hRefreshesIn,
+                    taipeiTime: "",
+                    color: color5h
+                )
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("7 天週期")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(pct7d != nil ? String(format: "%.0f%%", pct7d!) : "--%")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundColor(pct7d != nil ? (pct7d! >= 50 ? .green : (pct7d! >= 20 ? .orange : .red)) : .secondary)
-                    }
-                    ProgressView(value: min(max((pct7d ?? 0) / 100.0, 0.0), 1.0))
-                        .tint(pct7d != nil ? .green : .gray)
-                    Text("重設：\(gw.weeklyRefreshesIn)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
+                Divider()
+                    .frame(height: 62)
+                    .background(Color.white.opacity(0.08))
+
+                symmetricOptionalQuotaColumn(
+                    icon: "calendar.badge.clock",
+                    title: "7 天週配額",
+                    percent: pct7d,
+                    resetText: gw.weeklyRefreshesIn,
+                    taipeiTime: "",
+                    color: color7d
+                )
             }
         }
-        .padding(14)
-        .background(Color.white.opacity(0.05))
-        .cornerRadius(14)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
     }
 
     private var agySymmetricQuotaCard: some View {
@@ -3740,6 +3742,52 @@ struct QuotaDetailSheetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func symmetricOptionalQuotaColumn(
+        icon: String,
+        title: String,
+        percent: Double?,
+        resetText: String,
+        taipeiTime: String,
+        color: Color
+    ) -> some View {
+        let resolvedPct = percent ?? 0.0
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(Color(white: 0.78))
+                    .lineLimit(1)
+                Spacer()
+                Text(percent != nil ? String(format: "%.1f%%", percent!) : "--%")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(color)
+                    .monospacedDigit()
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.1))
+                        .frame(height: 7)
+                    Capsule()
+                        .fill(percent != nil ? color : Color.gray.opacity(0.35))
+                        .frame(width: max(6, geo.size.width * CGFloat(min(1.0, max(0.0, resolvedPct / 100.0)))), height: 7)
+                }
+            }
+            .frame(height: 7)
+
+            Text("重設：\(resetText)" + (taipeiTime.isEmpty ? "" : " (\(taipeiTime))"))
+                .font(.system(size: 10.5))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var creditsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -3799,6 +3847,10 @@ struct QuotaDetailSheetView: View {
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
@@ -3917,6 +3969,10 @@ struct QuotaDetailSheetView: View {
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
 
