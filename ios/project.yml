@@ -10,7 +10,7 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: "T25G5Y2426"
-    MARKETING_VERSION: "1.7.1"
+    MARKETING_VERSION: "1.7.2"
 
 targets:
   MacMiniAssistant:
