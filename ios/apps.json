@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.7.0",
+          "buildVersion": "180",
+          "date": "2026-11-25T05:06:56Z",
+          "localizedDescription": "OMP Gateway 配額卡改為 5 小時/7 天對稱欄位，並支援各別 Gateway 顯示快取更新時間與過期標示",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.7.0/MacMiniAssistant.ipa",
+          "size": 4915809,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.6.1",
-          "buildVersion": "178",
-          "date": "2026-11-25T01:10:13Z",
-          "localizedDescription": "feat(ios): unify OMP Gateway quota card layout with symmetric 5h/7d columns",
+          "buildVersion": "179",
+          "date": "2026-11-25T03:19:59Z",
+          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.6.1/MacMiniAssistant.ipa",
-          "size": 4908723,
+          "size": 4915814,
           "minOSVersion": "17.0"
         },
         {
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.1/MacMiniAssistant.ipa",
           "size": 4523551,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.3.0",
-          "buildVersion": "156",
-          "date": "2026-11-21T13:22:58Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.0/MacMiniAssistant.ipa",
-          "size": 4544859,
           "minOSVersion": "17.0"
         }
       ]
