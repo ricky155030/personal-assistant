@@ -13,12 +13,21 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.6.1",
+          "buildVersion": "178",
+          "date": "2026-11-25T01:10:13Z",
+          "localizedDescription": "feat(ios): unify OMP Gateway quota card layout with symmetric 5h/7d columns",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.6.1/MacMiniAssistant.ipa",
+          "size": 4908723,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.6.0",
-          "buildVersion": "176",
-          "date": "2026-11-24T23:47:17Z",
-          "localizedDescription": "新增 New Session 重開對話按鈕、Gemini GW 5h/7d 配額整合，並簡化 AGY 配額卡片為對稱雙欄",
+          "buildVersion": "177",
+          "date": "2026-11-25T01:09:51Z",
+          "localizedDescription": "test omp gateway quota card layout",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.6.0/MacMiniAssistant.ipa",
-          "size": 4893624,
+          "size": 4908720,
           "minOSVersion": "17.0"
         },
         {
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.0/MacMiniAssistant.ipa",
           "size": 4544859,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.2.1",
-          "buildVersion": "154",
-          "date": "2026-11-21T13:17:20Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.2.1/MacMiniAssistant.ipa",
-          "size": 4527698,
           "minOSVersion": "17.0"
         }
       ]
