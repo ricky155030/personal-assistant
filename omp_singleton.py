@@ -42,6 +42,33 @@ def _quick_replies_for(clean_reply: str, user_query: str = "", was_cancelled: bo
         return []
 
 
+def _estimate_omp_turn_cost(model: str, usage: Optional[dict]) -> float:
+    """依據模型定價與 Token 用量估算單輪花費 (USD)，優先復用 agy_singleton 定價表。"""
+    if not usage:
+        return 0.0
+    try:
+        from agy_singleton import _estimate_turn_cost_usd
+        return _estimate_turn_cost_usd(model, usage)
+    except Exception:
+        inp = max(0, int(usage.get("input_tokens", 0) or 0))
+        c_read = max(0, int(usage.get("cached_read_tokens", 0) or 0))
+        out = max(0, int(usage.get("output_tokens", 0) or 0))
+        thought = max(0, int(usage.get("thought_tokens", 0) or 0))
+        return round((inp * 2.00 + c_read * 0.20 + (out + thought) * 12.00) / 1_000_000.0, 6)
+
+
+def _format_metadata_thinking_level(raw_level: Optional[str], active_level: Optional[str] = None) -> str:
+    """標準化寫入 metadata 的思考深度標籤（low / med / high / xhigh 等）。"""
+    val = (active_level or raw_level or "med").strip().lower()
+    if ":" in val:
+        val = val.split(":", 1)[1].strip()
+    if val == "medium":
+        return "med"
+    if val == "max":
+        return "xhigh"
+    return val or "med"
+
+
 
 def _load_agents_md_text() -> str:
     try:
@@ -209,6 +236,7 @@ class OmpResidentWorker:
 
     def __init__(self, model: str) -> None:
         self.model = model
+        self.thinking_level: Optional[str] = None
         self.proc: Optional[subprocess.Popen] = None
         self.session_id: Optional[str] = None
         self.lock = threading.RLock()
@@ -278,6 +306,7 @@ class OmpResidentWorker:
                         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "last_tokens": self.last_tokens,
                         "last_model": self.model,
+                        "last_thinking_level": self.thinking_level,
                         "last_usage": self.last_usage,
                     },
                     ensure_ascii=False,
@@ -450,9 +479,10 @@ class OmpResidentWorker:
                 self.last_cost_usd = 0.0
             if not self.session_id:
                 raise RuntimeError("OMP ACP 未能取得有效 sessionId")
-            self._set_model_unlocked(self.model, log_switch=False)
-            elapsed = time.time() - t0
+            self.thinking_level = None
             self._is_ready = True
+            self._set_model_unlocked(self.model, force=True, log_switch=False)
+            elapsed = time.time() - t0
             self._save_session_state()
             print(
                 f"[OmpResident] ✅ 常駐進程就緒！耗時 {elapsed:.2f}s | Session: {self.session_id[:8]} | 模型: {self.model}"
@@ -507,30 +537,118 @@ class OmpResidentWorker:
                         collected.append(delta)
         return "".join(collected).strip()
 
-    def _set_model_unlocked(self, target_model: str, log_switch: bool = True) -> bool:
+    def _set_model_unlocked(self, target_model: str, log_switch: bool = True, force: bool = False) -> bool:
         if not target_model:
             return False
-        if target_model == self.model and self._is_ready:
+        if not force and target_model == self.model and self._is_ready:
             return True
         old_model = self.model
-        if self.proc is not None and self.proc.poll() is None and self._is_ready and not self.is_busy:
+        if (
+            self.proc is not None
+            and self.proc.poll() is None
+            and self._is_ready
+            and self.session_id
+            and not self.is_busy
+        ):
+            switched = False
             try:
-                switch_out = self._run_internal_prompt(f"/switch {target_model}", timeout=60.0)
-            except Exception as ex:
-                print(f"[OmpResident] ⚠️ /switch 指令發送失敗: {ex}")
-                return False
-            if "Failed to switch" in switch_out or "No API key" in switch_out:
-                print(f"[OmpResident] ⚠️ 模型切換失敗，沿用 {old_model}: {switch_out[:120]}")
-                return False
+                req_id = self._next_rpc_id()
+                self._send_rpc(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "method": "session/set_config_option",
+                        "params": {
+                            "sessionId": self.session_id,
+                            "configId": "model",
+                            "value": target_model,
+                        },
+                    }
+                )
+                self._wait_for_rpc_response(req_id, timeout=15.0)
+                switched = True
+            except Exception as cfg_ex:
+                print(f"[OmpResident] ℹ️ set_config_option(model) 失敗，改用 /switch: {cfg_ex}")
+            if not switched:
+                try:
+                    switch_out = self._run_internal_prompt(f"/switch {target_model}", timeout=60.0)
+                except Exception as ex:
+                    print(f"[OmpResident] ⚠️ /switch 指令發送失敗: {ex}")
+                    return False
+                if "Failed to switch" in switch_out or "No API key" in switch_out:
+                    print(f"[OmpResident] ⚠️ 模型切換失敗，沿用 {old_model}: {switch_out[:120]}")
+                    return False
             self.model = target_model
+            self.thinking_level = None
             self._save_session_state()
             if log_switch:
                 print(f"[OmpResident] 🔀 同 Session 模型切換: {old_model} ➔ {target_model}")
             return True
         self.model = target_model
+        self.thinking_level = None
         if log_switch:
             print(f"[OmpResident] 🔀 常駐模型切換: {old_model} ➔ {target_model}")
         return self._is_ready
+
+    @staticmethod
+    def _normalize_thinking_level(level: Optional[str]) -> Optional[str]:
+        if not level:
+            return None
+        norm = str(level).strip().lower()
+        if ":" in norm:
+            norm = norm.split(":", 1)[1].strip()
+        mapping = {
+            "off": "off",
+            "none": "off",
+            "minimal": "minimal",
+            "low": "low",
+            "med": "medium",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "xhigh",
+            "auto": "auto",
+        }
+        return mapping.get(norm)
+
+    def _set_thinking_level_unlocked(self, level: Optional[str], log_switch: bool = True) -> bool:
+        target = self._normalize_thinking_level(level)
+        if not target:
+            return False
+        if target == self.thinking_level and self._is_ready:
+            return True
+        if (
+            self.proc is not None
+            and self.proc.poll() is None
+            and self._is_ready
+            and self.session_id
+            and not self.is_busy
+        ):
+            old_level = self.thinking_level
+            try:
+                req_id = self._next_rpc_id()
+                self._send_rpc(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "method": "session/set_config_option",
+                        "params": {
+                            "sessionId": self.session_id,
+                            "configId": "thinking",
+                            "value": target,
+                        },
+                    }
+                )
+                self._wait_for_rpc_response(req_id, timeout=15.0)
+                self.thinking_level = target
+                self._save_session_state()
+                if log_switch and old_level != target:
+                    print(f"[OmpResident] 🧠 同 Session 思考程度切換: {old_level or 'default'} ➔ {target}")
+                return True
+            except Exception as ex:
+                print(f"[OmpResident] ⚠️ 思考程度切換失敗 ({target}): {ex}")
+                return False
+        return False
 
     def stop(self) -> None:
         with self.lock:
@@ -624,6 +742,8 @@ class OmpResidentWorker:
                 self._set_model_unlocked(target_model, log_switch=True)
             else:
                 self.model = target_model
+            if level:
+                self._set_thinking_level_unlocked(level, log_switch=True)
             while not self.stdout_queue.empty():
                 try:
                     self.stdout_queue.get_nowait()
@@ -632,12 +752,8 @@ class OmpResidentWorker:
             req_id = self._next_rpc_id()
             self._active_turn_id = req_id
             self._cancel_requested = False
+            # omp acp 啟動時已自動由 cwd 載入專案 AGENTS.md 至系統 <repo-rules>，不再重複注入 [USER] 訊息
             prompt_text = query
-            if not getattr(self, "_agents_injected", False):
-                agents_doc = _load_agents_md_text()
-                if agents_doc:
-                    prompt_text = f"[系統行為規範（AGENTS.md）]\n{agents_doc}\n[規範結束]\n\n{query}"
-                self._agents_injected = True
             self._send_rpc(
                 {
                     "jsonrpc": "2.0",
@@ -674,12 +790,19 @@ class OmpResidentWorker:
                     result = msg.get("result", {}) or {}
                     usage = result.get("usage") or {}
                     if usage:
+                        in_tok = int(usage.get("inputTokens", 0) or 0)
+                        out_tok = int(usage.get("outputTokens", 0) or 0)
+                        thought_tok = int(usage.get("thoughtTokens", 0) or 0)
+                        cache_tok = int(usage.get("cachedReadTokens", 0) or 0)
+                        total_tok = int(usage.get("totalTokens", 0) or 0) or (
+                            in_tok + out_tok + thought_tok + cache_tok
+                        )
                         turn_usage = {
-                            "input_tokens": int(usage.get("inputTokens", 0) or 0),
-                            "output_tokens": int(usage.get("outputTokens", 0) or 0),
-                            "thought_tokens": int(usage.get("thoughtTokens", 0) or 0),
-                            "cached_read_tokens": int(usage.get("cachedReadTokens", 0) or 0),
-                            "total_tokens": int(usage.get("totalTokens", 0) or 0),
+                            "input_tokens": in_tok,
+                            "output_tokens": out_tok,
+                            "thought_tokens": thought_tok,
+                            "cached_read_tokens": cache_tok,
+                            "total_tokens": total_tok,
                         }
                     if result.get("stopReason") == "cancelled":
                         was_cancelled = True
@@ -740,11 +863,14 @@ class OmpResidentWorker:
         full_thought = "".join(thought_parts).strip()
         if turn_usage and turn_usage.get("total_tokens"):
             self.last_tokens = int(turn_usage["total_tokens"])
-            self.last_cost_usd = turn_cost_usd
         self.last_usage = dict(turn_usage) if turn_usage else {"total_tokens": self.last_tokens}
         self.last_usage["context_tokens"] = self.last_tokens
+        if turn_cost_usd <= 0 and turn_usage:
+            turn_cost_usd = _estimate_omp_turn_cost(self.model, turn_usage)
+        if turn_cost_usd > 0 or (turn_usage and turn_usage.get("total_tokens")):
+            self.last_cost_usd = turn_cost_usd
         self._save_session_state()
-        level_norm = level or "med"
+        level_norm = _format_metadata_thinking_level(level, self.thinking_level)
         metadata = {
             "model": self.model,
             "thinking_level": level_norm,
@@ -1136,7 +1262,9 @@ class OmpBrainEngine(BaseBrainEngine):
         total_latency = time.perf_counter() - start_t
         ttft = (first_token_t - start_t) if first_token_t else total_latency
         clean_reply = "".join(reply_parts).strip()
-        level_norm = level or "med"
+        level_norm = _format_metadata_thinking_level(level)
+        if turn_cost_usd <= 0 and turn_usage:
+            turn_cost_usd = _estimate_omp_turn_cost(chosen_model, turn_usage)
         metadata = {
             "model": chosen_model,
             "thinking_level": level_norm,

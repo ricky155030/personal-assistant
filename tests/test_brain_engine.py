@@ -635,3 +635,169 @@ def test_omp_models_yml_fallback_parser():
         {"id": "gemini-4-hydrogen", "name": "Gemini 4 Hydrogen (GW-1)"},
         {"id": "gemini-web", "name": "Gemini Web (GW-1)"},
     ]
+
+
+def test_omp_resident_syncs_thinking_level_via_acp_config_option():
+    import omp_singleton
+
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-1/gemini-4-hydrogen")
+    worker._is_ready = True
+    worker.session_id = "sess-think-1"
+    worker._agents_injected = True
+    worker._save_session_state = lambda: None
+    worker._build_prompt_blocks = lambda q, media=None: [{"type": "text", "text": q}]
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+    sent_rpcs = []
+
+    def fake_send_rpc(payload):
+        sent_rpcs.append(payload)
+        req_id = payload["id"]
+        method = payload.get("method")
+        if method == "session/set_config_option":
+            worker.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"configOptions": [{"id": "thinking", "currentValue": payload["params"]["value"]}]},
+            })
+        elif method == "session/prompt":
+            worker.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": "sess-think-1", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}}},
+            })
+            worker.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"stopReason": "end_turn", "usage": {"inputTokens": 10, "outputTokens": 5}},
+            })
+
+    worker._send_rpc = fake_send_rpc
+
+    # Turn 1: med -> should call session/set_config_option(configId="thinking", value="medium")
+    for _ in worker.send_query_stream("q1", level="med"):
+        pass
+    # Turn 2: same level med -> should NOT send duplicate set_config_option
+    for _ in worker.send_query_stream("q2", level="medium"):
+        pass
+    # Turn 3: high -> should call session/set_config_option(configId="thinking", value="high")
+    for _ in worker.send_query_stream("q3", level="high"):
+        pass
+
+    config_calls = [p for p in sent_rpcs if p.get("method") == "session/set_config_option"]
+    assert len(config_calls) == 2
+    assert config_calls[0]["params"] == {"sessionId": "sess-think-1", "configId": "thinking", "value": "medium"}
+    assert config_calls[1]["params"] == {"sessionId": "sess-think-1", "configId": "thinking", "value": "high"}
+    assert worker.thinking_level == "high"
+
+    # Turn 4: switch model -> should call set_config_option(model) AND re-sync thinking even if level is still high
+    for _ in worker.send_query_stream("q4", level="high", model_override="Gemini-GW-1/gemini-4-neon"):
+        pass
+
+    config_calls_after = [p for p in sent_rpcs if p.get("method") == "session/set_config_option"]
+    assert len(config_calls_after) == 4
+    assert config_calls_after[2]["params"] == {
+        "sessionId": "sess-think-1",
+        "configId": "model",
+        "value": "Gemini-GW-1/gemini-4-neon",
+    }
+    assert config_calls_after[3]["params"] == {
+        "sessionId": "sess-think-1",
+        "configId": "thinking",
+        "value": "high",
+    }
+    assert worker.model == "Gemini-GW-1/gemini-4-neon"
+
+    # Force startup model sync (same model name after session/resume)
+    assert worker._set_model_unlocked("Gemini-GW-1/gemini-4-neon", force=True, log_switch=False) is True
+    assert sent_rpcs[-1]["params"] == {
+        "sessionId": "sess-think-1",
+        "configId": "model",
+        "value": "Gemini-GW-1/gemini-4-neon",
+    }
+
+    # Ensure AGENTS.md is not redundantly injected into user prompts (omp loads it natively into system prompt)
+    worker2 = omp_singleton.OmpResidentWorker("Gemini-GW-1/gemini-4-hydrogen")
+    worker2._is_ready = True
+    worker2.session_id = "sess-no-dup-agents"
+    worker2._save_session_state = lambda: None
+    worker2.proc = DummyProc()
+    prompt_texts = []
+
+    def fake_send_rpc2(payload):
+        if payload.get("method") == "session/prompt":
+            blocks = payload["params"].get("prompt") or []
+            prompt_texts.extend(b.get("text", "") for b in blocks if isinstance(b, dict))
+            worker2.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"stopReason": "end_turn", "usage": {"inputTokens": 5, "outputTokens": 2}},
+            })
+
+    worker2._send_rpc = fake_send_rpc2
+    for _ in worker2.send_query_stream("hello clean"):
+        pass
+    assert prompt_texts == ["hello clean"]
+
+
+def test_omp_resident_computes_estimated_cost_and_thinking_level_metadata():
+    import omp_singleton
+
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-1/gemini-4-hydrogen")
+    worker._is_ready = True
+    worker.session_id = "sess-meta-1"
+    worker._next_rpc_id = lambda: 55
+    worker._save_session_state = lambda: None
+    worker._build_prompt_blocks = lambda q, media=None: [{"type": "text", "text": q}]
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+
+    def fake_send_rpc(payload):
+        req_id = payload["id"]
+        if payload.get("method") == "session/set_config_option":
+            worker.stdout_queue.put({"jsonrpc": "2.0", "id": req_id, "result": {}})
+            return
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {"sessionId": "sess-meta-1", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "done"}}},
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "stopReason": "end_turn",
+                "usage": {
+                    "inputTokens": 10000,
+                    "outputTokens": 500,
+                    "thoughtTokens": 1500,
+                    "cachedReadTokens": 50000,
+                },
+            },
+        })
+
+    worker._send_rpc = fake_send_rpc
+
+    gen = worker.send_query_stream("test cost", level="hydrogen:high")
+    result = None
+    try:
+        while True:
+            next(gen)
+    except StopIteration as stop:
+        result = stop.value
+
+    assert result is not None
+    meta = result["metadata"]
+    assert meta["model"] == "Gemini-GW-1/gemini-4-hydrogen"
+    assert meta["thinking_level"] == "high"
+    assert meta["usage"]["total_tokens"] == 62000
+    # hydrogen pricing: (10000 * 2.00 + 50000 * 0.20 + 2000 * 12.00) / 1e6 = 0.054
+    assert meta["estimated_cost_usd"] == 0.054

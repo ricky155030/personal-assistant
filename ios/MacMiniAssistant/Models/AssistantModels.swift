@@ -250,15 +250,53 @@ public struct TurnMetadata: Codable, Equatable {
 
     public var summaryText: String {
         var parts: [String] = []
+        var modelAlreadyShowsThinking = false
         if let m = model, !m.isEmpty {
-            let shortModel = m
+            var rawModel = m
+            var gatewaySuffix = ""
+            if let slashIdx = rawModel.firstIndex(of: "/") {
+                let provider = String(rawModel[..<slashIdx])
+                rawModel = String(rawModel[rawModel.index(after: slashIdx)...])
+                if provider.lowercased().hasPrefix("gemini-gw-") {
+                    let gwTag = String(provider.dropFirst("gemini-".count))
+                    gatewaySuffix = " (\(gwTag))"
+                }
+            }
+            let lowerRaw = rawModel.lowercased()
+            if lowerRaw.hasSuffix("-low") || lowerRaw.hasSuffix("-medium") || lowerRaw.hasSuffix("-med") || lowerRaw.hasSuffix("-high") || lowerRaw.hasSuffix("-xhigh") {
+                modelAlreadyShowsThinking = true
+            }
+            let shortModel = rawModel
                 .replacingOccurrences(of: "gemini-4-hydrogen-", with: "G4 Hydrogen ")
+                .replacingOccurrences(of: "gemini-4-hydrogen", with: "G4 Hydrogen")
                 .replacingOccurrences(of: "gemini-4-neon-", with: "G4 Neon ")
+                .replacingOccurrences(of: "gemini-4-neon", with: "G4 Neon")
                 .replacingOccurrences(of: "gemini-4-argon-", with: "G4 Argon ")
+                .replacingOccurrences(of: "gemini-4-argon", with: "G4 Argon")
                 .replacingOccurrences(of: "gemini-3.8-flash-", with: "G3.8 Flash ")
+                .replacingOccurrences(of: "gemini-3.8-flash", with: "G3.8 Flash")
                 .replacingOccurrences(of: "claude-sonnet-5-5-", with: "Sonnet 5.5 ")
+                .replacingOccurrences(of: "claude-sonnet-5-5", with: "Sonnet 5.5")
                 .replacingOccurrences(of: "claude-opus-5-5-", with: "Opus 5.5 ")
-            parts.append(shortModel)
+                .replacingOccurrences(of: "claude-opus-5-5", with: "Opus 5.5")
+            parts.append(shortModel + gatewaySuffix)
+        }
+        if !modelAlreadyShowsThinking, let rawLvl = thinking_level?.trimmingCharacters(in: .whitespacesAndNewlines), !rawLvl.isEmpty {
+            let normLvl = rawLvl.contains(":") ? String(rawLvl.split(separator: ":").last ?? "") : rawLvl
+            let levelLabel: String? = {
+                switch normLvl.lowercased() {
+                case "off", "none": return "無思考"
+                case "minimal": return "Minimal思考"
+                case "low": return "Low思考"
+                case "med", "medium": return "Med思考"
+                case "high": return "High思考"
+                case "xhigh", "max": return "XHigh思考"
+                default: return nil
+                }
+            }()
+            if let lbl = levelLabel {
+                parts.append(lbl)
+            }
         }
         if let t = total_sec, t > 0 {
             parts.append(String(format: "%.1fs", t))
