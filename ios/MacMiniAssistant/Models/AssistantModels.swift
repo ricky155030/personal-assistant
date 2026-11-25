@@ -408,6 +408,11 @@ public struct GatewayQuotaItem: Codable, Equatable, Identifiable {
     public let rolling5hRefreshesIn: String
     public let weeklyRemainingPct: Double?
     public let weeklyRefreshesIn: String
+    public let fetchedAtTaipei: String
+    public let pageLoadedAtTaipei: String
+    public let dataUpdatedAtTaipei: String
+    public let ageMinutes: Int?
+    public let stale: Bool
 
     public init(
         id: String,
@@ -419,7 +424,12 @@ public struct GatewayQuotaItem: Codable, Equatable, Identifiable {
         rolling5hRemainingPct: Double? = nil,
         rolling5hRefreshesIn: String = "--",
         weeklyRemainingPct: Double? = nil,
-        weeklyRefreshesIn: String = "--"
+        weeklyRefreshesIn: String = "--",
+        fetchedAtTaipei: String = "",
+        pageLoadedAtTaipei: String = "",
+        dataUpdatedAtTaipei: String = "",
+        ageMinutes: Int? = nil,
+        stale: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -431,6 +441,11 @@ public struct GatewayQuotaItem: Codable, Equatable, Identifiable {
         self.rolling5hRefreshesIn = rolling5hRefreshesIn
         self.weeklyRemainingPct = weeklyRemainingPct
         self.weeklyRefreshesIn = weeklyRefreshesIn
+        self.fetchedAtTaipei = fetchedAtTaipei
+        self.pageLoadedAtTaipei = pageLoadedAtTaipei
+        self.dataUpdatedAtTaipei = dataUpdatedAtTaipei
+        self.ageMinutes = ageMinutes
+        self.stale = stale
     }
 }
 

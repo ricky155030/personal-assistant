@@ -3598,11 +3598,28 @@ struct QuotaDetailSheetView: View {
         let color5h: Color = pct5h != nil ? (pct5h! >= 50 ? .cyan : (pct5h! >= 20 ? .orange : .red)) : .secondary
         let color7d: Color = pct7d != nil ? (pct7d! >= 50 ? .green : (pct7d! >= 20 ? .orange : .red)) : .secondary
 
+        let cacheDisplayTime = !gw.dataUpdatedAtTaipei.isEmpty
+            ? gw.dataUpdatedAtTaipei
+            : (!gw.pageLoadedAtTaipei.isEmpty ? gw.pageLoadedAtTaipei : gw.fetchedAtTaipei)
+        let cacheText: String? = {
+            guard gw.hasUsage, !cacheDisplayTime.isEmpty else { return nil }
+            if let age = gw.ageMinutes, age > 0 {
+                return "快取 \(cacheDisplayTime)（\(age)分前）"
+            }
+            return "快取 \(cacheDisplayTime)"
+        }()
+
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 6) {
                 Text(gw.label)
                     .font(.system(size: 13.5, weight: .bold))
                     .foregroundColor(.white)
+                if let cacheText {
+                    Text(cacheText)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundColor(gw.stale ? .orange : .secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 Text(statusLabel)
                     .font(.caption2.weight(.semibold))
@@ -3612,7 +3629,6 @@ struct QuotaDetailSheetView: View {
                     .foregroundColor(statusColor)
                     .cornerRadius(6)
             }
-
             HStack(spacing: 12) {
                 symmetricOptionalQuotaColumn(
                     icon: "bolt.circle.fill",

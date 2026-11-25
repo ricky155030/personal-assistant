@@ -117,12 +117,16 @@ def test_fetch_gateway_quotas_parses_usage_and_offline(monkeypatch):
                 "cdpConnected": True,
                 "usage": {
                     "plan": "Google AI Pro",
-                    "currentPercent": 20,
-                    "currentResetMinutes": 135,
-                    "weeklyPercent": 45,
-                    "weeklyResetMinutes": 2880,
-                    "fetchedAt": "2026-11-24T14:00:00Z",
-                },
+                "currentPercent": 20,
+                "currentResetMinutes": 135,
+                "weeklyPercent": 45,
+                "weeklyResetMinutes": 2880,
+                "fetchedAt": "2026-11-24T14:00:00Z",
+                "pageLoadedAt": "2026-11-24T13:50:00Z",
+                "dataUpdatedAt": "2026-11-24T13:55:00Z",
+                "ageMinutes": 5,
+                "stale": True,
+            },
             }).encode("utf-8")
             cm = MagicMock()
             cm.__enter__.return_value = io.BytesIO(body)
@@ -138,9 +142,11 @@ def test_fetch_gateway_quotas_parses_usage_and_offline(monkeypatch):
     assert gw1["id"] == "Gemini-GW-1"
     assert gw1["label"] == "GW-1"
     assert gw1["online"] is True
-    assert gw1["has_usage"] is True
-    assert gw1["rolling_5h_remaining_pct"] == 80.0
-    assert gw1["rolling_5h_refreshes_in"] == "2 小時 15 分"
+    assert gw1["weekly_refreshes_in"] == "2 天"
+    assert gw1["data_updated_at_taipei"] == "11-24 21:55"
+    assert gw1["page_loaded_at_taipei"] == "11-24 21:50"
+    assert gw1["age_minutes"] == 5
+    assert gw1["stale"] is True
     assert gw1["weekly_remaining_pct"] == 55.0
     assert gw1["weekly_refreshes_in"] == "2 天"
 

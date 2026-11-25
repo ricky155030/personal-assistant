@@ -121,7 +121,12 @@ public final class MacMiniAPIClient {
                     rolling5hRemainingPct: (item["rolling_5h_remaining_pct"] as? NSNumber)?.doubleValue,
                     rolling5hRefreshesIn: (item["rolling_5h_refreshes_in"] as? String) ?? "--",
                     weeklyRemainingPct: (item["weekly_remaining_pct"] as? NSNumber)?.doubleValue,
-                    weeklyRefreshesIn: (item["weekly_refreshes_in"] as? String) ?? "--"
+                    weeklyRefreshesIn: (item["weekly_refreshes_in"] as? String) ?? "--",
+                    fetchedAtTaipei: (item["fetched_at_taipei"] as? String) ?? "",
+                    pageLoadedAtTaipei: (item["page_loaded_at_taipei"] as? String) ?? "",
+                    dataUpdatedAtTaipei: (item["data_updated_at_taipei"] as? String) ?? "",
+                    ageMinutes: (item["age_minutes"] as? NSNumber)?.intValue,
+                    stale: (item["stale"] as? Bool) ?? false
                 )
             }
 

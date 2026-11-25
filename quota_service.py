@@ -265,6 +265,13 @@ class QuotaService:
                 "weekly_reset_minutes": None,
                 "weekly_refreshes_in": "--",
                 "fetched_at": None,
+                "fetched_at_taipei": "",
+                "page_loaded_at": None,
+                "page_loaded_at_taipei": "",
+                "data_updated_at": None,
+                "data_updated_at_taipei": "",
+                "age_minutes": None,
+                "stale": False,
             }
             if not status_url:
                 return base_item
@@ -282,6 +289,10 @@ class QuotaService:
                     rw = _used_to_remaining_pct(usage.get("weeklyPercent"))
                     r5h_min = usage.get("currentResetMinutes")
                     rw_min = usage.get("weeklyResetMinutes")
+                    fetched_at = usage.get("fetchedAt")
+                    page_loaded_at = usage.get("pageLoadedAt")
+                    data_updated_at = usage.get("dataUpdatedAt")
+                    age_minutes = usage.get("ageMinutes")
                     base_item.update({
                         "has_usage": (r5h is not None or rw is not None),
                         "plan": usage.get("plan"),
@@ -291,12 +302,18 @@ class QuotaService:
                         "weekly_remaining_pct": rw,
                         "weekly_reset_minutes": rw_min,
                         "weekly_refreshes_in": _format_minutes_duration(rw_min),
-                        "fetched_at": usage.get("fetchedAt"),
+                        "fetched_at": fetched_at,
+                        "fetched_at_taipei": _format_taipei_time(fetched_at),
+                        "page_loaded_at": page_loaded_at,
+                        "page_loaded_at_taipei": _format_taipei_time(page_loaded_at),
+                        "data_updated_at": data_updated_at,
+                        "data_updated_at_taipei": _format_taipei_time(data_updated_at),
+                        "age_minutes": int(age_minutes) if isinstance(age_minutes, (int, float)) else None,
+                        "stale": bool(usage.get("stale", False)),
                     })
             except Exception:
                 pass
             return base_item
-
         with ThreadPoolExecutor(max_workers=min(4, len(endpoints))) as pool:
             return list(pool.map(_query_one, endpoints))
 
