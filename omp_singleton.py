@@ -701,6 +701,124 @@ class OmpResidentWorker:
             print(f"[OmpResident] ⚠️ 發送 session/cancel 失敗: {ex}")
             return False
 
+    def compact_session(self, timeout: float = 45.0) -> dict:
+        """
+        執行 ACP 原生 `/compact` 無損上下文壓縮：
+        - 在不中斷當前 Session ID 的前提下，由 OMP 底層將歷史長對話精煉壓縮
+        - 釋放 Context Window Token 空間並更新最新 Token 用量
+        """
+        if self.is_busy:
+            return {"success": False, "error": "助理目前正在處理對話中，請稍候再執行壓縮。"}
+
+        with self.lock:
+            if not self._is_ready or not self.session_id or self.proc is None or self.proc.poll() is not None:
+                self._start_unlocked(force_new_session=False)
+                if not self._is_ready or not self.session_id:
+                    return {"success": False, "error": "OMP ACP 大腦尚未就緒"}
+
+            before_tokens = int(self.last_tokens or 0)
+            while not self.stdout_queue.empty():
+                try:
+                    self.stdout_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            req_id = self._next_rpc_id()
+            self._active_turn_id = req_id
+            t0 = time.perf_counter()
+            try:
+                self._send_rpc({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": self.session_id,
+                        "prompt": [{"type": "text", "text": "/compact"}],
+                    },
+                })
+                deadline = time.time() + timeout
+                resp = None
+                latest_used_tokens = 0
+                while time.time() < deadline:
+                    remaining = max(0.1, min(1.0, deadline - time.time()))
+                    try:
+                        msg = self.stdout_queue.get(timeout=remaining)
+                    except queue.Empty:
+                        if self.proc is None or self.proc.poll() is not None:
+                            raise RuntimeError("OMP ACP 進程意外中斷")
+                        continue
+                    if msg is None:
+                        raise RuntimeError("OMP ACP 輸出意外關閉")
+                    if msg.get("method") == "session/update":
+                        params = msg.get("params", {}) or {}
+                        if params.get("sessionId") == self.session_id:
+                            update = params.get("update", {}) or {}
+                            if str(update.get("sessionUpdate") or "") == "usage_update":
+                                try:
+                                    used = int(update.get("used") or 0)
+                                    if used > 0:
+                                        latest_used_tokens = used
+                                except (TypeError, ValueError):
+                                    pass
+                        continue
+                    if msg.get("id") == req_id and ("result" in msg or "error" in msg):
+                        if "error" in msg:
+                            raise RuntimeError(f"OMP ACP 回應錯誤 (id={req_id}): {msg['error']}")
+                        resp = msg
+                        break
+                if resp is None:
+                    raise TimeoutError(f"等待 OMP ACP 回應逾時 id={req_id}")
+
+                elapsed = round(time.perf_counter() - t0, 2)
+                res = (resp.get("result") or {})
+                raw_usage = res.get("usage") or {}
+                if raw_usage:
+                    in_tok = int(raw_usage.get("inputTokens", 0) or 0)
+                    out_tok = int(raw_usage.get("outputTokens", 0) or 0)
+                    thought_tok = int(raw_usage.get("thoughtTokens", 0) or 0)
+                    cache_tok = int(raw_usage.get("cachedReadTokens", 0) or 0)
+                    total_tok = int(raw_usage.get("totalTokens", 0) or 0) or (
+                        in_tok + out_tok + thought_tok + cache_tok
+                    )
+                    mapped_usage = {
+                        "input_tokens": in_tok,
+                        "output_tokens": out_tok,
+                        "thought_tokens": thought_tok,
+                        "cached_read_tokens": cache_tok,
+                        "total_tokens": total_tok,
+                    }
+                    self.last_usage = mapped_usage
+                    new_tokens = latest_used_tokens if latest_used_tokens > 0 else (
+                        total_tok or in_tok
+                    )
+                    if new_tokens > 0:
+                        self.last_tokens = new_tokens
+                    self.last_usage["context_tokens"] = self.last_tokens
+                elif latest_used_tokens > 0:
+                    self.last_tokens = latest_used_tokens
+                    self.last_usage = dict(self.last_usage or {})
+                    self.last_usage["total_tokens"] = latest_used_tokens
+                    self.last_usage["context_tokens"] = latest_used_tokens
+
+                self._save_session_state()
+                after_tokens = int(self.last_tokens or 0)
+                print(
+                    f"[OmpResident] 🧹 ACP 原生 /compact 壓縮完成！耗時 {elapsed}s | Tokens: {before_tokens:,} ➔ {after_tokens:,}"
+                )
+                return {
+                    "success": True,
+                    "session_id": self.session_id,
+                    "before_tokens": before_tokens,
+                    "after_tokens": after_tokens,
+                    "elapsed_sec": elapsed,
+                }
+            except Exception as e:
+                print(f"[OmpResident] ⚠️ 執行 /compact 失敗: {e}")
+                return {"success": False, "error": str(e)}
+            finally:
+                self._active_turn_id = None
+                self.last_active_time = time.time()
+
     @staticmethod
     def _build_prompt_blocks(query: str, media: Optional[List[dict]] = None) -> List[dict]:
         blocks: List[dict] = []
@@ -763,6 +881,7 @@ class OmpResidentWorker:
                 }
             )
         start_t = time.perf_counter()
+        last_heartbeat_t = start_t
         first_token_t: Optional[float] = None
         reply_parts: List[str] = []
         thought_parts: List[str] = []
@@ -770,6 +889,7 @@ class OmpResidentWorker:
         turn_cost_usd = 0.0
         was_cancelled = False
         tool_calls_count = 0
+        tool_labels_by_id: dict[str, str] = {}
         try:
             deadline = time.time() + 600.0
             while time.time() < deadline:
@@ -781,9 +901,14 @@ class OmpResidentWorker:
                 except queue.Empty:
                     if self.proc is None or self.proc.poll() is not None:
                         break
+                    now_hb = time.perf_counter()
+                    if now_hb - last_heartbeat_t >= 15.0:
+                        last_heartbeat_t = now_hb
+                        yield ("heartbeat", "")
                     continue
                 if msg is None:
                     break
+                last_heartbeat_t = time.perf_counter()
                 if msg.get("id") == req_id and ("result" in msg or "error" in msg):
                     if "error" in msg:
                         raise RuntimeError(f"OMP ACP prompt 錯誤: {msg['error']}")
@@ -840,19 +965,51 @@ class OmpResidentWorker:
                                 turn_cost_usd = round(float(cost["amount"]), 6)
                         except (TypeError, ValueError):
                             pass
-                    elif "tool" in kind:
+                    elif kind == "tool_call":
                         tool_calls_count += 1
+                        call_id = str(update.get("toolCallId") or update.get("id") or "").strip()
                         label = str(
                             update.get("title")
                             or update.get("toolName")
                             or update.get("name")
                             or "工具"
                         ).strip()
+                        if call_id:
+                            tool_labels_by_id[call_id] = label
                         status_val = str(update.get("status") or "").lower()
-                        if status_val in ("completed", "failed"):
+                        if status_val in ("completed", "failed", "cancelled"):
                             yield ("tool_done", f"完成工具：{label[:40]}")
                         else:
                             yield ("status", f"執行工具：{label[:40]}")
+                    elif kind == "tool_call_update":
+                        call_id = str(update.get("toolCallId") or update.get("id") or "").strip()
+                        raw_label = str(
+                            update.get("title")
+                            or update.get("toolName")
+                            or update.get("name")
+                            or ""
+                        ).strip()
+                        if call_id and raw_label:
+                            tool_labels_by_id[call_id] = raw_label
+                        label = raw_label or (tool_labels_by_id.get(call_id) if call_id else "") or "工具"
+                        status_val = str(update.get("status") or "").lower()
+                        if status_val in ("completed", "failed", "cancelled"):
+                            yield ("tool_done", f"完成工具：{label[:40]}")
+                            if call_id:
+                                tool_labels_by_id.pop(call_id, None)
+                    elif "tool" in kind:
+                        raw_label = str(
+                            update.get("title")
+                            or update.get("toolName")
+                            or update.get("name")
+                            or ""
+                        ).strip()
+                        status_val = str(update.get("status") or "").lower()
+                        if status_val in ("completed", "failed", "cancelled"):
+                            yield ("tool_done", f"完成工具：{(raw_label or '工具')[:40]}")
+                        elif raw_label:
+                            tool_calls_count += 1
+                            yield ("status", f"執行工具：{raw_label[:40]}")
         finally:
             with self.lock:
                 self._active_turn_id = None
@@ -1024,11 +1181,13 @@ class OmpBrainEngine(BaseBrainEngine):
             return {"cancelled": cancelled, "engine": self.engine_id}
 
     def compact_session(self, timeout: float = 45.0) -> dict:
-        return {
-            "success": True,
-            "engine": self.engine_id,
-            "note": "OMP 自動管理對話上下文，無需手動壓縮。",
-        }
+        res = self._worker.compact_session(timeout=timeout)
+        res["engine"] = self.engine_id
+        if res.get("success"):
+            after_tokens = int(res.get("after_tokens", 0) or 0)
+            self._last_tokens = after_tokens
+            self._last_usage = dict(getattr(self._worker, "last_usage", {}) or {})
+        return res
 
     def get_status(self) -> dict:
         omp_bin = self._resolve_omp_bin()

@@ -801,3 +801,195 @@ def test_omp_resident_computes_estimated_cost_and_thinking_level_metadata():
     assert meta["usage"]["total_tokens"] == 62000
     # hydrogen pricing: (10000 * 2.00 + 50000 * 0.20 + 2000 * 12.00) / 1e6 = 0.054
     assert meta["estimated_cost_usd"] == 0.054
+
+
+def test_omp_resident_ignores_in_progress_tool_call_updates_and_preserves_label():
+    import omp_singleton
+
+    worker = omp_singleton.OmpResidentWorker("Gemini-GW-2/gemini-4-hydrogen")
+    worker._is_ready = True
+    worker.session_id = "sess-tool-updates"
+    worker._next_rpc_id = lambda: 99
+    worker._save_session_state = lambda: None
+    worker._build_prompt_blocks = lambda q, media=None: [{"type": "text", "text": q}]
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+
+    def fake_send_rpc(payload):
+        req_id = payload["id"]
+        if payload.get("method") == "session/set_config_option":
+            worker.stdout_queue.put({"jsonrpc": "2.0", "id": req_id, "result": {}})
+            return
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-tool-updates",
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call_1",
+                    "title": "$ ./package_ios.sh --bump patch",
+                    "status": "in_progress",
+                },
+            },
+        })
+        # 模擬指令執行過程中多次吐出 stdout，觸發無 title 的 tool_call_update
+        for _ in range(5):
+            worker.stdout_queue.put({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": "sess-tool-updates",
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call_1",
+                        "status": "in_progress",
+                    },
+                },
+            })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-tool-updates",
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call_1",
+                    "status": "completed",
+                },
+            },
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-tool-updates",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": "done"},
+                },
+            },
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"stopReason": "end_turn"},
+        })
+
+    worker._send_rpc = fake_send_rpc
+
+    events = []
+    gen = worker.send_query_stream("run", level="hydrogen:medium")
+    try:
+        while True:
+            events.append(next(gen))
+    except StopIteration:
+        pass
+
+    status_events = [e for e in events if e[0] == "status"]
+    done_events = [e for e in events if e[0] == "tool_done"]
+    assert status_events == [("status", "執行工具：$ ./package_ios.sh --bump patch")]
+    assert done_events == [("tool_done", "完成工具：$ ./package_ios.sh --bump patch")]
+
+
+def test_turn_queue_heartbeat_keeps_active_turn_alive_without_mutating_payload():
+    import threading
+    import time
+    from turn_queue import TurnQueueManager
+
+    mgr = TurnQueueManager(stale_timeout_sec=0.08)
+    cancel_ev = threading.Event()
+    turn_id, is_active, _ = mgr.enqueue_or_activate("等待回覆測試", cancel_ev)
+    assert is_active is True
+
+    stale_called = []
+    # 連續等待超過 stale_timeout_sec，但期間有心跳保活，不應被誤殺
+    for _ in range(3):
+        time.sleep(0.05)
+        mgr.update_active(turn_id)
+        snap = mgr.get_active_snapshot(on_stale=lambda s: stale_called.append(s))
+        assert snap is not None
+        assert snap["reply"] == ""
+        assert snap["tools"] == []
+        assert stale_called == []
+
+    # 心跳停止超過 stale_timeout_sec 後，仍會正常觸發兜底清理
+    time.sleep(0.11)
+    snap_after = mgr.get_active_snapshot(on_stale=lambda s: stale_called.append(s))
+    assert snap_after is None
+    assert len(stale_called) == 1
+
+
+def test_omp_brain_engine_compact_session_updates_tokens_and_handles_busy():
+    import omp_singleton
+
+    engine = omp_singleton.OmpBrainEngine()
+    worker = engine._worker
+    worker._is_ready = True
+    worker.session_id = "sess-compact-omp"
+    worker.last_tokens = 84000
+    worker._save_session_state = lambda: None
+
+    class DummyProc:
+        def poll(self):
+            return None
+
+    worker.proc = DummyProc()
+
+    # 1. 忙碌中應拒絕壓縮
+    worker._active_turn_id = 77
+    busy_res = engine.compact_session()
+    assert busy_res["success"] is False
+    assert busy_res["engine"] == "omp"
+    assert "正在處理對話" in busy_res["error"]
+    worker._active_turn_id = None
+
+    # 2. 閒置時發送 /compact 並依據 usage_update / result.usage 更新前後 Token 數
+    sent_payloads = []
+
+    def fake_send_rpc(payload):
+        sent_payloads.append(payload)
+        req_id = payload["id"]
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-compact-omp",
+                "update": {
+                    "sessionUpdate": "usage_update",
+                    "used": 21500,
+                },
+            },
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "stopReason": "end_turn",
+                "usage": {
+                    "inputTokens": 20000,
+                    "outputTokens": 1500,
+                    "totalTokens": 21500,
+                },
+            },
+        })
+
+    worker._send_rpc = fake_send_rpc
+    res = engine.compact_session(timeout=5.0)
+    assert res["success"] is True
+    assert res["engine"] == "omp"
+    assert res["session_id"] == "sess-compact-omp"
+    assert res["before_tokens"] == 84000
+    assert res["after_tokens"] == 21500
+    assert sent_payloads[0]["method"] == "session/prompt"
+    assert sent_payloads[0]["params"] == {
+        "sessionId": "sess-compact-omp",
+        "prompt": [{"type": "text", "text": "/compact"}],
+    }
+    status = engine.get_status()
+    assert status["current_tokens"] == 21500
+    assert status["usage"]["context_tokens"] == 21500
