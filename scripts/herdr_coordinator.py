@@ -563,13 +563,50 @@ def extract_completion_summary(
     return summary
 
 
+def _get_assistant_endpoint_config() -> tuple[int, str]:
+    """安全取得主助理後端 Port 與 API Key，缺 pydantic 時優雅退回環境變數與 .env。"""
+    try:
+        from config import settings
+
+        port = int(getattr(settings, "PORT", 8899) or 8899)
+        api_key = (
+            getattr(settings, "API_KEY", "")
+            or getattr(settings, "ASSISTANT_API_KEY", "")
+            or os.getenv("ASSISTANT_API_KEY", "")
+        )
+        return port, str(api_key or "")
+    except Exception:
+        port_raw = os.getenv("PORT", "")
+        api_key = os.getenv("API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+        env_path = os.path.join(_ROOT_DIR, ".env")
+        if os.path.exists(env_path) and (not port_raw or not api_key):
+            try:
+                with open(env_path, "r", encoding="utf-8") as ef:
+                    for raw_line in ef:
+                        line = raw_line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip('"').strip("'")
+                        if k == "PORT" and not port_raw and v:
+                            port_raw = v
+                        elif k in ("API_KEY", "ASSISTANT_API_KEY") and not api_key and v:
+                            api_key = v
+            except Exception:
+                pass
+        try:
+            port = int(port_raw) if port_raw else 8899
+        except ValueError:
+            port = 8899
+        return port, api_key
+
+
 def _send_unified_app_alert(title: str, message: str, memory_summary: Optional[str] = None, source: str = "herdr:coordinator") -> bool:
     """透過統一通道（/api/internal/memory-sync + /api/internal/unread-notify）通知主人，不走 Telegram。"""
     import urllib.request
-    from config import settings
 
-    port = getattr(settings, "PORT", 8899)
-    api_key = getattr(settings, "API_KEY", "") or getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    port, api_key = _get_assistant_endpoint_config()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-Agent-Key"] = api_key
@@ -792,10 +829,8 @@ def _push_pending_action(
 ) -> None:
     """將 Agent 執行進度、請示或完工摘要同步登記到後端 Action Queue（Herdr 督工抽屜）。"""
     import urllib.request
-    from config import settings
 
-    port = getattr(settings, "PORT", 8899)
-    api_key = getattr(settings, "API_KEY", "") or getattr(settings, "ASSISTANT_API_KEY", "") or os.getenv("ASSISTANT_API_KEY", "")
+    port, api_key = _get_assistant_endpoint_config()
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["X-Agent-Key"] = api_key
@@ -1037,8 +1072,9 @@ def record_task_to_history_and_memory(
 
     try:
         import urllib.request
-        from config import settings
-        url = f"http://127.0.0.1:{settings.PORT}/api/internal/memory-sync"
+
+        port, api_key = _get_assistant_endpoint_config()
+        url = f"http://127.0.0.1:{port}/api/internal/memory-sync"
         memo = (
             f"任務對象：{display_title}（Agent: {agent}）\n"
             f"派發需求：{task_prompt[:180]}\n"
@@ -1046,8 +1082,8 @@ def record_task_to_history_and_memory(
         )
         req_data = json.dumps({"summary": memo, "source": f"herdr:{agent}"}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        if settings.ASSISTANT_API_KEY:
-            headers["X-Agent-Key"] = settings.ASSISTANT_API_KEY
+        if api_key:
+            headers["X-Agent-Key"] = api_key
         req = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10.0) as resp:
             resp.read()
