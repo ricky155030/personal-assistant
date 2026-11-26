@@ -127,16 +127,15 @@ class ChromeAssistantClient:
         except Exception:
             return False
 
-    def ensure_chrome(self, headless: bool = False, timeout: float = 10.0) -> None:
-        """確保 Chrome-Assistant 正在運行，若未啟動則自動以真實 Chrome 核心拉起"""
+    def ensure_chrome(self, headless: bool = False, foreground: bool = False, timeout: float = 10.0) -> None:
+        """確保 Chrome-Assistant 正在運行，若未啟動則自動以真實 Chrome 核心拉起（macOS 預設背景啟動不搶焦點）"""
         if self.is_running():
             return
 
         if not os.path.exists(CHROME_BIN):
             raise FileNotFoundError(f"找不到 Google Chrome 執行檔：{CHROME_BIN}")
 
-        cmd = [
-            CHROME_BIN,
+        chrome_args = [
             f"--user-data-dir={self.profile_dir}",
             f"--remote-debugging-port={self.port}",
             "--disable-blink-features=AutomationControlled",
@@ -146,22 +145,28 @@ class ChromeAssistantClient:
             "--window-size=1280,900"
         ]
         if headless:
-            cmd.append("--headless=new")
+            chrome_args.append("--headless=new")
 
         # 跨平台後台脫鉤啟動真實 Chrome 核心
         popen_kwargs: Dict[str, Any] = {
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
         }
-        if sys.platform == "win32":
-            creationflags = 0
-            if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
-                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
-            if hasattr(subprocess, "DETACHED_PROCESS"):
-                creationflags |= subprocess.DETACHED_PROCESS
-            popen_kwargs["creationflags"] = creationflags
-        else:
+        if sys.platform == "darwin" and not headless and not foreground and ".app/" in CHROME_BIN:
+            app_bundle = CHROME_BIN.split(".app/", 1)[0] + ".app"
+            cmd = ["open", "-g", "-n", "-a", app_bundle, "--args", *chrome_args]
             popen_kwargs["start_new_session"] = True
+        else:
+            cmd = [CHROME_BIN, *chrome_args]
+            if sys.platform == "win32":
+                creationflags = 0
+                if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                    creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+                if hasattr(subprocess, "DETACHED_PROCESS"):
+                    creationflags |= subprocess.DETACHED_PROCESS
+                popen_kwargs["creationflags"] = creationflags
+            else:
+                popen_kwargs["start_new_session"] = True
 
         subprocess.Popen(cmd, **popen_kwargs)
 
@@ -233,8 +238,19 @@ class ChromeAssistantClient:
             except Exception:
                 pass
 
-    def create_persistent_tab(self, url: str = "about:blank") -> Optional[str]:
-        """透過 Chrome 原生 HTTP CDP 端點建立持久化分頁（不會隨 Playwright 連線結束而銷毀），回傳 CDP Target ID"""
+    def create_persistent_tab(self, url: str = "about:blank", background: bool = True) -> Optional[str]:
+        """透過 CDP 建立持久化分頁（不會隨 Playwright 連線結束而銷毀），預設 background=True 不搶前景"""
+        if background:
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.connect_over_cdp(self.cdp_url)
+                    cdp = browser.new_browser_cdp_session()
+                    res = cdp.send("Target.createTarget", {"url": url, "background": True})
+                    tid = res.get("targetId")
+                    if tid:
+                        return tid
+            except Exception:
+                pass
         encoded = urllib.parse.quote(url, safe=":/?&=#")
         req = urllib.request.Request(f"{self.cdp_url}/json/new?{encoded}", method="PUT")
         try:
@@ -248,6 +264,24 @@ class ChromeAssistantClient:
                     return data.get("id")
             except Exception:
                 return None
+
+    def create_background_page(self, browser: Any, url: str = "about:blank") -> Page:
+        """在既有的 Playwright CDP browser 中建立背景分頁（不搶前景），失敗時退回 context.new_page()"""
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        before_count = len(context.pages)
+        try:
+            cdp = browser.new_browser_cdp_session()
+            cdp.send("Target.createTarget", {"url": url, "background": True})
+            for _ in range(15):
+                if len(context.pages) > before_count:
+                    return context.pages[-1]
+                time.sleep(0.1)
+        except Exception:
+            pass
+        page = context.new_page()
+        if url and url != "about:blank":
+            page.goto(url, timeout=30000, wait_until="domcontentloaded")
+        return page
 
     def cleanup_domain_targets(self, domain_keywords: Tuple[str, ...]) -> int:
         """
@@ -1090,6 +1124,10 @@ def main():
     p_gc = subparsers.add_parser("gc", help="回收多餘空白頁與閒置殭屍分頁")
     p_gc.add_argument("--max-tabs", type=int, default=8, help="最大保留分頁數 (預設 8)")
 
+    # focus
+    p_focus = subparsers.add_parser("focus", help="將 Chrome-Assistant 指定分頁帶到前景（便於手動登入或驗證）")
+    p_focus.add_argument("--tab", type=int, default=None, help="分頁編號 (預設為最新非空白頁)")
+
     # quit
     subparsers.add_parser("quit", help="關閉 Chrome-Assistant 瀏覽器進程")
 
@@ -1253,6 +1291,14 @@ def main():
         res = client.gc_tabs(max_tabs=args.max_tabs)
         print(f"🧹 【分頁回收完成】已關閉 {res.get('closed', 0)} 個多餘/殭屍分頁，目前剩餘 {res.get('remaining', 0)} 個分頁。")
         print(json.dumps(res, ensure_ascii=False))
+
+    elif args.command == "focus":
+        client.ensure_chrome(foreground=True)
+        with sync_playwright() as p:
+            browser = p.chromium.connect_over_cdp(client.cdp_url)
+            page = client._pick_page(browser.contexts[0], args.tab)
+            page.bring_to_front()
+            print(f"🪟 已將 Chrome-Assistant 帶到前景：{page.title()} ({page.url})")
 
     elif args.command == "quit":
         ok = client.quit_browser()

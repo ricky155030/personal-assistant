@@ -114,7 +114,7 @@ class CoupangPriceTracker:
                         target_page = page
                         break
                 if not target_page:
-                    target_page = context.new_page()
+                    target_page = self.client.create_background_page(browser)
 
                 target_page.goto(cart_url, timeout=30000, wait_until="domcontentloaded")
                 target_page.wait_for_timeout(2000)
@@ -369,7 +369,7 @@ class CoupangPriceTracker:
                         target_page = page
                         break
                 if not target_page:
-                    target_page = context.new_page()
+                    target_page = self.client.create_background_page(browser)
 
                 # 首頁預熱流程
                 try:

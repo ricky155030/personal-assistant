@@ -718,8 +718,8 @@ def fetch_group_posts(group_key: str, chronological_url: str, max_posts: int = 8
                         target_page = page
                         break
                 if target_page is None:
-                    # 開啟全新獨立分頁，絕不劫持 context.pages[-1]
-                    target_page = context.new_page()
+                    # 開啟全新獨立背景分頁，不搶前景也不劫持既有分頁
+                    target_page = client.create_background_page(browser)
 
             # 導向最新貼文排序網址
             try:
