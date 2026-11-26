@@ -235,6 +235,30 @@ public final class VoiceSessionCoordinator: ObservableObject {
         if selectedEngineId == "agy" {
             return selectedModelFamily.displayName
         }
+        let rawId = selectedEngineModelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rawId.isEmpty {
+            let parts = rawId.split(separator: "/", maxSplits: 1).map(String.init)
+            let provider = parts.count == 2 ? parts[0] : ""
+            let slug = (parts.count == 2 ? parts[1] : parts[0]).lowercased()
+            let shortFamily: String? = {
+                if slug.contains("hydrogen") { return ModelFamily.hydrogen.displayName }
+                if slug.contains("neon") { return ModelFamily.neon.displayName }
+                if slug.contains("argon") { return ModelFamily.argon.displayName }
+                if slug.contains("flash") { return ModelFamily.flash.displayName }
+                if slug.contains("sonnet") || slug.contains("claude") { return ModelFamily.claude.displayName }
+                if slug.contains("opus") { return ModelFamily.opus.displayName }
+                return nil
+            }()
+            let gwSuffix: String = {
+                if let range = provider.range(of: #"(?i)gw-[0-9]+"#, options: .regularExpression) {
+                    return " (\(provider[range].uppercased()))"
+                }
+                return ""
+            }()
+            if let shortFamily {
+                return "\(shortFamily)\(gwSuffix)"
+            }
+        }
         if let eng = brainCatalog?.engines.first(where: { $0.id == selectedEngineId }) {
             if let model = eng.models.first(where: { $0.id == selectedEngineModelId }) ?? eng.models.first {
                 return model.label

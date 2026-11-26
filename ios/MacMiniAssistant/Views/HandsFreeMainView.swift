@@ -1057,6 +1057,7 @@ struct HandsFreeMainView: View {
                             isSelected: coordinator.selectedEngineModelId == m.id
                         ) {
                             coordinator.selectBrainEngine(coordinator.selectedEngineId, modelId: m.id)
+                            coordinator.clampThinkingLevelIfNeeded()
                             showModelPopover = false
                         }
                     }
