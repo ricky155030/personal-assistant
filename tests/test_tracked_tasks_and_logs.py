@@ -94,3 +94,4 @@ def test_tracked_tasks_and_log_endpoints(tmp_path):
 def test_infer_history_source_recognizes_both_task_prefixes():
     assert main._infer_history_source("", ["task_report (task:123)"]) == "background_report"
     assert main._infer_history_source("", ["task_manager (task_123)", "status=成功完成"]) == "background_report"
+    assert main._infer_history_source("", ["herdr_coordinator (w16:p1)"]) == "background_report"

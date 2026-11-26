@@ -710,6 +710,9 @@ def test_record_task_to_history_and_memory_logs_chat_bubble_by_default():
     assert "📋 **gemini-ai-gateway · Release v0.1.0** 任務完成" in args[1]
     assert "✅ 完成項目" in args[1]
     assert kwargs["actions"] == ["herdr_coordinator (w16:p1)", "session_log: /tmp/session.jsonl"]
-
-
+    assert kwargs["metadata"] == {
+        "task_name": "gemini-ai-gateway · Release v0.1.0｜發布 v0.1.0",
+        "task_status": "ok",
+        "exit_code": 0,
+    }
 

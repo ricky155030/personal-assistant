@@ -1043,6 +1043,21 @@ def review_worker_output(
     }
 
 
+def _build_herdr_bubble_title(display_title: str, task_prompt: str) -> str:
+    """產出折疊氣泡標頭的精簡任務說明文字（優先使用簡短任務描述，避免只有 pane 編號）。"""
+    title_clean = (display_title or "").strip()
+    prompt_clean = " ".join((task_prompt or "").strip().split())
+    prompt_snippet = (prompt_clean[:26] + "…") if len(prompt_clean) > 27 else prompt_clean
+    is_generic_pane = not title_clean or title_clean.startswith("Herdr Agent [") or (
+        " · " in title_clean and title_clean.count(" · ") == 1 and title_clean.endswith(")")
+    )
+    if is_generic_pane and prompt_snippet:
+        return f"Herdr · {prompt_snippet}"
+    if prompt_snippet and prompt_snippet not in title_clean:
+        return f"{title_clean}｜{prompt_snippet}"
+    return title_clean or prompt_snippet or "Herdr 任務"
+
+
 def record_task_to_history_and_memory(
     agent: str,
     display_title: str,
@@ -1051,22 +1066,29 @@ def record_task_to_history_and_memory(
     log_path: str = "",
     sync_idle_memory: bool = True,
     log_to_chat_history: bool = True,
+    is_error: bool = False,
 ) -> None:
-    """將 Herdr 任務成果寫入主聊天室氣泡 (history.jsonl)，並於主大腦閒置時靜默同步記憶摘要。"""
+    """將 Herdr 任務成果寫入主聊天室可折疊背景回報氣泡 (history.jsonl)，並於主大腦閒置時靜默同步記憶摘要。"""
     if log_to_chat_history:
         try:
             from memory_manager import memory_manager
             actions = [f"herdr_coordinator ({agent})"]
             if log_path:
                 actions.append(f"session_log: {log_path}")
+            bubble_title = _build_herdr_bubble_title(display_title, task_prompt)
+            task_status = "error" if (is_error or summary.lstrip().startswith("⚠️")) else "ok"
             memory_manager.log_interaction(
                 "",
                 f"📋 **{display_title}** 任務完成\n\n{summary}",
                 actions=actions,
+                metadata={
+                    "task_name": bubble_title,
+                    "task_status": task_status,
+                    "exit_code": 1 if task_status == "error" else 0,
+                },
             )
         except Exception as e:
             print(f"[HerdrCoordinator] ⚠️ 寫入 history.jsonl 失敗: {e}", file=sys.stderr)
-
     if not sync_idle_memory:
         return
 
@@ -1383,8 +1405,8 @@ def _finalize_watch_completion(
             task_prompt=task_prompt,
             summary=final_text,
             log_path=turn_data.get("log_path", ""),
+            is_error=final_text.lstrip().startswith("⚠️"),
         )
-
     if batch_id:
         batch_entry = update_batch_progress(
             batch_id=batch_id,
