@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -742,6 +743,7 @@ class OmpResidentWorker:
                 deadline = time.time() + timeout
                 resp = None
                 latest_used_tokens = 0
+                compact_summary_text = ""
                 while time.time() < deadline:
                     remaining = max(0.1, min(1.0, deadline - time.time()))
                     try:
@@ -756,13 +758,19 @@ class OmpResidentWorker:
                         params = msg.get("params", {}) or {}
                         if params.get("sessionId") == self.session_id:
                             update = params.get("update", {}) or {}
-                            if str(update.get("sessionUpdate") or "") == "usage_update":
+                            kind = str(update.get("sessionUpdate") or "")
+                            if kind == "usage_update":
                                 try:
                                     used = int(update.get("used") or 0)
                                     if used > 0:
                                         latest_used_tokens = used
                                 except (TypeError, ValueError):
                                     pass
+                            elif kind == "agent_message_chunk":
+                                content = update.get("content", {}) or {}
+                                delta = str(content.get("text") or "")
+                                if delta:
+                                    compact_summary_text += delta
                         continue
                     if msg.get("id") == req_id and ("result" in msg or "error" in msg):
                         if "error" in msg:
@@ -775,6 +783,27 @@ class OmpResidentWorker:
                 elapsed = round(time.perf_counter() - t0, 2)
                 res = (resp.get("result") or {})
                 raw_usage = res.get("usage") or {}
+
+                # omp acp 執行 /compact 時不會送出 usage_update 與 result.usage，
+                # 而是在 agent_message_chunk 回傳 "Compaction complete. Tokens: <before> -> <after> (saved <saved>)."
+                parsed_before_tokens = 0
+                parsed_after_tokens = 0
+                if compact_summary_text:
+                    m_compact = re.search(
+                        r"Tokens:\s*([\d,]+)\s*(?:->|➔|→)\s*([\d,]+)",
+                        compact_summary_text,
+                    )
+                    if m_compact:
+                        try:
+                            parsed_before_tokens = int(m_compact.group(1).replace(",", ""))
+                            parsed_after_tokens = int(m_compact.group(2).replace(",", ""))
+                        except ValueError:
+                            parsed_before_tokens = 0
+                            parsed_after_tokens = 0
+
+                if parsed_before_tokens > 0:
+                    before_tokens = parsed_before_tokens
+
                 if raw_usage:
                     in_tok = int(raw_usage.get("inputTokens", 0) or 0)
                     out_tok = int(raw_usage.get("outputTokens", 0) or 0)
@@ -791,30 +820,38 @@ class OmpResidentWorker:
                         "total_tokens": total_tok,
                     }
                     self.last_usage = mapped_usage
-                    new_tokens = latest_used_tokens if latest_used_tokens > 0 else (
-                        total_tok or in_tok
+                    new_tokens = (
+                        parsed_after_tokens
+                        if parsed_after_tokens > 0
+                        else (latest_used_tokens if latest_used_tokens > 0 else (total_tok or in_tok))
                     )
                     if new_tokens > 0:
                         self.last_tokens = new_tokens
                     self.last_usage["context_tokens"] = self.last_tokens
-                elif latest_used_tokens > 0:
-                    self.last_tokens = latest_used_tokens
-                    self.last_usage = dict(self.last_usage or {})
-                    self.last_usage["total_tokens"] = latest_used_tokens
-                    self.last_usage["context_tokens"] = latest_used_tokens
+                else:
+                    new_tokens = parsed_after_tokens if parsed_after_tokens > 0 else latest_used_tokens
+                    if new_tokens > 0:
+                        self.last_tokens = new_tokens
+                        self.last_usage = {
+                            "total_tokens": new_tokens,
+                            "context_tokens": new_tokens,
+                        }
 
                 self._save_session_state()
                 after_tokens = int(self.last_tokens or 0)
                 print(
                     f"[OmpResident] 🧹 ACP 原生 /compact 壓縮完成！耗時 {elapsed}s | Tokens: {before_tokens:,} ➔ {after_tokens:,}"
                 )
-                return {
+                result_payload = {
                     "success": True,
                     "session_id": self.session_id,
                     "before_tokens": before_tokens,
                     "after_tokens": after_tokens,
                     "elapsed_sec": elapsed,
                 }
+                if compact_summary_text.strip():
+                    result_payload["message"] = compact_summary_text.strip()
+                return result_payload
             except Exception as e:
                 print(f"[OmpResident] ⚠️ 執行 /compact 失敗: {e}")
                 return {"success": False, "error": str(e)}
@@ -1245,7 +1282,10 @@ class OmpBrainEngine(BaseBrainEngine):
         res["engine"] = self.engine_id
         if res.get("success"):
             after_tokens = int(res.get("after_tokens", 0) or 0)
-            self._last_tokens = after_tokens
+            if after_tokens > 0:
+                self._last_tokens = after_tokens
+            elif getattr(self._worker, "last_tokens", 0):
+                self._last_tokens = int(self._worker.last_tokens)
             self._last_usage = dict(getattr(self._worker, "last_usage", {}) or {})
         return res
 

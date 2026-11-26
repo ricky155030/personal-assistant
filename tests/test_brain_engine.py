@@ -994,6 +994,39 @@ def test_omp_brain_engine_compact_session_updates_tokens_and_handles_busy():
     assert status["current_tokens"] == 21500
     assert status["usage"]["context_tokens"] == 21500
 
+    # 3. 驗證真實 omp acp 純文字回覆 (Compaction complete. Tokens: X -> Y) 解析
+    def text_only_send_rpc(payload):
+        req_id = payload["id"]
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-compact-omp",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {
+                        "type": "text",
+                        "text": "Compaction complete. Tokens: 330955 -> 56564 (saved 274391).",
+                    },
+                },
+            },
+        })
+        worker.stdout_queue.put({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"stopReason": "end_turn"},
+        })
+
+    worker._send_rpc = text_only_send_rpc
+    res_text = engine.compact_session(timeout=5.0)
+    assert res_text["success"] is True
+    assert res_text["before_tokens"] == 330955
+    assert res_text["after_tokens"] == 56564
+    assert "Compaction complete" in res_text["message"]
+    status_text = engine.get_status()
+    assert status_text["current_tokens"] == 56564
+    assert status_text["usage"]["context_tokens"] == 56564
+
 
 def test_omp_resident_extends_timeout_on_active_events_and_cancels_on_idle_timeout(monkeypatch):
     import threading
