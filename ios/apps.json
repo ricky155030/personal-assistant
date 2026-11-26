@@ -13,6 +13,15 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.7.3",
+          "buildVersion": "185",
+          "date": "2026-11-26T09:55:31Z",
+          "localizedDescription": "統一 OMP 左上角模型名稱為短名稱搭配 Gateway 節點後綴，並同步思考深度上限防呆",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.7.3/MacMiniAssistant.ipa",
+          "size": 4926151,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.7.2",
           "buildVersion": "183",
           "date": "2026-11-25T23:19:01Z",
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.4/MacMiniAssistant.ipa",
           "size": 4546125,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.3.3",
-          "buildVersion": "162",
-          "date": "2026-11-22T06:40:33Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.3.3/MacMiniAssistant.ipa",
-          "size": 4536388,
           "minOSVersion": "17.0"
         }
       ]
