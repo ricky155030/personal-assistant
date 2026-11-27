@@ -1306,6 +1306,9 @@ public final class VoiceSessionCoordinator: ObservableObject {
                 if messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && items.isEmpty {
                     messages.remove(at: idx)
                 } else {
+                    if messages[idx].status == .streaming || messages[idx].status == .sending {
+                        messages[idx].timestamp = Date()
+                    }
                     messages[idx].status = .completed
                 }
             }
@@ -1336,6 +1339,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                     changed = true
                 }
                 if messages[existingIdx].status == .streaming {
+                    messages[existingIdx].timestamp = parsedDate
                     messages[existingIdx].status = .completed
                     changed = true
                 }
@@ -1354,6 +1358,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
                messages[qIdx + 1].role == .assistant {
                 if messages[qIdx + 1].status == .streaming || messages[qIdx + 1].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     messages[qIdx + 1].content = rText
+                    messages[qIdx + 1].timestamp = parsedDate
                     messages[qIdx + 1].status = .completed
                     messages[qIdx + 1].metadata = item.metadata ?? messages[qIdx + 1].metadata
                     messages[qIdx + 1].source = item.source ?? messages[qIdx + 1].source
@@ -1869,6 +1874,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             self.stopThinkingPulseTask()
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
                 self.messages[idx].content = fullReply.isEmpty ? self.currentStreamingText : fullReply
+                self.messages[idx].timestamp = Date()
                 self.messages[idx].status = .completed
                 self.messages[idx].reportUrl = reportUrl.isEmpty ? nil : reportUrl
                 self.messages[idx].quickReplies = quickReplies
@@ -1886,6 +1892,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
             print("Voice stream error: \(msg)")
             self.errorMessage = "助理回應異常: \(msg)"
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].timestamp = Date()
                 self.messages[idx].status = .error
             }
             self.syncCurrentSessionToHistory()
@@ -1959,6 +1966,7 @@ public final class VoiceSessionCoordinator: ObservableObject {
 
             self.errorMessage = "串流中斷: \(desc)"
             if let idx = self.messages.firstIndex(where: { $0.id == assistantMessageId }) {
+                self.messages[idx].timestamp = Date()
                 self.messages[idx].status = .error
             }
             if speakThisTurn {

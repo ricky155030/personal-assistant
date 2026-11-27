@@ -316,7 +316,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
     public let id: UUID
     public let role: MessageRole
     public var content: String
-    public let timestamp: Date
+    public var timestamp: Date
     public var status: MessageStatus
     public var toolHistory: [String]
     public var thoughtProcess: String

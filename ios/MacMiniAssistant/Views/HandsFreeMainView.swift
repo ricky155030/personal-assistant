@@ -2950,6 +2950,9 @@ struct GeminiMessageRow: View {
     }
 
     private var bubbleTimestampText: String {
+        if message.role == .assistant && (message.status == .streaming || message.status == .sending) {
+            return "進行中"
+        }
         let cal = Calendar.current
         let timeStr = message.timestamp.formatted(date: .omitted, time: .shortened)
         if cal.isDateInToday(message.timestamp) {
@@ -3113,9 +3116,25 @@ struct GeminiMessageRow: View {
 
                     Spacer()
 
-                    Text(bubbleTimestampText)
-                        .font(.caption2)
-                        .foregroundColor(Color(white: 0.48))
+                    if message.role == .assistant && (message.status == .streaming || message.status == .sending) {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(.cyan)
+                            Text("進行中")
+                                .font(.caption2.weight(.semibold))
+                        }
+                        .foregroundColor(.cyan)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.cyan.opacity(0.14))
+                        .overlay(Capsule().stroke(Color.cyan.opacity(0.32), lineWidth: 0.8))
+                        .clipShape(Capsule())
+                    } else {
+                        Text(bubbleTimestampText)
+                            .font(.caption2)
+                            .foregroundColor(Color(white: 0.48))
+                    }
 
                     // 語音朗讀 / 停止按鈕（自由選字已收斂至長按選單，維持標題列乾淨單行）
                     if !message.content.isEmpty {
