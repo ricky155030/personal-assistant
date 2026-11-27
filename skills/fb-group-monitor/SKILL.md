@@ -1,6 +1,6 @@
 ---
 name: fb-group-monitor
-description: Facebook 社團新貼文智慧監控技能。透過 Chrome-Assistant 真實瀏覽器 Session 定期巡檢特定 FB 社團「最新貼文（CHRONOLOGICAL）」，經本地去重快取後，僅針對未見過的新貼文調用 `agy -p` Inline Prompt 進行自然語言條件判讀，命中時立即推播 Telegram 通知並附帶直達連結。當主人說「幫我監控 FB 社團...」、「盯一下社團有沒有人賣...」、「停止 FB 社團監控」、「看一下社團最新貼文」時觸發本技能。
+description: Facebook 社團最新貼文智慧監控與關鍵字語意篩選；支援新增、查詢或停止社團貼文監控通知。
 ---
 
 # Facebook 社團新貼文智慧監控技能 (FB Group Monitor)

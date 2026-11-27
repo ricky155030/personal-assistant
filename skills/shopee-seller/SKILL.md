@@ -1,6 +1,6 @@
 ---
 name: shopee-seller
-description: 蝦皮賣家自動上架技能。支援主人單次對話傳送商品圖片（可單品多圖）及「數量」與「金額」，由 LLM 視覺辨識商品、自動配對台灣蝦皮官方分類 ID、撰寫 SEO 標題（10~60字）與結構化描述，自動壓縮圖片上傳直連圖床、生成獨立批次 Excel、透過 Chrome-Assistant CDP 零 Token 自動上傳至賣家中心，並在當前對話立即回傳商品後台專屬連結與公開網址；亦支援多商品分次暫存累積（stage-add / stage-export）。
+description: 蝦皮賣家自動上架技能；支援單品多圖或分次暫存商品、AI 辨識分類與撰寫文案、圖床壓縮與賣家中心自動上傳。
 ---
 
 # 蝦皮賣家批次自動上架技能 (Shopee Seller Upload Skill)

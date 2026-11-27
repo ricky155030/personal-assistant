@@ -1,6 +1,6 @@
 ---
 name: ios-app-release
-description: MacMiniAssistant iOS App 自動編譯打包、語意化升版與 GitHub Releases / SideStore 發布技能。每當修改 `ios/` 目錄下任何程式碼（SwiftUI 介面、API Client、Widget 等）並確認編譯通過後，或主人要求「打包 iOS App」、「發布新版 App」、「更新 SideStore」時觸發，自動執行 `./package_ios.sh` 產出新版 `.ipa`、更新 `ios/apps.json` 並建立 GitHub Release。
+description: MacMiniAssistant iOS App 自動編譯打包、語意化升版與 GitHub Releases / SideStore 發布；修改 ios/ 程式碼或要求打包發布新版時觸發。
 ---
 
 # iOS App 自動打包與 GitHub Release / SideStore 發布技能

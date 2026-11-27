@@ -1,6 +1,6 @@
 ---
 name: browser-relay
-description: 直接操控 Mac mini 本機真實 Google Chrome 應用程式進行網頁自動化（Chrome-Assistant 引擎）。零外掛依賴、天然抗防爬蟲盾（PerimeterX / Cloudflare 自動自愈）、專屬永久保存 Profile（Cookies 與 Sessions 永不遺失）、與主人日常使用之 Chrome 完全互不干擾。內建高階通用 AI 介面：可互動元素語意快照 (inspect)、自然文字與標籤定位 (smart click/type)、多步驟批次動作管線 (batch)，適用所有訂位、表單、搶票與動態渲染頁面。
+description: 透過本機真實 Google Chrome（Chrome-Assistant）自動化操作網頁，抗防爬蟲盾並保留登入 Session；適用訂位、表單、搶票與動態 SPA 頁面。
 ---
 
 # Chrome 瀏覽器自動化技能 (Chrome-Assistant Engine)

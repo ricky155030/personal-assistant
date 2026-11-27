@@ -1,6 +1,6 @@
 ---
 name: coupang-tracker
-description: 酷澎 (Coupang Taiwan) 雙軌價格監控守護神技能。支援雙軌巡檢（購物車直連 100% 綠燈繞過防爬蟲盾 + 全網搜尋比價）、目標門檻降價即時通報（iOS Critical Alert 純靜音置頂 + Telegram 卡片）、口語隨時增減監控品項、調整價格門檻，以及輸出最新巡檢狀態報表。當主人詢問「酷澎價格」、「查酷澎最新狀態」、「酷澎巡檢狀況」、「幫我監控酷澎...」、「酷澎新增/修改門檻」、「停止酷澎監控」時觸發本技能。
+description: 酷澎 (Coupang Taiwan) 雙軌價格監控與降價通知；支援查詢巡檢狀態、增減監控品項與調整門檻價。
 ---
 
 # 酷澎雙軌價格守護神技能 (Coupang Tracker Skill)

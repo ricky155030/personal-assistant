@@ -1,6 +1,6 @@
 ---
 name: baby-supplies
-description: 待產與嬰幼兒用品備品清單專屬管理技能。支援一鍵新增備品、自動將實品照片複製並上傳至 Google Drive 專屬資料夾、自動寫入 =HYPERLINK 超連結至試算表，以及關鍵字/分類/收納位置查詢。當主人說「新增...到嬰幼兒備品」、「查嬰兒備品」、「待產包有什麼」時使用本技能。
+description: 待產與嬰幼兒備品清單管理；支援新增備品（自動上傳實品照至 Google Drive 並寫入超連結）與分類/收納位置查詢。
 ---
 
 # 待產與嬰幼兒用品備品管理技能 (Baby Supplies Checklist Skill)

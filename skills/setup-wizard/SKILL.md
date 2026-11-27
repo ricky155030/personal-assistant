@@ -1,6 +1,6 @@
 ---
 name: setup-wizard
-description: 個人 AI 助理初始化、隱私金鑰設定、技能模組前置相依檢驗 (Doctor) 與配置管理技能。當主人要求「初始化個人助理」、「設定個人資訊」、「設定帳號密碼」、「修改 Telegram token」、「更新通訊白名單」、「開啟/啟用技能」、「關閉/停用技能」、「技能健檢/Doctor」、「日曆ID設定」、「/setup」時觸發本技能。引導配置主人稱呼、聯絡資訊、Telegram Token、Tailscale 網域、安全性 API Key、技能專屬參數與相依檢驗，並自動同步全域模組化記憶庫 (memory/ 與 MEMORY.md)。
+description: 個人 AI 助理初始化與配置管理（/setup）；支援設定個人資訊、金鑰 Token、通訊白名單、日曆 ID、啟用停用技能與相依健檢 (Doctor)。
 ---
 
 # 個人助理設定嚮導與技能調度引擎 (Setup Wizard & Skills Engine)
