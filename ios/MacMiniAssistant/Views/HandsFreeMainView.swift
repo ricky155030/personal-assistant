@@ -739,7 +739,7 @@ struct HandsFreeMainView: View {
                         .frame(width: 7, height: 7)
                         .shadow(color: connectionDotColor.opacity(0.7), radius: 3)
 
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 4) {
                             let activeModelId = coordinator.selectedEngineId == "agy"
                                 ? coordinator.selectedModelFamily.rawValue
@@ -750,10 +750,10 @@ struct HandsFreeMainView: View {
                             )
 
                             Text(coordinator.currentEngineDisplayName)
-                                .font(.system(size: 15, weight: .bold))
+                                .font(.system(size: 14.5, weight: .bold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.78)
+                                .minimumScaleFactor(0.85)
 
                             Image(systemName: "chevron.down")
                                 .font(.system(size: 10, weight: .semibold))
@@ -761,16 +761,18 @@ struct HandsFreeMainView: View {
                         }
 
                         HStack(spacing: 4) {
-                            Text("\(thinkingLevelSubLabel)思考 · \(coordinator.responseLength.shortTag)")
+                            Text("\(engineBadgeLabel) · \(thinkingLevelSubLabel)")
                                 .font(.system(size: 10.5, weight: .medium))
-                                .foregroundColor(Color(white: 0.58))
+                                .foregroundColor(Color(white: 0.62))
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.85)
+                                .fixedSize(horizontal: true, vertical: false)
 
                             if coordinator.currentEngineSupportsQuota {
                                 let quota = dynamicQuotaInfo(for: coordinator.selectedModelFamily)
                                 let hasValidOmpUsage = coordinator.selectedEngineId != "omp" || activeOmpGateway?.hasUsage == true
-                                let quotaText = (coordinator.quotaSnapshot != nil && hasValidOmpUsage) ? String(format: "%.0f%%", quota.pct) : "--%"
+                                let isReady = coordinator.quotaSnapshot != nil && hasValidOmpUsage
+                                let quotaText = isReady ? String(format: "%.0f%%", quota.pct) : "--%"
+                                let compactReset = isReady ? formatCompactResetDuration(quota.resetIn) : "--"
                                 Text("·")
                                     .font(.system(size: 10.5, weight: .medium))
                                     .foregroundColor(Color(white: 0.45))
@@ -790,14 +792,26 @@ struct HandsFreeMainView: View {
                                         .foregroundColor(quota.tint)
                                         .monospacedDigit()
                                         .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
                                 }
+
+                                Text("·")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(Color(white: 0.45))
+
+                                Text(compactReset)
+                                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(Color(white: 0.62))
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
                         }
                     }
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 12)
-                .frame(width: 166, height: 42, alignment: .leading)
+                .padding(.leading, 11)
+                .padding(.trailing, 11)
+                .frame(minWidth: 156, maxWidth: 235, minHeight: 42, maxHeight: 42, alignment: .leading)
                 .liquidGlass(in: Capsule())
             }
             .buttonStyle(.plain)
@@ -1123,9 +1137,15 @@ struct HandsFreeMainView: View {
             return (100.0, "--", .green, "bolt.fill")
         }
         if coordinator.selectedEngineId == "omp" {
-            if let gw = activeOmpGateway, gw.hasUsage, let pct = gw.rolling5hRemainingPct ?? gw.weeklyRemainingPct {
-                let tint: Color = pct >= 50 ? .cyan : (pct >= 20 ? .orange : .red)
-                return (pct, gw.rolling5hRefreshesIn, tint, "server.rack")
+            if let gw = activeOmpGateway, gw.hasUsage {
+                if let weeklyPct = gw.weeklyRemainingPct {
+                    let tint: Color = weeklyPct >= 50 ? .cyan : (weeklyPct >= 20 ? .orange : .red)
+                    return (weeklyPct, gw.weeklyRefreshesIn, tint, "server.rack")
+                }
+                if let rollingPct = gw.rolling5hRemainingPct {
+                    let tint: Color = rollingPct >= 50 ? .cyan : (rollingPct >= 20 ? .orange : .red)
+                    return (rollingPct, gw.rolling5hRefreshesIn, tint, "server.rack")
+                }
             }
             return (100.0, "--", .secondary, "server.rack")
         }
@@ -1153,13 +1173,53 @@ struct HandsFreeMainView: View {
         }
     }
 
+    private var engineBadgeLabel: String {
+        let raw = coordinator.selectedEngineId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? "AGY" : raw.uppercased()
+    }
+
     private var thinkingLevelSubLabel: String {
         switch coordinator.thinkingLevel {
-        case .low: return "快速"
-        case .med: return "中等"
-        case .high: return "深度"
-        case .xhigh: return "極深"
+        case .low: return "Low"
+        case .med: return "Med"
+        case .high: return "High"
+        case .xhigh: return "XHigh"
         }
+    }
+
+    private func formatCompactResetDuration(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "--" || trimmed == "即將重置" {
+            return trimmed.isEmpty ? "--" : trimmed
+        }
+        let ns = trimmed as NSString
+        let fullRange = NSRange(location: 0, length: ns.length)
+        if let regex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:天|d|D)"),
+           let dMatch = regex.firstMatch(in: trimmed, range: fullRange) {
+            let days = ns.substring(with: dMatch.range(at: 1))
+            if let hRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:小時|時|h|H)"),
+               let hMatch = hRegex.firstMatch(in: trimmed, range: fullRange) {
+                let hours = ns.substring(with: hMatch.range(at: 1))
+                return "\(days)d\(hours)h"
+            }
+            return "\(days)d"
+        }
+        if let hRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:小時|時|h|H)"),
+           let hMatch = hRegex.firstMatch(in: trimmed, range: fullRange) {
+            let hours = ns.substring(with: hMatch.range(at: 1))
+            if let mRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:分鐘|分|m|M)"),
+               let mMatch = mRegex.firstMatch(in: trimmed, range: fullRange) {
+                let mins = ns.substring(with: mMatch.range(at: 1))
+                return "\(hours)h\(mins)m"
+            }
+            return "\(hours)h"
+        }
+        if let mRegex = try? NSRegularExpression(pattern: "(\\d+)\\s*(?:分鐘|分|m|M)"),
+           let mMatch = mRegex.firstMatch(in: trimmed, range: fullRange) {
+            let mins = ns.substring(with: mMatch.range(at: 1))
+            return "\(mins)m"
+        }
+        return trimmed
     }
 
     // MARK: - 3B. 主畫面直接顯示即時對話列表
