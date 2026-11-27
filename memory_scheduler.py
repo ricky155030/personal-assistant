@@ -205,17 +205,84 @@ def distill_daily_conversations(
     memory_manager.sync_to_memory_md()
 
     if notify:
-        bullet_lines = "\n".join(f"• {entry}" for entry in added)
-        tg_text = (
-            f"🧠 <b>【每日對話記憶沉澱通知】</b>\n\n"
-            f"已從過去 {hours} 小時對話中自動提煉 <b>{len(added)} 項</b> 長期記憶並寫入記憶庫：\n"
-            f"{bullet_lines}\n\n"
-            f"💡 若有不需要保留的項目，直接回覆「撤回剛才的自動記憶」或指定項目即可移除。"
-        )
-        send_telegram_sync(tg_text, parse_mode="HTML")
+        _notify_distill_result(added=added, hours=hours, date_filter=date_filter)
 
     return {"status": "distilled", "added": added, "count": len(added)}
 
+
+def _send_app_notification(title: str, message: str, record_history: bool = True) -> bool:
+    """同步寫入 App 對話歷史並透過統一 iOS 未讀重要通知通道推播給 iOS App"""
+    if record_history:
+        try:
+            memory_manager.log_interaction(
+                query=f"[系統排程] {title}",
+                reply=message,
+                actions=["memory_distill_notify"],
+            )
+        except Exception as e:
+            print(f"[MemoryScheduler] ⚠️ 寫入 App 歷史紀錄失敗: {e}")
+
+    try:
+        from task_manager import _send_ios_notification
+        return bool(_send_ios_notification(title=title, message=message))
+    except Exception as e:
+        print(f"[MemoryScheduler] ⚠️ iOS App 推播失敗: {e}")
+        return False
+
+
+def _notify_distill_result(
+    added: List[str],
+    hours: int = 24,
+    date_filter: Optional[str] = None,
+    commit_hash: str = "",
+    pushed: bool = False,
+) -> None:
+    """發送每日對話記憶沉澱通知至 Telegram 與 iOS App"""
+    scope_label = f"{date_filter} 當天" if date_filter else f"過去 {hours} 小時"
+    bullet_lines = "\n".join(f"• {entry}" for entry in added)
+    repo_line = ""
+    if commit_hash:
+        repo_line = f"\n🔒 私有記憶倉庫：{'已提交並推送' if pushed else '已本機提交'} ({commit_hash})"
+
+    tg_text = (
+        f"🧠 <b>【每日對話記憶沉澱通知】</b>\n\n"
+        f"已從{scope_label}對話中自動提煉 <b>{len(added)} 項</b> 長期記憶並寫入記憶庫：\n"
+        f"{bullet_lines}{repo_line}\n\n"
+        f"💡 若有不需要保留的項目，直接回覆「撤回剛才的自動記憶」或指定項目即可移除。"
+    )
+    send_telegram_sync(tg_text, parse_mode="HTML")
+
+    app_msg = (
+        f"已從{scope_label}對話中自動沉澱 {len(added)} 項長期記憶：\n"
+        f"{bullet_lines}{repo_line}\n\n"
+        f"若有不需要保留的項目，直接告訴我撤回即可。"
+    )
+    _send_app_notification(title="🧠 每日記憶沉澱完成", message=app_msg, record_history=True)
+
+
+def distill_and_sync_memory(
+    hours: int = 24,
+    date_filter: Optional[str] = None,
+    notify: bool = True,
+) -> Dict[str, Any]:
+    """完整夜間沉澱流程：先提煉寫入 memory/，再提交推送私有倉庫，最後統一推播 Telegram 與 iOS App"""
+    distill_res = distill_daily_conversations(hours=hours, date_filter=date_filter, notify=False)
+    sync_res = sync_and_commit_memory(silent_if_no_changes=True, notify=(distill_res.get("count", 0) == 0 and notify))
+
+    added = distill_res.get("added") or []
+    if added and notify:
+        _notify_distill_result(
+            added=added,
+            hours=hours,
+            date_filter=date_filter,
+            commit_hash=str(sync_res.get("commit_hash", "")),
+            pushed=bool(sync_res.get("pushed", False)),
+        )
+
+    return {
+        "distill": distill_res,
+        "sync": sync_res,
+    }
 
 def audit_diff_with_llm(diff_text: str, status_text: str) -> Dict[str, str]:
     """呼叫 LLM 審查 memory/ 私有記憶倉庫的變更內容並產生 Commit Message"""
@@ -261,9 +328,9 @@ def audit_diff_with_llm(diff_text: str, status_text: str) -> Dict[str, str]:
     }
 
 
-def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
+def sync_and_commit_memory(silent_if_no_changes: bool = True, notify: bool = True) -> Dict[str, Any]:
     """
-    檢查獨立私有記憶倉庫 (memory/.git) 狀態，若有更新則編譯 MEMORY.md、由 LLM 審查、Commit、Push 至私有倉庫並推播 Telegram
+    檢查獨立私有記憶倉庫 (memory/.git) 狀態，若有更新則編譯 MEMORY.md、由 LLM 審查、Commit、Push 至私有倉庫並推播 Telegram / iOS App
     """
     # 1. 確保最新模組聚合編譯至本機 MEMORY.md
     try:
@@ -342,16 +409,19 @@ def sync_and_commit_memory(silent_if_no_changes: bool = True) -> Dict[str, Any]:
         print(f"[MemoryScheduler] ❌ {err_msg}")
         return {"status": "error", "message": err_msg}
 
-    # 6. 推送 Telegram 每日秘書報告
-    push_status = f"已自動提交並推送至私有倉庫 (<code>{commit_hash}</code>)" if pushed else f"已提交至本機私有倉庫 (<code>{commit_hash}</code>)"
-    tg_text = (
-        f"🌙 <b>【每日私有記憶庫夜間歸檔完成】</b>\n\n"
-        f"📝 <b>變更摘要</b>：\n{summary}\n\n"
-        f"🔍 <b>LLM 審查</b>：格式已校驗，本機 MEMORY.md 已同步編譯\n"
-        f"🔒 <b>私有版控</b>：{push_status}"
-    )
-    send_telegram_sync(tg_text, parse_mode="HTML")
-    print(f"[MemoryScheduler] ✅ 每日私有記憶庫已歸檔並推播 Telegram (Commit: {commit_hash})")
+    # 6. 推送 Telegram 與 iOS App 每日秘書報告
+    if notify:
+        push_status = f"已自動提交並推送至私有倉庫 (<code>{commit_hash}</code>)" if pushed else f"已提交至本機私有倉庫 (<code>{commit_hash}</code>)"
+        tg_text = (
+            f"🌙 <b>【每日私有記憶庫夜間歸檔完成】</b>\n\n"
+            f"📝 <b>變更摘要</b>：\n{summary}\n\n"
+            f"🔍 <b>LLM 審查</b>：格式已校驗，本機 MEMORY.md 已同步編譯\n"
+            f"🔒 <b>私有版控</b>：{push_status}"
+        )
+        send_telegram_sync(tg_text, parse_mode="HTML")
+        app_summary = f"私有記憶倉庫已歸檔 ({commit_hash})：\n{summary}"
+        _send_app_notification(title="🌙 私有記憶庫歸檔完成", message=app_summary, record_history=True)
+        print(f"[MemoryScheduler] ✅ 每日私有記憶庫已歸檔並推播 Telegram & iOS App (Commit: {commit_hash})")
 
     return {
         "status": "committed",
@@ -381,16 +451,17 @@ async def run_memory_scheduler():
                 print(f"\n[MemoryScheduler] 🔔 觸發定時夜間記憶沉澱與審查 ({now.strftime('%Y-%m-%d %H:%M:%S')})...")
                 loop = asyncio.get_running_loop()
 
-                # 1. 先從當日對話自動沉澱高價值長期記憶並推播通知
+                # 1. 從當日對話自動沉澱高價值長期記憶、提交推送私有倉庫並統一通知 Telegram 與 iOS App
                 try:
-                    distill_res = await loop.run_in_executor(None, distill_daily_conversations, 24, None, True)
-                    print(f"[MemoryScheduler] 🧠 當日對話沉澱結果: {distill_res.get('status')} (新增 {distill_res.get('count', 0)} 項)")
+                    pipeline_res = await loop.run_in_executor(None, distill_and_sync_memory, 24, None, True)
+                    d_res = pipeline_res.get("distill", {})
+                    s_res = pipeline_res.get("sync", {})
+                    print(
+                        f"[MemoryScheduler] 🧠 夜間記憶沉澱與私有歸檔完成: "
+                        f"distill={d_res.get('status')} (+{d_res.get('count', 0)}), sync={s_res.get('status')}"
+                    )
                 except Exception as e:
-                    print(f"[MemoryScheduler] ⚠️ 當日對話沉澱異常: {e}")
-
-                # 2. 將私有記憶倉庫異動審查、Commit 並 Push 至私有遠端
-                await loop.run_in_executor(None, sync_and_commit_memory, True)
-
+                    print(f"[MemoryScheduler] ⚠️ 夜間記憶沉澱與歸檔異常: {e}")
                 # 3. 夜間自動巡檢與修剪背景長任務與過期日誌 (Pruning)
                 try:
                     from task_manager import task_manager
@@ -417,11 +488,14 @@ async def run_memory_scheduler():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mac mini Assistant 記憶庫夜間沉澱與私有歸檔工具")
     parser.add_argument("--once", action="store_true", help="立即執行一次私有記憶倉庫同步與歸檔")
-    parser.add_argument("--distill", action="store_true", help="立即執行過去 24 小時對話記憶沉澱")
+    parser.add_argument("--distill", action="store_true", help="立即執行對話記憶沉澱（若搭配 --once 則先沉澱、推送私有倉庫再統一通知）")
     parser.add_argument("--hours", type=int, default=24, help="對話沉澱回溯小時數 (預設 24)")
+    parser.add_argument("--date", type=str, default=None, help="指定日期前綴 (如 2026-11-27)")
     args = parser.parse_args()
 
-    if args.distill:
-        print(json.dumps(distill_daily_conversations(hours=args.hours, notify=True), ensure_ascii=False, indent=2))
-    if args.once:
+    if args.distill and args.once:
+        print(json.dumps(distill_and_sync_memory(hours=args.hours, date_filter=args.date, notify=True), ensure_ascii=False, indent=2))
+    elif args.distill:
+        print(json.dumps(distill_daily_conversations(hours=args.hours, date_filter=args.date, notify=True), ensure_ascii=False, indent=2))
+    elif args.once:
         print(json.dumps(sync_and_commit_memory(silent_if_no_changes=False), ensure_ascii=False, indent=2))
