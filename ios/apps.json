@@ -13,6 +13,15 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.7.5",
+          "buildVersion": "189",
+          "date": "2026-11-27T06:16:20Z",
+          "localizedDescription": "左上角模型氣泡改為彈性寬度顯示完整名稱，第二列統一顯示主腦引擎、英文思考深度、7天額度與精簡重設倒數",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.7.5/MacMiniAssistant.ipa",
+          "size": 4949615,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.7.4",
           "buildVersion": "187",
           "date": "2026-11-27T05:08:02Z",
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.0/MacMiniAssistant.ipa",
           "size": 4769356,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.4.0",
-          "buildVersion": "165",
-          "date": "2026-11-24T00:46:40Z",
-          "localizedDescription": "Add dynamic voice recognition vocabulary API sync",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.4.0/MacMiniAssistant.ipa",
-          "size": 4546124,
           "minOSVersion": "17.0"
         }
       ]
