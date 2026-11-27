@@ -21,7 +21,8 @@ data/*
 reports/*
 !reports/.gitkeep
 specs/
-memory/homeassistant.md
+memory/
+MEMORY.md
 agent.md
 agent.md*
 
