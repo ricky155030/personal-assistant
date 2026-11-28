@@ -13,6 +13,15 @@
       "tintColor": "007AFF",
       "versions": [
         {
+          "version": "1.7.6",
+          "buildVersion": "191",
+          "date": "2026-11-28T00:40:07Z",
+          "localizedDescription": "新增每日記憶沉澱專屬紫色摺疊卡片氣泡，自動與藍紅背景回報視覺區隔",
+          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.7.6/MacMiniAssistant.ipa",
+          "size": 4950967,
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.7.5",
           "buildVersion": "189",
           "date": "2026-11-27T06:16:20Z",
@@ -91,15 +100,6 @@
           "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
           "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.1/MacMiniAssistant.ipa",
           "size": 4893630,
-          "minOSVersion": "17.0"
-        },
-        {
-          "version": "1.5.0",
-          "buildVersion": "169",
-          "date": "2026-11-24T11:22:04Z",
-          "localizedDescription": "iOS 隨身語音對話與口語 Vibe Coding 隨身助理更新",
-          "downloadURL": "https://github.com/ricky155030/personal-assistant/releases/download/v1.5.0/MacMiniAssistant.ipa",
-          "size": 4769356,
           "minOSVersion": "17.0"
         }
       ]
