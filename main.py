@@ -1377,10 +1377,15 @@ def _clean_history_query(raw_query: str) -> str:
 
 
 def _infer_history_source(raw_query: str, actions: Optional[List[str]] = None) -> str:
+    if raw_query.startswith("[系統排程] ") or any(
+        str(a).startswith("memory_distill") for a in (actions or [])
+    ):
+        return "memory_distill"
     if raw_query.startswith("[背景任務 · ") or any(
         str(a).startswith(("task_report", "task_manager", "herdr_coordinator")) for a in (actions or [])
     ):
         return "background_report"
+    if "[來源管道: iOS" in raw_query:
         return "ios"
     if "[來源管道: Apple Watch" in raw_query:
         return "watch"
@@ -1415,7 +1420,7 @@ def chat_history(
                 if before and ts >= before:
                     continue
                 raw_q = item.get("query", "")
-                clean_q = "" if raw_q.startswith("[背景任務 · ") else _clean_history_query(raw_q)
+                clean_q = "" if raw_q.startswith(("[背景任務 · ", "[系統排程] ")) else _clean_history_query(raw_q)
                 meta_obj = item.get("metadata")
                 qr_list = (meta_obj.get("quick_replies") if isinstance(meta_obj, dict) else None) or item.get("quick_replies") or []
                 entries.append({

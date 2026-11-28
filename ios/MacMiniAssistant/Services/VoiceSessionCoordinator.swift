@@ -1285,10 +1285,12 @@ public final class VoiceSessionCoordinator: ObservableObject {
     public func syncRemoteHistory(limit: Int = 40) async {
         // 初次升級至伺服器為準架構（或補充背景回報來源標記）時，自動以 Mac mini 最新紀錄重建乾淨時間軸
         if !UserDefaults.standard.bool(forKey: "macmini_timeline_v2_rebuilt") ||
-           !UserDefaults.standard.bool(forKey: "macmini_timeline_v3_source_backfill") {
+           !UserDefaults.standard.bool(forKey: "macmini_timeline_v3_source_backfill") ||
+           !UserDefaults.standard.bool(forKey: "macmini_timeline_v4_memory_distill") {
             await rebuildTimelineFromServer(limit: limit)
             UserDefaults.standard.set(true, forKey: "macmini_timeline_v2_rebuilt")
             UserDefaults.standard.set(true, forKey: "macmini_timeline_v3_source_backfill")
+            UserDefaults.standard.set(true, forKey: "macmini_timeline_v4_memory_distill")
             return
         }
 

@@ -2986,6 +2986,9 @@ struct GeminiMessageRow: View {
            !metaName.isEmpty {
             return metaName
         }
+        if message.isMemoryDistill {
+            return "每日記憶沉澱"
+        }
         let text = message.content
         if let start = text.range(of: "「"), let end = text[start.upperBound...].range(of: "」") {
             let name = String(text[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2999,6 +3002,45 @@ struct GeminiMessageRow: View {
             return firstLine.count > 18 ? String(firstLine.prefix(18)) + "…" : firstLine
         }
         return "背景任務"
+    }
+
+    private var reportBadgeIcon: String {
+        if message.isMemoryDistill { return "brain.head.profile" }
+        return isBackgroundReportError ? "exclamationmark.triangle.fill" : "bell.badge.fill"
+    }
+
+    private var reportBadgeLabel: String {
+        if message.isMemoryDistill { return "記憶沉澱" }
+        return "背景回報"
+    }
+
+    private var reportBadgeForeground: Color {
+        if message.isMemoryDistill { return Color(red: 0.80, green: 0.64, blue: 1.0) }
+        return isBackgroundReportError ? Color(red: 1.0, green: 0.56, blue: 0.58) : Color(red: 0.48, green: 0.80, blue: 1.0)
+    }
+
+    private var reportBadgeBackground: Color {
+        if message.isMemoryDistill { return Color.purple.opacity(0.22) }
+        return isBackgroundReportError ? Color.red.opacity(0.22) : Color.blue.opacity(0.18)
+    }
+
+    private var reportBadgeStroke: Color {
+        if message.isMemoryDistill { return Color.purple.opacity(0.46) }
+        return isBackgroundReportError ? Color.red.opacity(0.45) : Color.blue.opacity(0.36)
+    }
+
+    private var reportCardFill: Color {
+        if message.isMemoryDistill { return Color(red: 0.16, green: 0.11, blue: 0.25).opacity(0.88) }
+        return isBackgroundReportError
+            ? Color(red: 0.30, green: 0.10, blue: 0.13).opacity(0.88)
+            : Color(red: 0.09, green: 0.14, blue: 0.22).opacity(0.88)
+    }
+
+    private var reportCardStroke: Color {
+        if message.isMemoryDistill { return Color.purple.opacity(0.38) }
+        return isBackgroundReportError
+            ? Color(red: 0.95, green: 0.42, blue: 0.46).opacity(0.45)
+            : Color.blue.opacity(0.28)
     }
 
     private var isUser: Bool {
@@ -3118,7 +3160,7 @@ struct GeminiMessageRow: View {
                         isAnimating: message.status == .streaming || isCurrentlySpeaking
                     )
 
-                    if message.isBackgroundReport {
+                    if message.isReportCard {
                         Button(action: {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 isReportExpandedOverride = !isBackgroundReportExpanded
@@ -3126,17 +3168,17 @@ struct GeminiMessageRow: View {
                         }) {
                             HStack(spacing: 6) {
                                 HStack(spacing: 4) {
-                                    Image(systemName: isBackgroundReportError ? "exclamationmark.triangle.fill" : "bell.badge.fill")
+                                    Image(systemName: reportBadgeIcon)
                                         .font(.system(size: 10.5, weight: .semibold))
-                                    Text("背景回報")
+                                    Text(reportBadgeLabel)
                                         .font(.system(size: 11.5, weight: .semibold))
                                 }
-                                .foregroundColor(isBackgroundReportError ? Color(red: 1.0, green: 0.56, blue: 0.58) : Color(red: 0.48, green: 0.80, blue: 1.0))
+                                .foregroundColor(reportBadgeForeground)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(isBackgroundReportError ? Color.red.opacity(0.22) : Color.blue.opacity(0.18))
+                                .background(reportBadgeBackground)
                                 .overlay(
-                                    Capsule().stroke(isBackgroundReportError ? Color.red.opacity(0.45) : Color.blue.opacity(0.36), lineWidth: 0.8)
+                                    Capsule().stroke(reportBadgeStroke, lineWidth: 0.8)
                                 )
                                 .clipShape(Capsule())
 
@@ -3325,7 +3367,7 @@ struct GeminiMessageRow: View {
                 }
 
                 // 助理回覆正文（背景回報預設摺疊，異常時預設展開；超過 20 行預設摺疊並提供一鍵展開）
-                if !message.isBackgroundReport || isBackgroundReportExpanded {
+                if !message.isReportCard || isBackgroundReportExpanded {
                     if !message.content.isEmpty {
                         let contentLines = message.content.components(separatedBy: .newlines)
                         let isCollapsibleLongText = message.status != .streaming && contentLines.count > 20
@@ -3516,30 +3558,21 @@ struct GeminiMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, message.isBackgroundReport ? 14 : 0)
-            .padding(.vertical, message.isBackgroundReport ? 12 : 0)
+            .padding(.horizontal, message.isReportCard ? 14 : 0)
+            .padding(.vertical, message.isReportCard ? 12 : 0)
             .background(
                 Group {
-                    if message.isBackgroundReport {
+                    if message.isReportCard {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill(
-                                isBackgroundReportError
-                                    ? Color(red: 0.30, green: 0.10, blue: 0.13).opacity(0.88)
-                                    : Color(red: 0.09, green: 0.14, blue: 0.22).opacity(0.88)
-                            )
+                            .fill(reportCardFill)
                     }
                 }
             )
             .overlay(
                 Group {
-                    if message.isBackgroundReport {
+                    if message.isReportCard {
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(
-                                isBackgroundReportError
-                                    ? Color(red: 0.95, green: 0.42, blue: 0.46).opacity(0.45)
-                                    : Color.blue.opacity(0.28),
-                                lineWidth: 1
-                            )
+                            .stroke(reportCardStroke, lineWidth: 1)
                     }
                 }
             )

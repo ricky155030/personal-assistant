@@ -214,14 +214,15 @@ def _send_app_notification(title: str, message: str, record_history: bool = True
     """同步寫入 App 對話歷史並透過統一 iOS 未讀重要通知通道推播給 iOS App"""
     if record_history:
         try:
+            clean_title = title.replace("🧠", "").replace("🌙", "").strip() or "每日記憶沉澱"
             memory_manager.log_interaction(
-                query=f"[系統排程] {title}",
+                query="",
                 reply=message,
                 actions=["memory_distill_notify"],
+                metadata={"task_name": clean_title, "task_status": "success"},
             )
         except Exception as e:
             print(f"[MemoryScheduler] ⚠️ 寫入 App 歷史紀錄失敗: {e}")
-
     try:
         from task_manager import _send_ios_notification
         return bool(_send_ios_notification(title=title, message=message))

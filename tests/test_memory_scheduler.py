@@ -162,3 +162,11 @@ def test_distill_and_sync_memory_commits_before_unified_notify(tmp_path):
     mock_tg.assert_called_once()
     mock_app.assert_called_once()
     assert res["sync"]["commit_hash"] in mock_app.call_args.kwargs["message"]
+
+
+def test_infer_history_source_and_clean_query_for_memory_distill():
+    import main
+
+    assert main._infer_history_source("", ["memory_distill_notify"]) == "memory_distill"
+    assert main._infer_history_source("[系統排程] 🧠 每日記憶沉澱完成", []) == "memory_distill"
+    assert main._infer_history_source("", ["task_report (t1)"]) == "background_report"

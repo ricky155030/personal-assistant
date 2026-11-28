@@ -332,6 +332,14 @@ public struct ChatMessage: Identifiable, Codable, Equatable {
         source == "background_report"
     }
 
+    public var isMemoryDistill: Bool {
+        source == "memory_distill"
+    }
+
+    public var isReportCard: Bool {
+        isBackgroundReport || isMemoryDistill
+    }
+
     public var widgetHtml: String? {
         let trimmed = metadata?.widget_html?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (trimmed?.isEmpty == false) ? trimmed : nil
