@@ -1118,3 +1118,102 @@ def test_omp_resident_extends_timeout_on_active_events_and_cancels_on_idle_timeo
     assert any(p.get("method") == "session/cancel" for p in sent_rpcs)
     assert "逾時" in timeout_res["clean_reply"]
     assert restarted == [False]
+
+
+def test_brain_router_auto_compacts_at_threshold_for_all_engines(tmp_path):
+    import threading
+
+    compacted = threading.Event()
+    compact_calls = []
+
+    class _CompactEngine(_DummyEngine):
+        def __init__(self, eid: str, own_postprocess: bool, tokens: int) -> None:
+            super().__init__(eid, supports_quota=True, models=[{"id": "m1", "label": "M1"}])
+            self.handles_own_postprocess = own_postprocess
+            self.tokens = tokens
+
+        def get_status(self) -> dict:
+            return {"engine": self.engine_id, "ready": True, "current_tokens": self.tokens}
+
+        def compact_session(self, timeout: float = 45.0) -> dict:
+            compact_calls.append(self.engine_id)
+            self.tokens = 50000
+            compacted.set()
+            return {"success": True, "before_tokens": 310000, "after_tokens": 50000}
+
+    router = BrainRouter(prefs_path=tmp_path / "prefs.json", history_path=tmp_path / "history.jsonl")
+    eng_agy = _CompactEngine("agy", own_postprocess=True, tokens=310000)
+    eng_omp = _CompactEngine("omp", own_postprocess=False, tokens=310000)
+    router.register_engine(eng_agy)
+    router.register_engine(eng_omp)
+
+    # 1. handles_own_postprocess=True (agy path) triggers background /compact
+    router.select_engine("agy")
+    router.send_query("hi agy")
+    assert compacted.wait(timeout=2.0)
+    assert compact_calls == ["agy"]
+    assert eng_agy.tokens == 50000
+
+    # 2. Below threshold does not trigger /compact
+    compacted.clear()
+    router.send_query("hi again")
+    assert not compacted.wait(timeout=0.15)
+    assert compact_calls == ["agy"]
+
+    # 3. handles_own_postprocess=False (omp path) also triggers background /compact
+    compacted.clear()
+    router.select_engine("omp")
+    with patch("brain_engine.memory_manager.save_compressed_history_images", return_value=[]), \
+         patch("brain_engine.memory_manager.log_interaction"), \
+         patch("agy_singleton.extract_quick_replies", return_value=[]):
+        router.send_query("hi omp")
+    assert compacted.wait(timeout=2.0)
+    assert compact_calls == ["agy", "omp"]
+    assert eng_omp.tokens == 50000
+
+
+def test_brain_router_skips_auto_compact_on_cancelled_or_timeout_and_deduplicates(tmp_path):
+    import threading
+
+    gate = threading.Event()
+    started = threading.Event()
+    compact_calls = []
+
+    class _GuardedEngine(_DummyEngine):
+        def __init__(self) -> None:
+            super().__init__("omp", supports_quota=True, models=[{"id": "m1", "label": "M1"}])
+            self.next_result = {"status": "OK", "clean_reply": "ok"}
+
+        def get_status(self) -> dict:
+            return {"engine": self.engine_id, "ready": True, "current_tokens": 350000}
+
+        def compact_session(self, timeout: float = 45.0) -> dict:
+            compact_calls.append(1)
+            started.set()
+            gate.wait(timeout=2.0)
+            return {"success": True, "before_tokens": 350000, "after_tokens": 60000}
+
+        def send_query_stream(self, query, media=None, level=None, model_override=None):
+            yield ("text", "ok")
+            return dict(self.next_result)
+
+    router = BrainRouter(prefs_path=tmp_path / "prefs.json", history_path=tmp_path / "history.jsonl")
+    eng = _GuardedEngine()
+    router.register_engine(eng)
+    router.select_engine("omp")
+
+    # Cancelled and TIMEOUT turns must NOT trigger auto-compact
+    eng.next_result = {"status": "CANCELLED", "cancelled": True, "clean_reply": ""}
+    router.send_query("cancel me")
+    eng.next_result = {"status": "TIMEOUT", "clean_reply": "timeout"}
+    router.send_query("timeout me")
+    assert not started.wait(timeout=0.15)
+    assert compact_calls == []
+
+    # Concurrent triggers while compacting are deduplicated
+    eng.next_result = {"status": "OK", "clean_reply": "ok"}
+    router.send_query("ok 1")
+    assert started.wait(timeout=2.0)
+    assert router._maybe_schedule_auto_compact(eng) is False
+    gate.set()
+    assert len(compact_calls) == 1

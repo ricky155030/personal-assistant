@@ -1155,10 +1155,6 @@ class OmpResidentWorker:
                 "metadata": metadata,
                 "quick_replies": quick_replies,
             }
-        token_limit = settings.CONTEXT_WINDOW_LIMIT * settings.CONTEXT_RESTART_THRESHOLD
-        if self.last_tokens >= token_limit:
-            print(f"[OmpResident] 🔄 Context 已達門檻 ({self.last_tokens} >= {int(token_limit)})，背景重啟全新 Session...")
-            threading.Thread(target=self.restart, kwargs={"force_new_session": True}, daemon=True).start()
         return {
             "status": "OK",
             "clean_reply": clean_reply,

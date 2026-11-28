@@ -274,7 +274,6 @@ class AgyWorker:
         self.last_tokens = 0
         self.last_usage = {}
         self.last_active_time = time.time()
-        self.pending_handoff = False
         self.cwd = str(settings.AGENT_MD_PATH.parent)
         self.session_state_path = settings.DATA_DIR / "acp_session_state.json"
         self.stderr_file = None
@@ -511,8 +510,7 @@ class AgyWorker:
             # 2. 優先嘗試透過 session/resume 無損接續前次未滿載的對話 Session
             resumed = False
             saved_state = None if force_new_session else self._load_saved_session()
-            token_limit = settings.CONTEXT_WINDOW_LIMIT * settings.CONTEXT_RESTART_THRESHOLD
-            if saved_state and saved_state.get("session_id") and saved_state.get("last_tokens", 0) < token_limit:
+            if saved_state and saved_state.get("session_id"):
                 candidate_sid = saved_state["session_id"]
                 try:
                     resume_id = self._next_rpc_id()
@@ -572,8 +570,6 @@ class AgyWorker:
                 print(f"[AgyWorker:{self.name.upper()}] ♻️ ACP 無損接續既有 Session 就緒！耗時 {elapsed:.2f}s | Session ID: {self.session_id} | 延續 Tokens: {self.last_tokens:,}{title_hint}")
             else:
                 print(f"[AgyWorker:{self.name.upper()}] ✅ ACP 全新 Session 就緒！耗時 {elapsed:.2f}s | Session ID: {self.session_id} | 模型: {self.model}")
-                # 檢查是否有未讀取的 session_handoff.md 並消化歸檔
-                self._consume_and_archive_handoff()
 
         except Exception as e:
             print(f"[AgyWorker:{self.name.upper()}] ❌ ACP 啟動失敗：{e}")
@@ -683,7 +679,6 @@ class AgyWorker:
                     if new_tokens > 0:
                         self.last_tokens = new_tokens
                     self.last_usage["context_tokens"] = self.last_tokens
-                self.pending_handoff = False
                 self._save_session_state()
                 after_tokens = self.last_tokens
                 print(f"[AgyWorker:{self.name.upper()}] 🧹 ACP 原生 /compact 壓縮完成！耗時 {elapsed}s | Tokens: {before_tokens:,} ➔ {after_tokens:,}")
@@ -743,143 +738,6 @@ class AgyWorker:
         self._active_turn_id = None
         self._start_unlocked(force_new_session=force_new_session)
 
-    def _run_internal_prompt(self, prompt_text: str, timeout: float = 30.0) -> str:
-        """內部同步輔助：透過 ACP 發送單次提示並收集文字回覆（供 Handoff 生成與注入使用）"""
-        if not self._is_ready or not self.session_id or self.proc is None or self.proc.poll() is not None:
-            return ""
-        while not self.stdout_queue.empty():
-            try:
-                self.stdout_queue.get_nowait()
-            except queue.Empty:
-                break
-
-        req_id = self._next_rpc_id()
-        self._send_rpc({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "method": "session/prompt",
-            "params": {
-                "sessionId": self.session_id,
-                "prompt": [{"type": "text", "text": prompt_text}]
-            }
-        })
-
-        collected = []
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            try:
-                msg = self.stdout_queue.get(timeout=1.0)
-                if msg is None:
-                    break
-                if msg.get("id") == req_id:
-                    break
-                if msg.get("method") == "session/update":
-                    update = msg.get("params", {}).get("update", {})
-                    if update.get("sessionUpdate") == "agent_message_chunk":
-                        delta = update.get("content", {}).get("text", "")
-                        if delta:
-                            collected.append(delta)
-            except queue.Empty:
-                continue
-            except Exception:
-                break
-        return "".join(collected).strip()
-
-    def _generate_session_handoff(self) -> str:
-        """
-        在現有常駐進程關閉前，向其發出交接備忘指令，
-        產出結構化的 session_handoff.md 並存入 data/ 目錄。
-        """
-        handoff_prompt = (
-            "【系統維護指令：Session Handoff 交接備忘】\n"
-            "本交談進程即將達到維護週期並交接給下一個 Session。請檢視剛才所有的對話與工具執行結果，產出結構化交接備忘錄（Markdown 格式），嚴格包含以下四個區塊：\n\n"
-            "## 1. 進行中或未完成的任務 (Active Objectives)\n"
-            "- 具體描述是否有任何尚未完成的事項、訂位、查詢或開發任務；若全部皆已完成則註明「無進行中任務，所有事項均已結清」。\n\n"
-            "## 2. 已確定的關鍵實體與現場參數 (Key Entities & Parameters)\n"
-            "- 請保留具體參數：實體名稱、店家門市、日期時間、人數、電話、姓名、檔案路徑、或 Chrome 分頁 ID 等。\n\n"
-            "## 3. 目前狀態與是否等待主人輸入 (Current Status & Pending Input)\n"
-            "- 註明目前是否正在等待主人提供特定資訊（例如：簡訊驗證碼、二選一確認、時段選擇）；若無則註明「閒置中，等待主人新指令」。\n\n"
-            "## 4. 下一步預期行動 (Next Actions)\n"
-            "- 當主人再次傳送訊息時，新 Session 應如何接續。\n\n"
-            "請直接輸出 Markdown 內容，切勿輸出任何其他前綴寒暄。"
-        )
-
-        content = ""
-        try:
-            content = self._run_internal_prompt(handoff_prompt, timeout=30.0)
-        except Exception as e:
-            print(f"[AgyWorker:{self.name.upper()}] ⚠️ 呼叫進程產出交接備忘失敗: {e}")
-
-        if not content:
-            content = self._synthesize_fallback_handoff()
-
-        stat = self.get_status()
-        header = (
-            f"# 📋 Session Handoff 交接備忘錄\n"
-            f"- **來源 Worker**：{self.name.upper()} Brain ({self.model})\n"
-            f"- **交接時間**：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"- **最後 Token 用量**：{stat['current_tokens']:,} tokens ({stat['percent']}%)\n\n"
-        )
-        full_doc = header + content
-        handoff_path = settings.DATA_DIR / "session_handoff.md"
-        handoff_path.write_text(full_doc, encoding="utf-8")
-        print(f"[AgyWorker:{self.name.upper()}] 📝 已成功產出 {handoff_path.name} (長度: {len(full_doc)} 字元)")
-        return full_doc
-
-    def _synthesize_fallback_handoff(self) -> str:
-        """從 history.jsonl 提取最近幾筆對話作為 Fallback 備忘"""
-        try:
-            if not settings.HISTORY_LOG_PATH.exists():
-                return "無近期對話紀錄。"
-            lines = settings.HISTORY_LOG_PATH.read_text(encoding="utf-8").strip().split("\n")
-            recent = [json.loads(l) for l in lines[-4:] if l.strip()]
-            summary = ["## 1. 最近對話歷程 (Recent Interaction History)"]
-            for item in recent:
-                ts = item.get("timestamp", "")
-                q = item.get("query", "")
-                r = item.get("reply", "")[:120].replace("\n", " ")
-                summary.append(f"- 【{ts}】主人：「{q}」➔ 助理：「{r}...」")
-            summary.append("\n## 2. 備註\n- 本備忘由系統對話日誌自動合成，請依據上述對話脈絡繼續為主人服務。")
-            return "\n".join(summary)
-        except Exception as e:
-            return f"交接備忘合成異常: {e}"
-
-    def _consume_and_archive_handoff(self):
-        """在新進程就緒時，讀取 session_handoff.md 並將其改名留存至 data/handoffs/ 供未來除錯"""
-        handoff_path = settings.DATA_DIR / "session_handoff.md"
-        if not handoff_path.exists():
-            return
-
-        try:
-            handoff_text = handoff_path.read_text(encoding="utf-8").strip()
-            if not handoff_text:
-                handoff_path.unlink(missing_ok=True)
-                return
-
-            worker_header = f"{self.name.upper()} Brain"
-            if "來源 Worker" in handoff_text and worker_header not in handoff_text:
-                return
-
-            print(f"[AgyWorker:{self.name.upper()}] 📖 偵測到 session_handoff.md，正在向新進程注入交接記憶...")
-            prime_prompt = (
-                "【系統前置記憶：Session Handoff 交接備忘】\n"
-                "以下為前一個 Session 達標閒置整理之進度備忘錄：\n\n"
-                f"{handoff_text}\n\n"
-                "請完全理解並記住以上所有事實、現場參數與當前進度。後續若主人傳來任何訊息，請自然無縫接續此情境處理。請僅簡短確認：「✅ 已讀取交接備忘，隨時可接續處理。」"
-            )
-
-            self._run_internal_prompt(prime_prompt, timeout=15.0)
-
-            # 讀完之後，將 session_handoff.md 改名留存至 data/handoffs/
-            settings.HANDOFFS_DIR.mkdir(parents=True, exist_ok=True)
-            ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-            archive_name = f"session_handoff_{ts_str}_{self.name}.md"
-            archive_path = settings.HANDOFFS_DIR / archive_name
-            handoff_path.rename(archive_path)
-            print(f"[AgyWorker:{self.name.upper()}] 📦 已將交接備忘改名留存至 {archive_path.name}，新 Session 已無縫就緒！")
-        except Exception as e:
-            print(f"[AgyWorker:{self.name.upper()}] ⚠️ 讀取並歸檔 session_handoff 失敗: {e}")
-
     def get_status(self) -> dict:
         limit = settings.CONTEXT_WINDOW_LIMIT
         current = self.last_tokens
@@ -892,7 +750,6 @@ class AgyWorker:
             "is_ready": self._is_ready,
             "is_busy": self.is_busy,
             "is_restarting": self._is_restarting,
-            "pending_handoff": self.pending_handoff,
             "resumed_from_disk": self.resumed_from_disk,
             "session_title": self.session_title,
             "idle_seconds": round(idle_sec, 1),
@@ -906,42 +763,37 @@ class AgyWorker:
             "usage": self.last_usage,
         }
 
-    def trigger_handoff_and_restart(self, reason: str = "自動閒置交接"):
+    def trigger_restart_with_notification(self, reason: str = "自動觸發"):
         with self.lock:
             if self._is_restarting:
                 return
             self._is_restarting = True
 
         threading.Thread(
-            target=self._notify_and_handoff_restart_worker,
+            target=self._notify_and_restart_worker,
             args=(reason,),
             daemon=True
         ).start()
 
-    def _notify_and_handoff_restart_worker(self, reason: str):
+    def _notify_and_restart_worker(self, reason: str):
         try:
             from telegram_service import send_telegram_sync
             stat = self.get_status()
             send_telegram_sync(
-                f"🔄 <b>[系統提示]</b> ACP 統一大腦 Context 已達 <b>{stat['percent']}%</b>（原因：{reason}），正在整理 <code>session_handoff.md</code> 並開啟全新 Session...",
+                f"🔄 <b>[系統提示]</b> ACP 統一大腦重啟中（Context {stat['percent']}%，原因：{reason}），正在開啟全新 Session...",
                 parse_mode="HTML"
             )
             t0 = time.time()
-            self._generate_session_handoff()
             self.restart(force_new_session=True)
             elapsed = time.time() - t0
             send_telegram_sync(
-                f"✅ <b>[系統提示]</b> ACP 統一大腦重啟完成！耗時 {elapsed:.2f}s，已讀取交接備忘並歸檔至 <code>handoffs/</code>，Context 已重置為 0。",
+                f"✅ <b>[系統提示]</b> ACP 統一大腦重啟完成！耗時 {elapsed:.2f}s，Context 已重置為 0。",
                 parse_mode="HTML"
             )
         except Exception as e:
-            print(f"[AgyWorker:{self.name.upper()}] ❌ 自動交接重啟失敗: {e}")
+            print(f"[AgyWorker:{self.name.upper()}] ❌ 重啟失敗: {e}")
         finally:
-            self.pending_handoff = False
             self._is_restarting = False
-
-    def trigger_restart_with_notification(self, reason: str = "自動觸發"):
-        self.trigger_handoff_and_restart(reason)
 
     def _build_acp_prompt_blocks(self, query: str, media: Optional[List[dict]] = None) -> List[dict]:
         """將文字與多模態圖片封裝為 ACP ContentBlock 陣列"""
@@ -1167,16 +1019,6 @@ class AgyWorker:
 
             self._save_session_state()
 
-            limit = settings.CONTEXT_WINDOW_LIMIT
-            threshold = settings.CONTEXT_RESTART_THRESHOLD
-            if limit > 0 and self.last_tokens > 0:
-                ratio = self.last_tokens / limit
-                if ratio >= threshold:
-                    pct = round(ratio * 100, 1)
-                    if not self.pending_handoff:
-                        self.pending_handoff = True
-                        print(f"[AgyWorker:{self.name.upper()}] ⚠️ Context 達 {pct}%（已達 {int(threshold*100)}% 門檻），已標記待交接，將於連續閒置 {settings.CONTEXT_IDLE_MINUTES} 分鐘後產出 session_handoff.md 並自動重啟...")
-
             return turn_result
 
 
@@ -1204,7 +1046,6 @@ class AgyBrainPool:
         self.fast_worker = self.primary_worker
         self.deep_worker = self.primary_worker
         self.lock = threading.RLock()
-        self._idle_monitor_thread: Optional[threading.Thread] = None
 
     def start(self, force_new_session: bool = False):
         """啟動統一 ACP 常駐大腦（預設優先嘗試 session/resume 接續記憶）"""
@@ -1212,10 +1053,6 @@ class AgyBrainPool:
         self.primary_worker.start(force_new_session=force_new_session)
         print(f"[AgyBrainPool] ✅ 統一 ACP 大腦啟動完成！(Ready: {self.primary_worker._is_ready} | Session: {self.primary_worker.session_id})")
 
-        if self._idle_monitor_thread is None or not self._idle_monitor_thread.is_alive():
-            self._idle_monitor_thread = threading.Thread(target=self._idle_monitor_loop, daemon=True)
-            self._idle_monitor_thread.start()
-            print(f"[AgyBrainPool] ⏰ 閒置 Handoff 監控線程已啟動 (檢測週期: 15s | 閒置門檻: {settings.CONTEXT_IDLE_MINUTES} 分鐘)")
 
     def stop(self):
         """停止常駐大腦進程"""
@@ -1238,22 +1075,6 @@ class AgyBrainPool:
         """對統一 ACP 大腦執行原生 `/compact` 無損上下文壓縮"""
         return self.primary_worker.compact_session(timeout=timeout)
 
-    def _idle_monitor_loop(self):
-        """背景定時檢查閒置超過 CONTEXT_IDLE_MINUTES 且待交接之統一大腦"""
-        while True:
-            time.sleep(15)
-            try:
-                idle_limit_sec = settings.CONTEXT_IDLE_MINUTES * 60
-                now = time.time()
-                worker = self.primary_worker
-                if worker.pending_handoff and not worker._is_restarting and worker._is_ready and not worker.is_busy:
-                    idle_sec = now - worker.last_active_time
-                    if idle_sec >= idle_limit_sec:
-                        idle_min = round(idle_sec / 60, 1)
-                        print(f"[AgyBrainPool] ⏰ ACP 統一大腦已連續閒置 {idle_min} 分鐘 (門檻 {settings.CONTEXT_IDLE_MINUTES} 分鐘)，啟動 Session Handoff 重啟程序！")
-                        worker.trigger_handoff_and_restart(reason=f"Context 達標且已連續閒置 {idle_min} 分鐘")
-            except Exception as e:
-                print(f"[AgyBrainPool] ⚠️ 閒置監聽器異常: {e}")
 
     def restart(self, force_new_session: bool = True):
         """重啟統一大腦並建立全新 Session"""
@@ -1282,13 +1103,11 @@ class AgyBrainPool:
             "limit": settings.CONTEXT_WINDOW_LIMIT,
             "percent": p_stat["percent"],
             "threshold": settings.CONTEXT_RESTART_THRESHOLD,
-            "pending_handoff": p_stat["pending_handoff"],
-            "idle_minutes_threshold": settings.CONTEXT_IDLE_MINUTES,
             "usage": p_stat["usage"],
         }
 
     def trigger_restart_with_notification(self, reason: str = "手動觸發"):
-        self.primary_worker.trigger_handoff_and_restart(reason)
+        self.primary_worker.trigger_restart_with_notification(reason)
 
     def send_query_stream(
         self,

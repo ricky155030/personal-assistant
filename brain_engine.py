@@ -204,6 +204,7 @@ class BrainRouter:
         self._active_engine_id: str = "agy"
         self._active_models: Dict[str, str] = {}
         self._pending_handoff: Optional[Tuple[str, str]] = None
+        self._auto_compacting: set[str] = set()
         self._load_prefs()
 
     def _load_prefs(self) -> None:
@@ -381,10 +382,56 @@ class BrainRouter:
         status = eng.get_status()
         status["active_engine"] = eng.engine_id
         status["supports_quota"] = eng.supports_quota
+        status.setdefault("threshold", settings.CONTEXT_RESTART_THRESHOLD)
         return status
 
     def trigger_restart_with_notification(self, reason: str = "手動觸發") -> None:
         self.get_engine().trigger_restart_with_notification(reason=reason)
+
+    def _maybe_schedule_auto_compact(self, engine: BaseBrainEngine) -> bool:
+        limit = settings.CONTEXT_WINDOW_LIMIT
+        threshold = settings.CONTEXT_RESTART_THRESHOLD
+        token_limit = int(limit * threshold)
+        if token_limit <= 0:
+            return False
+        try:
+            stat = engine.get_status() or {}
+            current_tokens = int(stat.get("current_tokens") or 0)
+        except Exception:
+            return False
+        if current_tokens < token_limit:
+            return False
+        with self._lock:
+            if engine.engine_id in self._auto_compacting:
+                return False
+            self._auto_compacting.add(engine.engine_id)
+        print(
+            f"[BrainRouter] 🧹 {engine.engine_id} Context 已達門檻 "
+            f"({current_tokens:,} >= {token_limit:,})，背景執行原生 /compact..."
+        )
+        threading.Thread(
+            target=self._run_auto_compact,
+            args=(engine, current_tokens, token_limit),
+            daemon=True,
+        ).start()
+        return True
+
+    def _run_auto_compact(self, engine: BaseBrainEngine, before_tokens: int, token_limit: int) -> None:
+        try:
+            res = engine.compact_session()
+            if res.get("success"):
+                after_tokens = int(res.get("after_tokens") or 0)
+                print(
+                    f"[BrainRouter] ✅ {engine.engine_id} 自動 /compact 完成 "
+                    f"({before_tokens:,} ➔ {after_tokens:,}，門檻 {token_limit:,})"
+                )
+            else:
+                print(f"[BrainRouter] ⚠️ {engine.engine_id} 自動 /compact 未完成: {res.get('error', 'unknown')}")
+        except Exception as ex:
+            print(f"[BrainRouter] ⚠️ {engine.engine_id} 自動 /compact 異常: {ex}")
+        finally:
+            with self._lock:
+                self._auto_compacting.discard(engine.engine_id)
 
     def send_query_stream(
         self,
@@ -400,14 +447,15 @@ class BrainRouter:
 
         if eng.handles_own_postprocess:
             effective_query = self._consume_handoff_prefix(eng.engine_id, query)
-            return (
-                yield from eng.send_query_stream(
-                    effective_query,
-                    media=media,
-                    level=resolved_level,
-                    model_override=effective_override,
-                )
+            turn_result = yield from eng.send_query_stream(
+                effective_query,
+                media=media,
+                level=resolved_level,
+                model_override=effective_override,
             )
+            if not (isinstance(turn_result, dict) and (turn_result.get("cancelled") or turn_result.get("status") == "TIMEOUT")):
+                self._maybe_schedule_auto_compact(eng)
+            return turn_result
 
         # 共用前處理：移除前綴路由標籤並於首輪注入跨大腦交接提要
         cleaned_prompt = clean_query_prefix(query)
@@ -473,6 +521,8 @@ class BrainRouter:
                 except Exception as log_ex:
                     print(f"[BrainRouter] ⚠️ 寫入對話紀錄失敗: {log_ex}")
 
+        if not (isinstance(turn_result, dict) and (turn_result.get("cancelled") or turn_result.get("status") == "TIMEOUT")):
+            self._maybe_schedule_auto_compact(eng)
         return turn_result
 
     def send_query(

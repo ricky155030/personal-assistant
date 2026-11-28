@@ -366,11 +366,7 @@ class QuotaService:
             else:
                 lines.append(f"• ID: <code>{context_status.get('conversation_id', 'unknown')}</code>")
             lines.append(f"🧠 <b>Context 上下文</b>：<b>{context_status.get('current_tokens', 0):,}</b> / {context_status.get('limit', 0):,} tokens (<b>{context_status.get('percent', 0):.1f}%</b>)")
-            idle_thresh = context_status.get('idle_minutes_threshold', 10)
-            if context_status.get("pending_handoff"):
-                lines.append(f"• ⚠️ <b>交接排程</b>：已達重置門檻，待連續閒置 {idle_thresh} 分鐘後自動執行 Session Handoff\n")
-            else:
-                lines.append(f"• 重啟保護門檻：<b>{context_status.get('threshold', 0):.0%}</b> (超過且連續閒置 {idle_thresh} 分鐘自動 Session Handoff)\n")
+            lines.append(f"• 自動壓縮門檻：<b>{context_status.get('threshold', 0):.0%}</b> (達標自動執行原生 /compact)\n")
 
         engine = (context_status.get("engine") if context_status else "")
         if not engine:
